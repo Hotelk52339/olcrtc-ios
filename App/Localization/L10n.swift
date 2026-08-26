@@ -611,6 +611,24 @@ enum L10n: String, CaseIterable {
     case botTokenStatusSaved, botTokenStatusMissing // #428: read-only status in the per-server sheet
     case botTokenManageHint                 // #428: "token is set in Settings → Bots"
     case botTokenCreateHint                 // #428: "create the bot on the platform first"
+
+    // MARK: #452 Multi-carrier VPS — protocol rows on the host card + extras install
+    case protocolsSectionHeader            // "Protocols" — host-card section label
+    case addProtocolAction                 // "Add protocol" (button + sheet confirm)
+    case addProtocolTitle                  // add-protocol sheet title
+    case removeProtocolAction              // "Remove from server" (row menu, destructive)
+    case removeProtocolConfirmTitle_fmt    // "Remove %@ from this server?"
+    case removeProtocolConfirmBody         // container + config removed; connection too
+    case protocolConnectAction             // "Connect via this protocol" (row menu)
+    case protocolConnectedBadge            // "Connected" (row indicator a11y)
+    case protocolPrimaryBadge              // "primary" tag on the base protocol row
+    case protocolRecordMissing             // no matching saved connection — suggest Recover
+    case protocolAdded_fmt                 // "Added %@/%@ — connection saved"
+    case protocolRemoved_fmt               // "Removed %@ from the server"
+    case installExtrasHeader               // "Additional protocols" (install sheet section)
+    case installExtrasFooter               // extras share the key; one connection each
+    case installExtraToggle_fmt            // "Also install %@"
+    case installExtrasPartialFail_fmt      // "Some protocols failed to install: %@"
 }
 
 extension L10n {

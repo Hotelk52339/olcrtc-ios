@@ -20,6 +20,8 @@ enum SSHRunner {
         static let exit   = "/tmp/olcrtc-install.exit"
         // #314: key-rotation fallback script (see rotateKey below).
         static let rotateScript = "/tmp/olcrtc-ios-rotate-key.sh"
+        // #452: sibling-carrier install script (see addCarrier below).
+        static let addCarrierScript = "/tmp/olcrtc-ios-add-carrier.sh"
     }
 
     private static let installMaxPolls: Int               = 100   // 100 × 15 s = 25 min max
@@ -706,6 +708,243 @@ enum SSHRunner {
         }
     }
 
+    // MARK: #452 — Multi-carrier (sibling protocol containers on one VPS)
+    //
+    // One VPS can run several olcrtc protocols simultaneously: the primary
+    // install (scripts/srv.sh → server.yaml → container olcrtc-server-<id>)
+    // plus sibling containers named <base>-<carrier> that share the SAME
+    // deploy dir / built binary / encryption key and each read their own
+    // server-<carrier>.yaml. scripts/add-carrier.sh creates them (uploaded
+    // over the same base64-printf channel as rotate-key.sh); the helpers
+    // below name, list, and remove them.
+
+    /// Config file name for a sibling carrier ("server-jitsi.yaml").
+    /// The primary config stays `server.yaml`.
+    static func carrierYAMLFile(_ carrier: String) -> String {
+        "server-\(carrier).yaml"
+    }
+
+    /// Container name for a sibling carrier — the primary container's name
+    /// plus a carrier suffix ("olcrtc-server-abc-jitsi"). Keeps the
+    /// `olcrtc-server-` prefix, so the container scan, the uninstall sweep
+    /// and the control bot all see siblings without changes.
+    static func siblingContainerName(base: String, carrier: String) -> String {
+        "\(base)-\(carrier)"
+    }
+
+    /// One deployed carrier config on a host, parsed from `carrierListScript`
+    /// output. `isPrimary` marks the srv.sh-installed server.yaml entry — the
+    /// one whose container anchors the deploy dir (siblings resolve it via
+    /// `podman inspect` on that name).
+    struct CarrierInfo: Identifiable, Equatable, Sendable {
+        var id: String { container }
+        let file: String          // "server.yaml" | "server-<carrier>.yaml"
+        let provider: String      // auth.provider from the yaml
+        let transport: String     // net.transport from the yaml
+        let room: String          // room.id from the yaml
+        let container: String     // derived container name
+        let status: ContainerStatus
+        let isPrimary: Bool
+    }
+
+    /// Env prefix for scripts/add-carrier.sh. Mirrors `installEnv` minus the
+    /// build-time vars (no OLCRTC_PIN — a sibling reuses the already-built
+    /// binary) plus OLCRTC_BASE_CONTAINER (the primary container whose bind
+    /// mount locates the deploy dir). Var names must match the $OLCRTC_*
+    /// reads in scripts/add-carrier.sh
+    /// (Tests/ServerScriptParityTests.testEnvVarNamesMatchAddCarrierScript).
+    static func addCarrierEnv(_ options: InstallOptions, baseContainer: String) -> String {
+        var vars: [String] = [
+            "OLCRTC_BASE_CONTAINER=\(shellSafe(baseContainer))",
+            "OLCRTC_CARRIER=\(shellSafe(options.carrier))",
+            "OLCRTC_TRANSPORT=\(shellSafe(options.transport))",
+            "OLCRTC_DNS=\(shellSafe(SettingsStore.shared.dnsServer))",
+            // Same unconditional iOS-install marker as installEnv — see there.
+            "OLCRTC_CONFIG_NAME=auto-provisioned",
+        ]
+        if !options.roomID.isEmpty {
+            vars.append("OLCRTC_ROOM_ID=\(shellSafe(options.roomID))")
+        }
+        if options.carrier == "jitsi" {
+            vars.append("OLCRTC_JITSI_URL=\(shellSafe(options.jitsiBaseURL))")
+        }
+        // A secret — never logged raw: the LogStore.log pipeline's
+        // redactSecrets covers `OLCRTC_WB_TOKEN=` (same as installEnv).
+        if options.carrier == "wbstream", !options.wbToken.isEmpty {
+            vars.append("OLCRTC_WB_TOKEN=\(shellSafe(options.wbToken))")
+        }
+        if options.transport == "vp8channel" {
+            vars.append("OLCRTC_VP8_FPS=\(SettingsStore.shared.vp8FPS)")
+            vars.append("OLCRTC_VP8_BATCH=\(SettingsStore.shared.vp8BatchSize)")
+        }
+        if options.transport == "seichannel" {
+            vars.append("OLCRTC_SEI_FPS=\(options.seiFPS)")
+            vars.append("OLCRTC_SEI_BATCH=\(options.seiBatch)")
+            vars.append("OLCRTC_SEI_FRAG=\(options.seiFrag)")
+            vars.append("OLCRTC_SEI_ACK=\(options.seiACK)")
+        }
+        return vars.joined(separator: " ")
+    }
+
+    /// Adds a sibling carrier to an installed host: uploads
+    /// scripts/add-carrier.sh (same base64-printf channel as rotate-key.sh)
+    /// and runs it synchronously — no build happens (the binary is reused),
+    /// so the whole op takes seconds and the nohup/poll install pipeline
+    /// would be overkill. The script prints the srv.sh result contract
+    /// (OLCRTC_URI= / OLCRTC_CONTAINER=) plus OLCRTC_CARRIER_ADDED=ok.
+    static func addCarrier(host: ServerHost, secret: SSHSecret,
+                           baseContainer: String, options: InstallOptions,
+                           onStep: @Sendable @escaping (String) -> Void) async throws -> InstallResult {
+        let script = try loadBundledScript(named: "add-carrier")
+        await MainActor.run { LogStore.shared.log(.provisioning,
+            "✓ add-carrier.sh \(script.count) bytes") }
+        onStep(L10n.installStep1Upload.localized())
+        let b64 = Data(script.utf8).base64EncodedString()
+        let env = addCarrierEnv(options, baseContainer: baseContainer)
+        let output = try await _withConnection(host: host, secret: secret) { client in
+            _ = try await execute(client: client, label: "upload add-carrier.sh",
+                command: "printf '%s' '\(b64)' | base64 -d > \(RemotePaths.addCarrierScript)" +
+                         " && chmod +x \(RemotePaths.addCarrierScript)")
+            return try await execute(client: client, label: "add carrier",
+                command: "\(env) \(RemotePaths.addCarrierScript)")
+        }
+        guard extract(key: "OLCRTC_CARRIER_ADDED", from: output) == "ok",
+              let result = parseInstallResult(from: output) else {
+            throw ProvisionError.sshCommand("add carrier — \(String(output.suffix(300)))")
+        }
+        return result
+    }
+
+    /// Lists every deployed carrier config on the host anchored by the
+    /// primary container: server.yaml plus each sibling server-<carrier>.yaml
+    /// in the same deploy dir, with the derived container name and its live
+    /// status. Read-only. Output per config:
+    ///   OLCRTC_CARRIER_BEGIN / FILE= / PROVIDER= / TRANSPORT= / ROOM= /
+    ///   CONTAINER= / STATUS= / OLCRTC_CARRIER_END
+    static func carrierListScript(baseContainerName: String) -> String {
+        let safeCname = shellSafe(baseContainerName)
+        return #"""
+        set -e
+        CNAME="\#(safeCname)"
+        if ! podman ps -a --format '{{.Names}}' | grep -q "^${CNAME}$" 2>/dev/null; then
+            echo "ERROR: container ${CNAME} not found" >&2; exit 1
+        fi
+        DEPLOY_DIR=$(podman inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{break}}{{end}}{{end}}' "${CNAME}")
+        if [ -z "$DEPLOY_DIR" ] || [ ! -f "$DEPLOY_DIR/server.yaml" ]; then
+            echo "ERROR: server.yaml not found for ${CNAME} (deploy dir: ${DEPLOY_DIR:-unknown})" >&2; exit 1
+        fi
+        for f in "$DEPLOY_DIR"/server.yaml "$DEPLOY_DIR"/server-*.yaml; do
+            [ -f "$f" ] || continue
+            BASE_F=$(basename "$f")
+            case "$BASE_F" in
+                server.yaml)   C="${CNAME}" ;;
+                server-*.yaml) SUF="${BASE_F#server-}"; C="${CNAME}-${SUF%.yaml}" ;;
+                *) continue ;;
+            esac
+            STATUS=$(podman ps -a --filter "name=^${C}$" --format '{{.Status}}' 2>/dev/null | head -1)
+            [ -n "$STATUS" ] || STATUS="missing"
+            echo "OLCRTC_CARRIER_BEGIN"
+            echo "FILE=$BASE_F"
+            echo "PROVIDER=$(sed -n 's/^  provider: "\(.*\)"$/\1/p' "$f" 2>/dev/null | head -1)"
+            echo "TRANSPORT=$(sed -n 's/^  transport: "\(.*\)"$/\1/p' "$f" 2>/dev/null | head -1)"
+            echo "ROOM=$(sed -n 's/^  id: "\(.*\)"$/\1/p' "$f" 2>/dev/null | head -1)"
+            echo "CONTAINER=$C"
+            echo "STATUS=$STATUS"
+            echo "OLCRTC_CARRIER_END"
+        done
+        """#
+    }
+
+    /// Parses `carrierListScript` output into `CarrierInfo` rows. Tolerant:
+    /// unknown lines are ignored, a block missing FILE/CONTAINER is dropped,
+    /// STATUS `missing` maps to `.notFound`. Primary sorts first, siblings
+    /// alphabetical by container — a stable order for the host card.
+    static func parseCarrierList(from output: String) -> [CarrierInfo] {
+        var result: [CarrierInfo] = []
+        var block: [String: String]? = nil
+        for rawLine in output.split(separator: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line == "OLCRTC_CARRIER_BEGIN" { block = [:]; continue }
+            if line == "OLCRTC_CARRIER_END" {
+                if let b = block,
+                   let file = b["FILE"], !file.isEmpty,
+                   let container = b["CONTAINER"], !container.isEmpty {
+                    let rawStatus = b["STATUS"] ?? ""
+                    let status: ContainerStatus = rawStatus == "missing"
+                        ? .notFound
+                        : ContainerStatus.parse(from: rawStatus)
+                    result.append(CarrierInfo(
+                        file: file,
+                        provider: b["PROVIDER"] ?? "",
+                        transport: b["TRANSPORT"] ?? "",
+                        room: b["ROOM"] ?? "",
+                        container: container,
+                        status: status,
+                        isPrimary: file == "server.yaml"))
+                }
+                block = nil
+                continue
+            }
+            guard block != nil, let eq = line.firstIndex(of: "=") else { continue }
+            let key = String(line[line.startIndex..<eq])
+            block?[key] = String(line[line.index(after: eq)...])
+        }
+        return result.sorted {
+            if $0.isPrimary != $1.isPrimary { return $0.isPrimary }
+            return $0.container < $1.container
+        }
+    }
+
+    /// Removes a sibling carrier: force-removes its container and deletes its
+    /// server-<carrier>.yaml from the deploy dir. The target is always
+    /// `<base>-<carrier>` — the primary container/config can never be removed
+    /// here (that is uninstall's job).
+    static func removeCarrierScript(baseContainer: String, carrier: String) -> String {
+        let safeCname = shellSafe(baseContainer)
+        let safeCarrier = shellSafe(carrier)
+        return #"""
+        CNAME="\#(safeCname)"
+        TARGET="${CNAME}-\#(safeCarrier)"
+        DEPLOY_DIR=$(podman inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{break}}{{end}}{{end}}' "${CNAME}" 2>/dev/null)
+        podman rm -f "${TARGET}" 2>/dev/null || true
+        [ -n "$DEPLOY_DIR" ] && rm -f "${DEPLOY_DIR}/server-\#(safeCarrier).yaml" 2>/dev/null || true
+        echo "OLCRTC_CARRIER_REMOVED=ok"
+        """#
+    }
+
+    /// One `OLCRTC_SIBLING_URI=<container>|<uri>` line from rotate-key.sh —
+    /// the sibling's container name and its post-rotation olcrtc:// URI.
+    struct SiblingURI: Equatable, Sendable {
+        let container: String
+        let uri: String
+    }
+
+    /// Parses rotate-key.sh's sibling lines. Splits on the FIRST `|` only —
+    /// container names cannot contain `|`, URIs theoretically could.
+    static func parseSiblingURIs(from output: String) -> [SiblingURI] {
+        output.split(separator: "\n").compactMap { rawLine in
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("OLCRTC_SIBLING_URI=") else { return nil }
+            let payload = line.dropFirst("OLCRTC_SIBLING_URI=".count)
+            guard let bar = payload.firstIndex(of: "|") else { return nil }
+            let container = String(payload[payload.startIndex..<bar])
+            let uri = String(payload[payload.index(after: bar)...])
+            guard !container.isEmpty, !uri.isEmpty else { return nil }
+            return SiblingURI(container: container, uri: uri)
+        }
+    }
+
+    /// rotate-key result: the primary's new URI/container plus every
+    /// sibling's. `uri`/`containerName` mirror InstallResult so pre-#452
+    /// call sites (ServersView's rotate handler) keep reading `result.uri`
+    /// unchanged.
+    struct RotateKeyResult: Sendable {
+        let primary: InstallResult
+        let siblings: [SiblingURI]
+        var uri: String { primary.uri }
+        var containerName: String { primary.containerName }
+    }
+
     /// Single-call readiness probe. Output format (one per line):
     ///   PODMAN=yes|no
     ///   IMAGE=yes|no
@@ -1155,8 +1394,14 @@ enum SSHRunner {
     // Strategy mirrors `reconfigureScript`: `podman inspect` finds the bind-mount
     // source dir (where srv.sh wrote server.yaml), then `cat` the file and the
     // key file. No restart, no edits — read-only.
-    static func recoverConfigScript(containerName: String) -> String {
+    // #452: configFile — sibling carriers keep their config as
+    // server-<carrier>.yaml in the same deploy dir (carrierYAMLFile), so
+    // per-carrier recovery passes that name. The default preserves the
+    // original single-config behaviour.
+    static func recoverConfigScript(containerName: String,
+                                    configFile: String = "server.yaml") -> String {
         let safeCname = shellSafe(containerName)
+        let safeConfig = shellSafe(configFile)
         return #"""
         set -e
         CNAME="\#(safeCname)"
@@ -1164,9 +1409,9 @@ enum SSHRunner {
             echo "ERROR: container ${CNAME} not found" >&2; exit 1
         fi
         DEPLOY_DIR=$(podman inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{break}}{{end}}{{end}}' "${CNAME}")
-        CONFIG="${DEPLOY_DIR}/server.yaml"
+        CONFIG="${DEPLOY_DIR}/\#(safeConfig)"
         if [ -z "$DEPLOY_DIR" ] || [ ! -f "$CONFIG" ]; then
-            echo "ERROR: server.yaml not found for ${CNAME} (deploy dir: ${DEPLOY_DIR:-unknown})" >&2; exit 1
+            echo "ERROR: \#(safeConfig) not found for ${CNAME} (deploy dir: ${DEPLOY_DIR:-unknown})" >&2; exit 1
         fi
         echo "OLCRTC_RECOVER_YAML_BEGIN"
         # #314: tolerate an unreadable file (was: bare `cat "$CONFIG"`) — the
@@ -1289,11 +1534,13 @@ enum SSHRunner {
     /// returns the parsed config — read-only, no server mutation.
     static func recoverConfig(host: ServerHost, secret: SSHSecret,
                                containerName: String,
+                               configFile: String = "server.yaml",   // #452
                                onStep: @Sendable @escaping (String) -> Void) async throws -> RecoveredConfig {
         onStep(L10n.provisioningRecovering.localized())
         let output = try await _withConnection(host: host, secret: secret) { client in
             try await execute(client: client, label: "recover-config",
-                              command: recoverConfigScript(containerName: containerName))
+                              command: recoverConfigScript(containerName: containerName,
+                                                           configFile: configFile))
         }
         return try parseRecoveredConfig(from: output)
     }
@@ -1311,7 +1558,7 @@ enum SSHRunner {
     // Destructive by design: the new key cuts off every other client of that
     // server. The UI confirms explicitly before calling this.
     static func rotateKey(host: ServerHost, secret: SSHSecret, containerName: String,
-                          onStep: @Sendable @escaping (String) -> Void) async throws -> InstallResult {
+                          onStep: @Sendable @escaping (String) -> Void) async throws -> RotateKeyResult {
         onStep(L10n.provisioningRotatingKey.localized())
         let script = try loadBundledScript(named: "rotate-key")
         await MainActor.run { LogStore.shared.log(.provisioning,
@@ -1334,7 +1581,10 @@ enum SSHRunner {
         guard let result = parseInstallResult(from: output) else {
             throw ProvisionError.parseFailed(L10n.rotateKeyFailedNoURI.localized())
         }
-        return result
+        // #452: multi-carrier — rotate-key.sh also rewrites every sibling
+        // server-<carrier>.yaml in the deploy dir (one shared key per host)
+        // and emits one OLCRTC_SIBLING_URI=<container>|<uri> line per sibling.
+        return RotateKeyResult(primary: result, siblings: parseSiblingURIs(from: output))
     }
 
     // MARK: Uninstall script

@@ -8,12 +8,19 @@ import SwiftUI
 //
 // #258: carrier / transport use OlcChipPicker; the confirm action is a single
 // full-width OlcButton(.primary) footer, with one close (✕) control.
+//
+// #452: multi-carrier install. The existing form is the PRIMARY protocol; a new
+// "Additional protocols" section lets the user co-install the other carriers on
+// the same server (sibling containers sharing one key — see scripts/add-carrier.sh).
+// The sheet is also reused by the host card's "Add protocol" flow via
+// `singleOnly` + `limitToCarriers` (extras hidden, carriers restricted to the
+// ones not yet on the server).
 
 struct InstallOptionsView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var carrier   = "telemost"
-    @State private var transport = CarrierTransportMatrix.defaultTransport(for: "telemost")
+    @State private var carrier   : String
+    @State private var transport : String
     @State private var roomID    = ""
     // #256: Jitsi rendezvous base URL — editable, pre-filled with the shared
     // default so users can point at their own instance. Only sent for jitsi.
@@ -28,7 +35,77 @@ struct InstallOptionsView: View {
     // #436: wbstream account token (auth.token) — visible only for wbstream.
     @State private var wbToken = ""
 
-    let onConfirm: (InstallOptions) -> Void
+    // boc #452: additional-protocol drafts, keyed by carrier id. Presence with
+    // `enabled` drives the inline sub-form. Extras deliberately reuse the
+    // server-side SEI defaults (30/10/1200/1 == OlcrtcConnection's own) instead
+    // of adding four steppers per extra carrier — the sheet stays scannable and
+    // the tuning remains editable per-connection afterwards.
+    private struct ExtraDraft {
+        var enabled = false
+        var transport: String
+        var roomID = ""
+        var jitsiBaseURL = AppConstants.defaultJitsiBaseURL
+        var wbToken = ""
+    }
+    @State private var extras: [String: ExtraDraft] = [:]
+
+    /// Reuse mode (host card "Add protocol"): restrict the carrier chips to the
+    /// providers not yet installed on the server. nil = the full matrix list.
+    private let limitToCarriers: [String]?
+    /// Reuse mode: hide the extras section — the sheet returns exactly ONE
+    /// InstallOptions (extras array is empty).
+    private let singleOnly: Bool
+    // eoc #452
+
+    // #452 was: `let onConfirm: (InstallOptions) -> Void` — now also returns the
+    // additional-protocol options (empty for a single-protocol confirm).
+    let onConfirm: (_ primary: InstallOptions, _ extras: [InstallOptions]) -> Void
+
+    // boc #452: explicit init (the private stored properties above kill the
+    // memberwise one). Seeds the carrier from the restricted list when present.
+    init(limitToCarriers: [String]? = nil,
+         singleOnly: Bool = false,
+         onConfirm: @escaping (_ primary: InstallOptions, _ extras: [InstallOptions]) -> Void) {
+        self.limitToCarriers = limitToCarriers
+        self.singleOnly = singleOnly
+        self.onConfirm = onConfirm
+        let first = limitToCarriers?.first ?? "telemost"
+        _carrier   = State(initialValue: first)
+        _transport = State(initialValue: CarrierTransportMatrix.defaultTransport(for: first))
+    }
+
+    /// Carriers offered by the primary chips (restricted in reuse mode).
+    private var availableCarriers: [String] {
+        limitToCarriers ?? CarrierTransportMatrix.carriers
+    }
+
+    /// Carriers offered as extras: everything except the current primary,
+    /// in matrix order. Hidden entirely in singleOnly mode.
+    private var extraCarriers: [String] {
+        CarrierTransportMatrix.carriers.filter { $0 != carrier }
+    }
+
+    private var enabledExtraCarriers: [String] {
+        extraCarriers.filter { extras[$0]?.enabled == true }
+    }
+
+    private func draft(_ c: String) -> ExtraDraft {
+        extras[c] ?? ExtraDraft(transport: CarrierTransportMatrix.defaultTransport(for: c))
+    }
+
+    private func draftBinding(_ c: String) -> Binding<ExtraDraft> {
+        Binding(get: { draft(c) }, set: { extras[c] = $0 })
+    }
+
+    private func extraIsValid(_ c: String) -> Bool {
+        let d = draft(c)
+        guard CarrierTransportMatrix.compat(carrier: c, transport: d.transport) != .fail else { return false }
+        if CarrierTransportMatrix.requiresRoomID(carrier: c) {
+            return !d.roomID.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return true
+    }
+    // eoc #452
 
     private var requiresRoomID: Bool { CarrierTransportMatrix.requiresRoomID(carrier: carrier) }
 
@@ -38,11 +115,14 @@ struct InstallOptionsView: View {
         // combo the matrix marks broken must never install a dead server.
         (!requiresRoomID || !roomID.trimmingCharacters(in: .whitespaces).isEmpty)
             && CarrierTransportMatrix.compat(carrier: carrier, transport: transport) != .fail
+            // #452: every enabled extra must be valid too.
+            && enabledExtraCarriers.allSatisfy { extraIsValid($0) }
     }
 
     /// (audit) transport chips with the ✗ combos for the current carrier
     /// disabled (OlcOption.disabled) and the reason surfaced to VoiceOver.
-    private var transportOptions: [OlcOption<String>] {
+    /// #452: parametrised by carrier so the extras sub-forms reuse it.
+    private func transportOptions(for carrier: String) -> [OlcOption<String>] {
         CarrierTransportMatrix.transports.map { t -> OlcOption<String> in
             let fails = CarrierTransportMatrix.compat(carrier: carrier, transport: t) == .fail
             return OlcOption(
@@ -64,12 +144,15 @@ struct InstallOptionsView: View {
                 jitsiSection
                 wbTokenSection
                 seiSection
+                extrasSection   // #452
                 defaultsInfoSection
             }
-            .navigationTitle(L10n.installTitle.localized())
+            // #452: reuse mode gets its own title + confirm label.
+            .navigationTitle((singleOnly ? L10n.addProtocolTitle : L10n.installTitle).localized())
             .navigationBarTitleDisplayMode(.inline)
             // #262: shared sheet chrome (✕ close + full-width primary footer).
-            .olcSheet(confirm: L10n.actionInstall.localized(), icon: "arrow.down.app",
+            .olcSheet(confirm: (singleOnly ? L10n.addProtocolAction : L10n.actionInstall).localized(),
+                      icon: singleOnly ? "plus.circle" : "arrow.down.app",
                       disabled: !canSubmit) { submit() }
         }
     }
@@ -78,10 +161,14 @@ struct InstallOptionsView: View {
 
     private var carrierSection: some View {
         Section(L10n.sectionCarrier.localized()) {
+            // #452 was: options from CarrierTransportMatrix.carriers — now the
+            // (possibly restricted) availableCarriers.
             OlcChipPicker(selection: $carrier,
-                          options: CarrierTransportMatrix.carriers.map { ($0, CarrierTransportMatrix.carrierLabel($0)) })
+                          options: availableCarriers.map { ($0, CarrierTransportMatrix.carrierLabel($0)) })
                 .onChange(of: carrier) { _, c in
                     transport = CarrierTransportMatrix.defaultTransport(for: c)
+                    // #452: the new primary can't also be an extra.
+                    extras[c] = nil
                 }
         }
     }
@@ -89,7 +176,7 @@ struct InstallOptionsView: View {
     private var transportSection: some View {
         Section {
             // (audit) options carry disabled+reason for the ✗ combos.
-            OlcChipPicker(selection: $transport, options: transportOptions)
+            OlcChipPicker(selection: $transport, options: transportOptions(for: carrier))
                 .onChange(of: transport) { _, newTransport in
                     if newTransport != "seichannel" {
                         seiFPS = 30; seiBatch = 10; seiFrag = 1200; seiACK = 1
@@ -183,6 +270,59 @@ struct InstallOptionsView: View {
         }
     }
 
+    // boc #452: additional-protocol toggles with inline sub-forms. Each enabled
+    // extra mirrors the primary's fields (transport chips gated by the matrix,
+    // room field / auto-generate hint, jitsi base, wb token) — but not the SEI
+    // steppers (server defaults; see the ExtraDraft comment).
+    @ViewBuilder
+    private var extrasSection: some View {
+        if !singleOnly {
+            Section {
+                ForEach(extraCarriers, id: \.self) { c in
+                    extraRows(c)
+                }
+            } header: {
+                Text(L10n.installExtrasHeader.localized())
+            } footer: {
+                Text(L10n.installExtrasFooter.localized()).font(.caption2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func extraRows(_ c: String) -> some View {
+        let binding = draftBinding(c)
+        Toggle(L10n.installExtraToggle_fmt.formatted(CarrierTransportMatrix.carrierLabel(c)),
+               isOn: binding.enabled)
+        if draft(c).enabled {
+            OlcChipPicker(selection: binding.transport, options: transportOptions(for: c))
+            if CarrierTransportMatrix.requiresRoomID(carrier: c) {
+                TextField(L10n.fieldRoomID.localized(), text: binding.roomID)
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            } else {
+                Label(L10n.roomIDAutoGenHint.localized(), systemImage: "wand.and.stars")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if c == "jitsi" {
+                TextField(L10n.fieldJitsiURL.localized(), text: binding.jitsiBaseURL)
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+            }
+            if c == "wbstream" {
+                SecureField(L10n.wbTokenFieldLabel.localized(), text: binding.wbToken)
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+        }
+    }
+    // eoc #452
+
     private var defaultsInfoSection: some View {
         Section {
             Text(L10n.carrierFooter.localized())
@@ -202,7 +342,7 @@ struct InstallOptionsView: View {
         // Never send an empty OLCRTC_JITSI_URL (srv.sh's `:-` default only fills
         // an *unset* var, not an empty one) — fall back to the shared default.
         let cleanedJitsi = jitsiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        onConfirm(InstallOptions(
+        let primary = InstallOptions(
             carrier:      carrier,
             transport:    transport,
             roomID:       requiresRoomID ? cleanedRoom : "",
@@ -212,7 +352,23 @@ struct InstallOptionsView: View {
             seiFrag:      seiFrag,
             seiACK:       seiACK,
             wbToken:      carrier == "wbstream" ? wbToken.trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        ))
+        )
+        // boc #452: extras — same cleaning rules as the primary; SEI stays on
+        // defaults (see ExtraDraft). Order follows the matrix's carriers list.
+        let extraOptions: [InstallOptions] = singleOnly ? [] : enabledExtraCarriers.map { c in
+            let d = draft(c)
+            let room = d.roomID.components(separatedBy: .whitespacesAndNewlines).joined()
+            let jitsi = d.jitsiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            return InstallOptions(
+                carrier:      c,
+                transport:    d.transport,
+                roomID:       CarrierTransportMatrix.requiresRoomID(carrier: c) ? room : "",
+                jitsiBaseURL: jitsi.isEmpty ? AppConstants.defaultJitsiBaseURL : jitsi,
+                wbToken:      c == "wbstream" ? d.wbToken.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            )
+        }
+        onConfirm(primary, extraOptions)
+        // eoc #452
         dismiss()
     }
 

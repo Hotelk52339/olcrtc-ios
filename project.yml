@@ -16,7 +16,7 @@ settings:
     # validation and confuses sideloads); scripts/cut-release.py reads
     # CURRENT_PROJECT_VERSION from here.
     MARKETING_VERSION: "1.3"
-    CURRENT_PROJECT_VERSION: "265"
+    CURRENT_PROJECT_VERSION: "266"
 
 packages:
   Citadel:
@@ -36,6 +36,11 @@ targets:
       # #314: rotate-key.sh ships alongside srv.sh — uploaded over SSH by the
       # "generate new key" fallback of the #303 recover-connection flow.
       - path: scripts/rotate-key.sh
+        buildPhase: resources
+      # #452: add-carrier.sh — attaches an extra carrier to an existing install
+      # as a sibling container sharing the deploy dir / binary / key
+      # (multi-carrier VPS); uploaded over SSH by SSHRunner.addCarrier.
+      - path: scripts/add-carrier.sh
         buildPhase: resources
       # #416: olcrtc-bot.py — the server-side control bot, uploaded over SSH and
       # installed as a systemd service by the bot-deploy flow (#418).

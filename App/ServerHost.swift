@@ -41,6 +41,13 @@ struct ServerHost: Identifiable, Codable, Equatable {
     /// this connection" in the host card.
     var lastConnectionID : UUID?
 
+    /// #452: ConnectionRecords created for sibling carriers added on top of
+    /// the primary install (multi-carrier VPS — one container per protocol
+    /// sharing the deploy dir). Optional so pre-existing UserDefaults JSON
+    /// keeps decoding — the key is simply absent — same convention as
+    /// authMethod (#451).
+    var extraConnectionIDs: [UUID]? = nil
+
     // #295: per-server container logs are stored as `<logFilePrefix>_container.log`.
     // Sanitises `label` into a filesystem-safe prefix: alphanumerics are kept,
     // everything else (spaces, punctuation, non-ASCII) collapses to a single

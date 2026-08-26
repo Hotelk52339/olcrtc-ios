@@ -204,4 +204,20 @@ final class SSHRunnerRecoverConfigTests: XCTestCase {
         let script = SSHRunner.recoverConfigScript(containerName: "olcrtc-server-abc; rm -rf /")
         XCTAssertFalse(script.contains("rm -rf /"))
     }
+
+    // MARK: #452 — per-carrier recovery (sibling server-<carrier>.yaml)
+
+    func testRecoverConfigScriptUsesCustomConfigFile() {
+        let script = SSHRunner.recoverConfigScript(containerName: "olcrtc-server-abc123",
+                                                   configFile: "server-jitsi.yaml")
+        XCTAssertTrue(script.contains("server-jitsi.yaml"))
+        XCTAssertFalse(script.contains("/server.yaml"),
+            "custom config file must replace the default, not join it")
+    }
+
+    func testRecoverConfigScriptShellSafesConfigFile() {
+        let script = SSHRunner.recoverConfigScript(containerName: "olcrtc-server-abc",
+                                                   configFile: "x; rm -rf /")
+        XCTAssertFalse(script.contains("rm -rf /"))
+    }
 }

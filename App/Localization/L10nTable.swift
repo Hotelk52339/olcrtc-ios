@@ -663,6 +663,24 @@ enum L10nTable {
         .botCopyTokenAction:         "Copy token",
         .botTokenCopied:             "📋 Token copied",
         .botNameTakenError:          "A bot with this name already exists",
+
+        // #452: multi-carrier VPS — protocol rows + extras install
+        .protocolsSectionHeader:      "Protocols",
+        .addProtocolAction:           "Add protocol",
+        .addProtocolTitle:            "Add protocol",
+        .removeProtocolAction:        "Remove from server",
+        .removeProtocolConfirmTitle_fmt: "Remove %@ from this server?",
+        .removeProtocolConfirmBody:   "Stops and deletes this protocol's container and its config on the VPS. The matching connection is removed from your list too. The other protocols keep running.",
+        .protocolConnectAction:       "Connect via this protocol",
+        .protocolConnectedBadge:      "Connected",
+        .protocolPrimaryBadge:        "primary",
+        .protocolRecordMissing:       "No saved connection matches this protocol — use «Recover connection» in the row menu.",
+        .protocolAdded_fmt:           "Added %@/%@ — connection saved",
+        .protocolRemoved_fmt:         "Removed %@ from the server",
+        .installExtrasHeader:         "Additional protocols",
+        .installExtrasFooter:         "Installed on the same server right after the primary protocol, sharing one encryption key. Each protocol gets its own connection in the list — pick which one to use at connect time.",
+        .installExtraToggle_fmt:      "Also install %@",
+        .installExtrasPartialFail_fmt: "Some protocols failed to install: %@",
     ]
 
     // MARK: Russian
@@ -1307,5 +1325,23 @@ enum L10nTable {
         .botCopyTokenAction:         "Скопировать токен",
         .botTokenCopied:             "📋 Токен скопирован",
         .botNameTakenError:          "Бот с таким именем уже существует",
+
+        // #452: мульти-протокольный VPS — строки протоколов + доустановка
+        .protocolsSectionHeader:      "Протоколы",
+        .addProtocolAction:           "Добавить протокол",
+        .addProtocolTitle:            "Добавить протокол",
+        .removeProtocolAction:        "Удалить с сервера",
+        .removeProtocolConfirmTitle_fmt: "Удалить %@ с этого сервера?",
+        .removeProtocolConfirmBody:   "Останавливает и удаляет контейнер этого протокола и его конфиг на VPS. Соответствующее подключение тоже удаляется из списка. Остальные протоколы продолжают работать.",
+        .protocolConnectAction:       "Подключиться через этот протокол",
+        .protocolConnectedBadge:      "Подключено",
+        .protocolPrimaryBadge:        "основной",
+        .protocolRecordMissing:       "Нет сохранённого подключения для этого протокола — используйте «Восстановить подключение» в меню строки.",
+        .protocolAdded_fmt:           "Добавлен %@/%@ — подключение сохранено",
+        .protocolRemoved_fmt:         "%@ удалён с сервера",
+        .installExtrasHeader:         "Дополнительные протоколы",
+        .installExtrasFooter:         "Устанавливаются на тот же сервер сразу после основного протокола с общим ключом шифрования. Каждый протокол получает своё подключение в списке — выбирайте нужное при подключении.",
+        .installExtraToggle_fmt:      "Также установить %@",
+        .installExtrasPartialFail_fmt: "Часть протоколов не установилась: %@",
     ]
 }

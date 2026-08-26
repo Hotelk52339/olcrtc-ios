@@ -535,14 +535,16 @@ final class Provisioner: ObservableObject {
     // where a container was found (#302 auto-detect) but no ConnectionRecord
     // is linked — e.g. fresh install / reinstall with an empty Connections tab.
     func recoverConfig(on host: ServerHost, secret: SSHSecret,
-                       containerName: String) async throws -> SSHRunner.RecoveredConfig {
+                       containerName: String,
+                       configFile: String = "server.yaml") async throws -> SSHRunner.RecoveredConfig {
         status = .running(L10n.provisioningRecovering.localized())
         LogStore.shared.startSession(.provisioning)
-        LogStore.shared.log(.provisioning, "→ Recover config: \(containerName) on \(host.host)")
+        LogStore.shared.log(.provisioning, "→ Recover config: \(containerName) (\(configFile)) on \(host.host)")
         do {
             try await ensureReachable(host)
             let cfg = try await SSHRunner.recoverConfig(host: host, secret: secret,
                                                         containerName: containerName,
+                                                        configFile: configFile,   // #452
                                                         onStep: stepHandler())
             LogStore.shared.log(.provisioning,
                 "✓ Recovered config: carrier=\(cfg.carrier) transport=\(cfg.transport) room=\(cfg.roomID.prefix(8))…")
@@ -560,8 +562,11 @@ final class Provisioner: ObservableObject {
     // scripts/rotate-key.sh (srv.sh-parity script: same key-gen and YAML-write
     // lines), restarts the container, and returns the resulting URI/container
     // so the caller can add the connection like a fresh install.
+    // #452: returns RotateKeyResult — the primary's URI/container (same
+    // `uri`/`containerName` fields as before) plus the sibling carriers the
+    // script also re-keyed, so the caller can update every affected record.
     func rotateKey(on host: ServerHost, secret: SSHSecret,
-                   containerName: String) async throws -> InstallResult {
+                   containerName: String) async throws -> SSHRunner.RotateKeyResult {
         status = .running(L10n.provisioningRotatingKey.localized())
         LogStore.shared.startSession(.provisioning)
         LogStore.shared.log(.provisioning, "→ Rotate key: \(containerName) on \(host.host)")
@@ -572,10 +577,84 @@ final class Provisioner: ObservableObject {
                                                        onStep: stepHandler())
             LogStore.shared.log(.provisioning,
                 "✓ Key rotated — new URI: \(LogStore.redactSecrets(result.uri))")
+            // #452: siblings share the host key — every server-<carrier>.yaml
+            // was rewritten and restarted too; surface how many followed.
+            if !result.siblings.isEmpty {
+                LogStore.shared.log(.provisioning,
+                    "✓ Rotated \(result.siblings.count) sibling carrier(s) too")
+            }
             status = .success(L10n.rotateKeyResultSuccess.localized())
             return result
         } catch {
             LogStore.shared.log(.provisioning, "✗ Rotate key failed: \(error.localizedDescription)")
+            status = .failure(error.localizedDescription)
+            throw error
+        }
+    }
+
+    // MARK: #452 — Multi-carrier (sibling protocol containers)
+
+    /// Adds a sibling carrier container to an already-installed host via
+    /// scripts/add-carrier.sh — it reuses the deploy dir / binary / key of
+    /// `baseContainer`, so the op takes seconds (no build). Returns the
+    /// sibling's URI + container name in the same shape as a fresh install.
+    func addCarrier(on host: ServerHost, secret: SSHSecret,
+                    baseContainer: String, options: InstallOptions) async throws -> InstallResult {
+        status = .running(L10n.provisioningSSHConnecting.localized())
+        LogStore.shared.startSession(.provisioning)
+        LogStore.shared.log(.provisioning,
+            "→ Add carrier on \(host.host): base=\(baseContainer) carrier=\(options.carrier) transport=\(options.transport)" +
+            (options.requiresRoomID ? " room=\(options.roomID.prefix(8))…" : " room=auto"))
+        do {
+            try await ensureReachable(host)
+            let result = try await SSHRunner.addCarrier(host: host, secret: secret,
+                                                        baseContainer: baseContainer,
+                                                        options: options,
+                                                        onStep: stepHandler())
+            status = .success(L10n.installResultSuccess_fmt.formatted(options.carrier, options.transport))
+            return result
+        } catch {
+            LogStore.shared.log(.provisioning, "✗ Add carrier failed: \(error.localizedDescription)")
+            status = .failure(error.localizedDescription)
+            throw error
+        }
+    }
+
+    /// Lists the deployed carrier configs (primary + siblings) for the host
+    /// anchored by `baseContainer`. Read-only and status-silent (the
+    /// probeReadiness convention) — safe to call on every card refresh.
+    func listCarriers(on host: ServerHost, secret: SSHSecret,
+                      baseContainer: String) async throws -> [SSHRunner.CarrierInfo] {
+        LogStore.shared.startSession(.provisioning)
+        try await ensureReachable(host)
+        let output = try await SSHRunner._withConnection(host: host, secret: secret) { client in
+            try await SSHRunner._execute(client: client, label: "list carriers",
+                                         command: SSHRunner.carrierListScript(baseContainerName: baseContainer))
+        }
+        return SSHRunner.parseCarrierList(from: output)
+    }
+
+    /// Removes a sibling carrier (container + its server-<carrier>.yaml).
+    /// Never touches the primary — removeCarrierScript always targets
+    /// `<base>-<carrier>`.
+    func removeCarrier(on host: ServerHost, secret: SSHSecret,
+                       baseContainer: String, carrier: String) async throws {
+        status = .running(L10n.provisioningUninstallSSH.localized())
+        LogStore.shared.startSession(.provisioning)
+        LogStore.shared.log(.provisioning, "→ Remove carrier on \(host.host): \(baseContainer)-\(carrier)")
+        do {
+            try await ensureReachable(host)
+            let output = try await SSHRunner._withConnection(host: host, secret: secret) { client in
+                try await SSHRunner._execute(client: client, label: "remove carrier",
+                                             command: SSHRunner.removeCarrierScript(baseContainer: baseContainer,
+                                                                                    carrier: carrier))
+            }
+            guard SSHRunner.extract(key: "OLCRTC_CARRIER_REMOVED", from: output) == "ok" else {
+                throw ProvisionError.sshCommand("remove carrier — \(String(output.suffix(300)))")
+            }
+            status = .success(L10n.uninstallResultSuccess.localized())
+        } catch {
+            LogStore.shared.log(.provisioning, "✗ Remove carrier failed: \(error.localizedDescription)")
             status = .failure(error.localizedDescription)
             throw error
         }

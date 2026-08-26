@@ -150,4 +150,21 @@ final class RotateKeyScriptTests: XCTestCase {
         // without it rather than guessing a container.
         XCTAssertTrue(rotate.contains("${OLCRTC_CONTAINER:?"))
     }
+
+    // MARK: #452 — multi-carrier sibling rotation
+
+    func testRewritesAndReportsSiblingCarriers() throws {
+        let rotate = try loadScript("rotate-key")
+        // add-carrier.sh (#452) attaches siblings "<base>-<carrier>" running
+        // server-<carrier>.yaml with the SAME key — a rotation must sweep
+        // every sibling yaml…
+        XCTAssertTrue(rotate.contains("for SIB_CONFIG in \"$WORK_DIR\"/server-*.yaml; do"))
+        // …derive the sibling container from the shared naming convention and
+        // restart it best-effort (missing/stopped siblings are ignored)…
+        XCTAssertTrue(rotate.contains("SIB=\"${CONTAINER_NAME}-${SIB_CARRIER}\""))
+        XCTAssertTrue(rotate.contains("podman restart \"$SIB\" >/dev/null 2>&1 || true"))
+        // …and report each new URI as "<container>|<uri>" so the app can
+        // update the matching ConnectionRecords (split on the FIRST '|').
+        XCTAssertTrue(rotate.contains("OLCRTC_SIBLING_URI=${SIB}|olcrtc://"))
+    }
 }
