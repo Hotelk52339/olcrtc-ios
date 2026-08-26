@@ -37,6 +37,11 @@ targets:
       # "generate new key" fallback of the #303 recover-connection flow.
       - path: scripts/rotate-key.sh
         buildPhase: resources
+      # #452: add-carrier.sh — attaches an extra carrier to an existing install
+      # as a sibling container sharing the deploy dir / binary / key
+      # (multi-carrier VPS); uploaded over SSH by SSHRunner.addCarrier.
+      - path: scripts/add-carrier.sh
+        buildPhase: resources
       # #416: olcrtc-bot.py — the server-side control bot, uploaded over SSH and
       # installed as a systemd service by the bot-deploy flow (#418).
       - path: scripts/olcrtc-bot.py

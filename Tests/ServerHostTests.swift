@@ -118,6 +118,28 @@ final class ServerHostTests: XCTestCase {
         XCTAssertEqual(SSHAuthMethod.password.rawValue, "password")
         XCTAssertEqual(SSHAuthMethod.privateKey.rawValue, "privateKey")
     }
+
+    // MARK: #452 — extraConnectionIDs Codable compatibility
+
+    /// Hosts saved before multi-carrier existed have no `extraConnectionIDs`
+    /// key — they must keep decoding (nil), same convention as authMethod.
+    func testLegacyHostJSONWithoutExtraConnectionIDsDecodes() throws {
+        let legacy = """
+        {"id":"11111111-2222-3333-4444-555555555555","label":"TW","host":"1.2.3.4",
+         "port":22,"username":"root"}
+        """
+        let host = try JSONDecoder().decode(ServerHost.self, from: Data(legacy.utf8))
+        XCTAssertNil(host.extraConnectionIDs)
+    }
+
+    func testExtraConnectionIDsRoundTripThroughCodable() throws {
+        var host = ServerHost(label: "multi", host: "1.2.3.4")
+        let ids = [UUID(), UUID()]
+        host.extraConnectionIDs = ids
+        let data = try JSONEncoder().encode(host)
+        let back = try JSONDecoder().decode(ServerHost.self, from: data)
+        XCTAssertEqual(back.extraConnectionIDs, ids)
+    }
 }
 
 // MARK: - SSHKeyAnalyzerTests (#451)

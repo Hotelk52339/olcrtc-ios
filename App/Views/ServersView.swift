@@ -34,11 +34,16 @@ struct ServersView: View {
     /// #419: bot registry (shared with Settings). The per-server bot sheet picks
     /// a bot from it; the token is read from the Keychain at deploy time.
     @ObservedObject var botStore: BotStore
+    /// #452: the tunnel, so a protocol row on the host card can connect directly
+    /// ("pick which protocol to tunnel through, right from Manage VPS").
+    @ObservedObject var tunnel: TunnelManager
 
     @State private var showAdd        = false
     @State private var editHost       : ServerHost?
     @State private var installFor     : ServerHost?
-    @State private var reconfigureFor : ServerHost?
+    // #452 was: reconfigureFor : ServerHost? — now a targeted request (container
+    // + record + seed values), so a protocol row reconfigures ITS container.
+    @State private var reconfigureRequest : ReconfigureRequest?
     @State private var botConfigFor   : ServerHost?   // #419: per-server bot sheet
     // #339 was: logsPayload (ContainerLogsPayload?) — the container-logs sheet
     // is gone; the action routes to the Logs tab instead.
@@ -68,6 +73,18 @@ struct ServersView: View {
     // unparseable — confirm before rotating ~/.olcrtc_key (destructive for
     // every other client of that server).
     @State private var rotateKeyConfirmHost    : ServerHost?
+    // boc #452: multi-carrier host card. `carrierRows` caches the per-host
+    // protocol list (SSHRunner.CarrierInfo, from provisioner.listCarriers);
+    // the request states drive the add-protocol sheet, the remove confirm and
+    // the per-row recover confirm; `carrierBusyHostID` serializes the
+    // outside-`run` protocol ops (add/remove/sibling start/stop), mirroring
+    // how rotateKey/recoverConnection run without a HostOp.
+    @State private var carrierRows          : [UUID: [SSHRunner.CarrierInfo]] = [:]
+    @State private var addProtocolFor       : ServerHost?
+    @State private var removeCarrierConfirm : CarrierRemoveRequest?
+    @State private var recoverRowRequest    : CarrierRecoverRequest?
+    @State private var carrierBusyHostID    : UUID?
+    // eoc #452
     // #374 was: pingTimer (Timer?) — a repeating Timer that re-pinged EVERY
     // host every tick, even mid-op. Replaced by a structured `.task` sweep loop
     // (autoPingLoop) tied to the view lifecycle, which cancels cleanly on
@@ -129,13 +146,21 @@ struct ServersView: View {
                 }
             }
             .sheet(item: $installFor) { host in
-                InstallOptionsView { options in
-                    Task { await install(host, options: options) }
+                // #452: multi-protocol install plan (primary + extras).
+                InstallOptionsView { primary, extras in
+                    Task { await install(host, primary: primary, extras: extras) }
                 }
             }
-            .sheet(item: $reconfigureFor) { host in
-                ReconfigureOptionsView { options in
-                    Task { await reconfigure(host, options: options) }
+            .sheet(item: $reconfigureRequest) { req in
+                // #452: targeted at one protocol's container (value snapshot,
+                // #330 rule) and seeded from its current carrier/transport/room.
+                ReconfigureOptionsView(initialCarrier: req.initialCarrier,
+                                       initialTransport: req.initialTransport,
+                                       initialRoom: req.initialRoom) { options in
+                    Task {
+                        await reconfigure(req.host, containerName: req.containerName,
+                                          recordID: req.recordID, options: options)
+                    }
                 }
             }
             // #419: per-server bot settings sheet. #451: passes the SSHSecret.
@@ -273,6 +298,56 @@ struct ServersView: View {
             } message: { _ in
                 Text(L10n.rotateKeyConfirmBody.localized())
             }
+            // boc #452: multi-protocol host card — add-protocol sheet (reuses
+            // InstallOptionsView in single mode, carriers restricted to the
+            // ones not yet installed), remove-protocol confirm, per-row recover.
+            .sheet(item: $addProtocolFor) { host in
+                InstallOptionsView(limitToCarriers: missingCarriers(host),
+                                   singleOnly: true) { options, _ in
+                    Task { await addCarrier(host, options: options) }
+                }
+            }
+            .confirmationDialog(
+                removeCarrierConfirm.map {
+                    L10n.removeProtocolConfirmTitle_fmt.formatted(
+                        CarrierTransportMatrix.carrierLabel($0.row.provider))
+                } ?? "",
+                isPresented: Binding(
+                    get: { removeCarrierConfirm != nil },
+                    set: { if !$0 { removeCarrierConfirm = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: removeCarrierConfirm
+            ) { req in
+                Button(L10n.removeProtocolAction.localized(), role: .destructive) {
+                    removeCarrierConfirm = nil
+                    Task { await removeCarrier(req.host, row: req.row) }
+                }
+                Button(L10n.cancel.localized(), role: .cancel) { removeCarrierConfirm = nil }
+            } message: { _ in
+                Text(L10n.removeProtocolConfirmBody.localized())
+            }
+            .confirmationDialog(
+                L10n.recoverConfirmTitle.localized(),
+                isPresented: Binding(
+                    get: { recoverRowRequest != nil },
+                    set: { if !$0 { recoverRowRequest = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: recoverRowRequest
+            ) { req in
+                Button(L10n.recoverConfirmAction.localized()) {
+                    recoverRowRequest = nil
+                    Task {
+                        await recoverConnection(req.host, containerName: req.container,
+                                                configFile: req.file, asExtra: !req.isPrimary)
+                    }
+                }
+                Button(L10n.cancel.localized(), role: .cancel) { recoverRowRequest = nil }
+            } message: { _ in
+                Text(L10n.recoverConfirmBody.localized())
+            }
+            // eoc #452
         }
     }
 
@@ -417,7 +492,7 @@ struct ServersView: View {
         case .update:        await update(host)
         case .reboot:        await reboot(host)
         case .install:       installFor = host
-        case .reconfigure:   reconfigureFor = host
+        case .reconfigure:   reconfigureRequest = primaryReconfigureRequest(host)   // #452
         case .uninstall:     uninstallConfirmHost = host
         case .deepUninstall: deepUninstallConfirmHost = host
         }
@@ -546,11 +621,21 @@ struct ServersView: View {
                     // placeholders, dimmed while an op runs).
                     metricsStrip(host, state: state)
 
+                    // #452: per-protocol rows (multi-carrier host).
+                    protocolsSection(host, state: state)
+
                     actionBar(host, state: state)
                 }
                 .animation(.easeInOut(duration: 0.35), value: state)
                 // #334: fade the container-log busy strip in/out smoothly.
                 .animation(.easeInOut(duration: 0.35), value: logsRouter.fetchingHostID)
+            }
+            // #452: lazy first load of the protocol rows (skipped while an op
+            // holds the SSH lane; refreshed after every op anyway).
+            .onAppear {
+                guard carrierRows[host.id] == nil, host.lastContainerName != nil,
+                      !actionsDisabled else { return }
+                Task { await refreshCarriers(host.id) }
             }
             .olcCardRow()
         }
@@ -735,7 +820,7 @@ struct ServersView: View {
             .disabled(actionsDisabled || !hasContainer(host))
             .accessibilityLabel(L10n.actionContainerLogs.localized())
             OlcIconButton(systemImage: "slider.horizontal.3", tint: Theme.Palette.orange) {
-                reconfigureFor = host
+                reconfigureRequest = primaryReconfigureRequest(host)   // #452
             }
             .disabled(actionsDisabled || !hasContainer(host))
             .accessibilityLabel(L10n.actionChangeRoomTransport.localized())
@@ -815,7 +900,7 @@ struct ServersView: View {
                 logsRouter.request = .init(hostID: host.id, autofetch: true)
             })
             items.append(.action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
-                reconfigureFor = host
+                reconfigureRequest = primaryReconfigureRequest(host)   // #452
             })
             items.append(.action(L10n.actionUpdate.localized(), systemImage: "arrow.triangle.2.circlepath") {
                 Task { await update(host) }
@@ -929,11 +1014,16 @@ struct ServersView: View {
             }
             return base
         }
+        await refreshCarriers(host.id)   // #452
     }
 
-    private func install(_ host: ServerHost, options: InstallOptions) async {
+    // #452 was: install(_ host:options:) — single protocol. Now installs the
+    // primary via srv.sh, then each additional protocol via add-carrier.sh
+    // (sibling containers off the same deploy dir, shared key), creating one
+    // ConnectionRecord per protocol.
+    private func install(_ host: ServerHost, primary: InstallOptions, extras: [InstallOptions]) async {
         await run(.install, on: host) { secret in
-            let result = try await provisioner.install(on: host, secret: secret, options: options)
+            let result = try await provisioner.install(on: host, secret: secret, options: primary)
             let cfg = try OlcrtcURI.parse(result.uri)
             // #355 (audit A1): carry the vp8 + sei tuning the install URI may
             // encode (server-script format) instead of dropping them to
@@ -944,13 +1034,49 @@ struct ServersView: View {
             // #436: the wbstream token isn't in the URI (upstream keeps it out), so
             // carry it from the install options onto the connection — the client
             // must send the same auth.token it just wrote into the server config.
-            params.wbToken = options.wbToken
-            let record = ConnectionRecord(name: host.label, details: .olcrtc(params))
+            params.wbToken = primary.wbToken
+            // #452: with extras every record (primary included) is suffixed by
+            // its carrier, so the per-protocol connections stay tellable-apart.
+            let record = ConnectionRecord(
+                name: Self.recordName(host: host, carrier: primary.carrier, multi: !extras.isEmpty),
+                details: .olcrtc(params))
             connections.add(record)
             var updated = host
             updated.lastContainerName = result.containerName
             updated.lastConnectionID  = record.id
+            // boc #452: additional protocols — one add-carrier.sh run each. A
+            // per-protocol failure skips just that protocol (collected into one
+            // alert) instead of failing the whole install.
+            var extraIDs: [UUID] = []
+            var failedCarriers: [String] = []
+            for extra in extras {
+                do {
+                    let extraResult = try await provisioner.addCarrier(
+                        on: host, secret: secret,
+                        baseContainer: result.containerName, options: extra)
+                    let extraCfg = try OlcrtcURI.parse(extraResult.uri)
+                    var extraParams = OlcrtcConnection(from: extraCfg)
+                    extraParams.wbToken = extra.wbToken
+                    let extraRecord = ConnectionRecord(
+                        name: Self.recordName(host: host, carrier: extra.carrier, multi: true),
+                        details: .olcrtc(extraParams))
+                    connections.add(extraRecord)
+                    extraIDs.append(extraRecord.id)
+                    LogStore.shared.log(.provisioning,
+                        "＋ protocol \(extra.carrier)/\(extra.transport) added → \(extraResult.containerName)")
+                } catch {
+                    failedCarriers.append(CarrierTransportMatrix.carrierLabel(extra.carrier))
+                    LogStore.shared.log(.provisioning,
+                        "✗ extra protocol \(extra.carrier) failed: \(error.localizedDescription)")
+                }
+            }
+            updated.extraConnectionIDs = extraIDs.isEmpty ? nil : extraIDs
             serverStore.update(updated, password: nil)
+            if !failedCarriers.isEmpty {
+                alertText = L10n.installExtrasPartialFail_fmt.formatted(
+                    failedCarriers.joined(separator: ", "))
+            }
+            // eoc #452
             // #258 was: readiness[id] = .containerRunning("just installed") (optimistic).
             // Confirm the real post-install state with a probe instead.
             let (rstate, stats) = try await provisioner.probeReadiness(
@@ -958,27 +1084,16 @@ struct ServersView: View {
             if let stats { vpsStats[host.id] = stats }
             return HostBase(rstate)
         }
+        await refreshCarriers(host.id)   // #452
     }
 
     private func uninstall(_ host: ServerHost) async {
         await run(.uninstall, on: host) { secret in
             try await provisioner.uninstall(on: host, secret: secret,
                                             containerName: host.lastContainerName)
-            var updated = host
-            updated.lastContainerName = nil
-            var removedConnName: String?
-            if let connID = updated.lastConnectionID {
-                if SettingsStore.shared.autoRemoveConnectionOnUninstall,
-                   let conn = connections.connections.first(where: { $0.id == connID }) {
-                    removedConnName = conn.displayName
-                    connections.remove(id: connID)
-                }
-                updated.lastConnectionID = nil
-            }
-            serverStore.update(updated, password: nil)
-            if let name = removedConnName {
-                LogStore.shared.log(.provisioning, "Connection «\(name)» also removed from list.")
-            }
+            // #452 was: inline lastConnectionID-only cleanup — the shared helper
+            // also removes the extra-protocol records + the cached rows.
+            serverStore.update(clearInstalledState(host), password: nil)
             return .imageReady   // container gone, image still cached (deterministic)
         }
     }
@@ -1006,6 +1121,7 @@ struct ServersView: View {
             if let stats { vpsStats[host.id] = stats }
             return HostBase(rstate)
         }
+        await refreshCarriers(host.id)   // #452
     }
 
     private func startContainer(_ host: ServerHost) async {
@@ -1020,6 +1136,7 @@ struct ServersView: View {
             if let stats { vpsStats[host.id] = stats }
             return HostBase(rstate)
         }
+        await refreshCarriers(host.id)   // #452
     }
 
     private func stop(_ host: ServerHost) async {
@@ -1034,6 +1151,7 @@ struct ServersView: View {
             if let stats { vpsStats[host.id] = stats }
             return HostBase(rstate)
         }
+        await refreshCarriers(host.id)   // #452
     }
 
     private func deepUninstall(_ host: ServerHost, removeImage: Bool) async {
@@ -1041,23 +1159,11 @@ struct ServersView: View {
             try await provisioner.deepUninstall(on: host, secret: secret,
                                                 containerName: host.lastContainerName,
                                                 removeImage: removeImage)
-            var updated = host
-            updated.lastContainerName = nil
-            var removedConnName: String?
-            if let connID = updated.lastConnectionID {
-                if SettingsStore.shared.autoRemoveConnectionOnUninstall,
-                   let conn = connections.connections.first(where: { $0.id == connID }) {
-                    removedConnName = conn.displayName
-                    connections.remove(id: connID)
-                }
-                updated.lastConnectionID = nil
-            }
-            serverStore.update(updated, password: nil)
+            // #452 was: inline lastConnectionID-only cleanup — the shared helper
+            // also removes the extra-protocol records + the cached rows.
+            serverStore.update(clearInstalledState(host), password: nil)
             let (rstate, _) = try await provisioner.probeReadiness(
                 on: host, secret: secret, containerName: nil)
-            if let name = removedConnName {
-                LogStore.shared.log(.provisioning, "Connection «\(name)» also removed from list.")
-            }
             return HostBase(rstate)
         }
     }
@@ -1069,16 +1175,20 @@ struct ServersView: View {
         }
     }
 
-    private func reconfigure(_ host: ServerHost, options: InstallOptions) async {
+    // #452 was: reconfigure(_ host:options:) targeting host.lastContainerName +
+    // host.lastConnectionID. Now targets an explicit protocol container and its
+    // resolved record, so each row on a multi-protocol host reconfigures ITS
+    // own container.
+    private func reconfigure(_ host: ServerHost, containerName: String,
+                             recordID: UUID?, options: InstallOptions) async {
         await run(.reconfigure, on: host) { secret in
-            guard let cname = host.lastContainerName else {
-                throw ProvisionError.parseFailed(L10n.containerNotInstalled.localized())
-            }
             let newURI = try await provisioner.reconfigure(on: host, secret: secret,
-                                                           containerName: cname, options: options)
+                                                           containerName: containerName, options: options)
             // Update the linked ConnectionRecord with the new room/transport.
+            // #452 was: connID = host.lastConnectionID — now the record the
+            // reconfigured row resolved to.
             if let uri = newURI,
-               let connID = host.lastConnectionID,
+               let connID = recordID,
                let existing = connections.connections.first(where: { $0.id == connID }),
                case .olcrtc(let oldParams) = existing.details,
                let cfg = try? OlcrtcURI.parse(uri) {
@@ -1109,11 +1219,319 @@ struct ServersView: View {
                 updatedRecord.details = .olcrtc(updated)
                 connections.update(updatedRecord)
             }
+            // #452: probe the PRIMARY container — the host base describes it,
+            // and a sibling-row reconfigure must not flip the card's base to
+            // the sibling's state.
             let (rstate, stats) = try await provisioner.probeReadiness(
-                on: host, secret: secret, containerName: cname)
+                on: host, secret: secret, containerName: host.lastContainerName ?? containerName)
             if let stats { vpsStats[host.id] = stats }
             return HostBase(rstate)
         }
+        await refreshCarriers(host.id)   // #452
+    }
+
+    // MARK: #452 — Protocols on the host card (multi-carrier)
+    //
+    // One VPS can now run several olcrtc protocols side by side (sibling
+    // containers off one deploy dir / one key — scripts/add-carrier.sh). The
+    // card lists them as rows: status dot + carrier/transport + a row menu
+    // (Connect / Start / Stop / Reconfigure / Recover / Remove). Rows come from
+    // provisioner.listCarriers (SSHRunner.CarrierInfo) and refresh after every
+    // op. Add/remove/sibling start/stop run OUTSIDE `run` — the host's base
+    // state describes the PRIMARY container and doesn't change — following the
+    // rotateKey/recoverConnection pattern, serialized by `carrierBusyHostID`.
+
+    private func missingCarriers(_ host: ServerHost) -> [String] {
+        guard let rows = carrierRows[host.id] else { return [] }
+        let present = Set(rows.map(\.provider))
+        return CarrierTransportMatrix.carriers.filter { !present.contains($0) }
+    }
+
+    /// Row → the ConnectionRecord to connect with: the host-linked records
+    /// first (primary + extras), then any record matching carrier + room.
+    private func connectionRecord(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> ConnectionRecord? {
+        func matches(_ rec: ConnectionRecord) -> Bool {
+            if case .olcrtc(let p) = rec.details {
+                return p.carrier == row.provider && p.roomID == row.room
+            }
+            return false
+        }
+        let linkedIDs = [host.lastConnectionID].compactMap { $0 } + (host.extraConnectionIDs ?? [])
+        for id in linkedIDs {
+            if let rec = connections.connections.first(where: { $0.id == id }), matches(rec) {
+                return rec
+            }
+        }
+        return connections.connections.first(where: matches)
+    }
+
+    /// Whether the LIVE tunnel runs through this row's protocol (carrier+room).
+    private func isLiveRow(_ row: SSHRunner.CarrierInfo) -> Bool {
+        guard let rec = tunnel.connectedRecord, case .olcrtc(let p) = rec.details else { return false }
+        return p.carrier == row.provider && p.roomID == row.room
+    }
+
+    private func connectVia(_ host: ServerHost, row: SSHRunner.CarrierInfo) {
+        guard let record = connectionRecord(host, row: row) else {
+            alertText = L10n.protocolRecordMissing.localized()
+            return
+        }
+        LogStore.shared.log(.provisioning,
+            "▶ Connect via \(row.provider)/\(row.transport) (host card)")
+        // A live session through another record is handled by connect() itself
+        // (it disconnects, then dials the new record).
+        tunnel.connect(record: record)
+    }
+
+    @ViewBuilder
+    private func protocolsSection(_ host: ServerHost, state: HostDisplay) -> some View {
+        let rows = carrierRows[host.id] ?? []
+        if hasContainer(host) || !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(L10n.protocolsSectionHeader.localized().uppercased())
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Palette.textTertiary)
+                    if carrierBusyHostID == host.id {
+                        ProgressView().controlSize(.mini)
+                    }
+                    Spacer()
+                    if !missingCarriers(host).isEmpty {
+                        Button {
+                            addProtocolFor = host
+                        } label: {
+                            Label(L10n.addProtocolAction.localized(), systemImage: "plus.circle")
+                                .font(.caption)
+                        }
+                        .disabled(actionsDisabled || carrierBusyHostID != nil)
+                    }
+                }
+                ForEach(rows) { row in
+                    carrierRowView(host, row: row)
+                }
+            }
+            .opacity(state.isRunning ? 0.45 : 1)
+        }
+    }
+
+    private func carrierRowView(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(carrierStatusColor(row))
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(CarrierTransportMatrix.carrierLabel(row.provider))
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Palette.textPrimary)
+                    if row.isPrimary {
+                        Text(L10n.protocolPrimaryBadge.localized())
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Palette.textTertiary)
+                    }
+                }
+                Text(CarrierTransportMatrix.transportLabel(row.transport))
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.textSecondary)
+            }
+            Spacer()
+            if isLiveRow(row) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Theme.Palette.green)
+                    .accessibilityLabel(L10n.protocolConnectedBadge.localized())
+            }
+            OlcOverflowMenu(items: carrierMenuItems(host, row: row))
+                .disabled(actionsDisabled || carrierBusyHostID != nil)
+        }
+    }
+
+    /// Same status→colour rule the container scan sheet uses (shortLabel-based,
+    /// so it needs no knowledge of ContainerStatus's case payloads).
+    private func carrierStatusColor(_ row: SSHRunner.CarrierInfo) -> Color {
+        if row.status == .notFound { return Theme.Palette.textTertiary }
+        return row.status.shortLabel.hasPrefix("Up") ? Theme.Palette.green : Theme.Palette.orange
+    }
+
+    private func carrierMenuItems(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> [OlcMenuItem] {
+        var items: [OlcMenuItem] = [
+            .action(L10n.protocolConnectAction.localized(), systemImage: "personalhotspot") {
+                connectVia(host, row: row)
+            }
+        ]
+        if row.status.shortLabel.hasPrefix("Up") {
+            items.append(.action(L10n.actionStop.localized(), systemImage: "stop.fill", role: .destructive) {
+                if row.isPrimary { Task { await stop(host) } }
+                else             { Task { await stopCarrier(host, row: row) } }
+            })
+        } else {
+            items.append(.action(L10n.actionStart.localized(), systemImage: "play.fill") {
+                if row.isPrimary { Task { await startContainer(host) } }
+                else             { Task { await startCarrier(host, row: row) } }
+            })
+        }
+        items.append(.action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
+            reconfigureRequest = ReconfigureRequest(
+                host: host, containerName: row.container,
+                recordID: connectionRecord(host, row: row)?.id,
+                initialCarrier: row.provider, initialTransport: row.transport,
+                initialRoom: row.room)
+        })
+        if connectionRecord(host, row: row) == nil {
+            items.append(.action(L10n.actionRecoverConnection.localized(), systemImage: "arrow.counterclockwise.circle") {
+                recoverRowRequest = CarrierRecoverRequest(
+                    host: host, container: row.container, file: row.file, isPrimary: row.isPrimary)
+            })
+        }
+        if !row.isPrimary {
+            items.append(.divider)
+            items.append(.action(L10n.removeProtocolAction.localized(), systemImage: "trash", role: .destructive) {
+                removeCarrierConfirm = CarrierRemoveRequest(host: host, row: row)
+            })
+        }
+        return items
+    }
+
+    /// Passive rows refresh — logs failures, never alerts.
+    private func refreshCarriers(_ hostID: UUID) async {
+        guard let host = serverStore.hosts.first(where: { $0.id == hostID }),
+              let cname = host.lastContainerName,
+              let secret = secret(for: host) else { return }
+        do {
+            carrierRows[hostID] = try await provisioner.listCarriers(
+                on: host, secret: secret, baseContainer: cname)
+        } catch {
+            LogStore.shared.log(.provisioning,
+                "⚠ protocol list failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func addCarrier(_ host: ServerHost, options: InstallOptions) async {
+        guard let secret = secret(for: host) else {
+            alertText = missingCredentialMessage(host); return
+        }
+        guard let cname = host.lastContainerName else {
+            alertText = L10n.containerNotInstalled.localized(); return
+        }
+        carrierBusyHostID = host.id
+        defer { carrierBusyHostID = nil }
+        do {
+            let result = try await provisioner.addCarrier(
+                on: host, secret: secret, baseContainer: cname, options: options)
+            let cfg = try OlcrtcURI.parse(result.uri)
+            // #401: shared Parsed → connection mapping; #436: the wb token isn't
+            // in the URI, carry it from the options (same as install).
+            var params = OlcrtcConnection(from: cfg)
+            params.wbToken = options.wbToken
+            let record = ConnectionRecord(
+                name: Self.recordName(host: host, carrier: options.carrier, multi: true),
+                details: .olcrtc(params))
+            connections.add(record)
+            var updated = host
+            updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []) + [record.id]
+            serverStore.update(updated, password: nil)
+            LogStore.shared.log(.provisioning,
+                "＋ protocol \(cfg.carrier)/\(cfg.transport) added → \(result.containerName)")
+            alertText = L10n.protocolAdded_fmt.formatted(cfg.carrier, cfg.transport)
+            await refreshCarriers(host.id)
+        } catch {
+            alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
+        }
+    }
+
+    private func removeCarrier(_ host: ServerHost, row: SSHRunner.CarrierInfo) async {
+        guard let secret = secret(for: host) else {
+            alertText = missingCredentialMessage(host); return
+        }
+        guard let cname = host.lastContainerName else {
+            alertText = L10n.containerNotInstalled.localized(); return
+        }
+        carrierBusyHostID = host.id
+        defer { carrierBusyHostID = nil }
+        do {
+            try await provisioner.removeCarrier(
+                on: host, secret: secret, baseContainer: cname, carrier: row.provider)
+            if let record = connectionRecord(host, row: row) {
+                connections.remove(id: record.id)
+                var updated = host
+                updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []).filter { $0 != record.id }
+                if updated.extraConnectionIDs?.isEmpty == true { updated.extraConnectionIDs = nil }
+                serverStore.update(updated, password: nil)
+            }
+            LogStore.shared.log(.provisioning, "− protocol \(row.provider) removed")
+            alertText = L10n.protocolRemoved_fmt.formatted(CarrierTransportMatrix.carrierLabel(row.provider))
+            await refreshCarriers(host.id)
+        } catch {
+            alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
+        }
+    }
+
+    /// Start/Stop for a NON-primary protocol container — outside `run` (the
+    /// host's base tracks the primary; a sibling flip doesn't change it).
+    private func startCarrier(_ host: ServerHost, row: SSHRunner.CarrierInfo) async {
+        guard let secret = secret(for: host) else {
+            alertText = missingCredentialMessage(host); return
+        }
+        carrierBusyHostID = host.id
+        defer { carrierBusyHostID = nil }
+        do {
+            try await provisioner.start(on: host, secret: secret, containerName: row.container)
+            await refreshCarriers(host.id)
+        } catch {
+            alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
+        }
+    }
+
+    private func stopCarrier(_ host: ServerHost, row: SSHRunner.CarrierInfo) async {
+        guard let secret = secret(for: host) else {
+            alertText = missingCredentialMessage(host); return
+        }
+        carrierBusyHostID = host.id
+        defer { carrierBusyHostID = nil }
+        do {
+            try await provisioner.stop(on: host, secret: secret, containerName: row.container)
+            await refreshCarriers(host.id)
+        } catch {
+            alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
+        }
+    }
+
+    /// #452: shared uninstall cleanup — clears the container link and removes
+    /// EVERY connection this host installed (primary + extra protocols) when
+    /// the auto-remove setting is on. Returns the cleared host to persist.
+    private func clearInstalledState(_ host: ServerHost) -> ServerHost {
+        var updated = host
+        updated.lastContainerName = nil
+        let ids = [updated.lastConnectionID].compactMap { $0 } + (updated.extraConnectionIDs ?? [])
+        if SettingsStore.shared.autoRemoveConnectionOnUninstall {
+            for id in ids {
+                if let conn = connections.connections.first(where: { $0.id == id }) {
+                    connections.remove(id: id)
+                    LogStore.shared.log(.provisioning, "Connection «\(conn.displayName)» also removed from list.")
+                }
+            }
+        }
+        updated.lastConnectionID   = nil
+        updated.extraConnectionIDs = nil
+        carrierRows[host.id] = nil
+        return updated
+    }
+
+    /// #452: connection naming — a multi-protocol install suffixes every record
+    /// with its carrier ("MyVPS · Telemost"); single-protocol keeps the label.
+    static func recordName(host: ServerHost, carrier: String, multi: Bool) -> String {
+        multi ? "\(host.label) · \(CarrierTransportMatrix.carrierLabel(carrier))" : host.label
+    }
+
+    /// Primary reconfigure entry (action bar / host menu / retry): targets the
+    /// primary container, seeded from its row when the rows are loaded.
+    private func primaryReconfigureRequest(_ host: ServerHost) -> ReconfigureRequest? {
+        guard let cname = host.lastContainerName else { return nil }
+        let row = carrierRows[host.id]?.first(where: { $0.isPrimary })
+        return ReconfigureRequest(host: host, containerName: cname,
+                                  recordID: host.lastConnectionID,
+                                  initialCarrier: row?.provider,
+                                  initialTransport: row?.transport,
+                                  initialRoom: row?.room)
     }
 
     // MARK: Container scan (no base change → outside `run`)
@@ -1125,15 +1543,23 @@ struct ServersView: View {
     // container and add a ConnectionRecord from it — recovers a usable
     // connection when Connections is empty (new device / reinstall) but the
     // server is already running olcrtc. Read-only on the server.
-    private func recoverConnection(_ host: ServerHost) async {
+    // #452: gained containerName/configFile/asExtra so a protocol row can
+    // recover ITS config (server-<carrier>.yaml in the shared deploy dir); the
+    // host-level entry keeps the old defaults (primary container, server.yaml,
+    // links lastConnectionID).
+    private func recoverConnection(_ host: ServerHost,
+                                   containerName: String? = nil,
+                                   configFile: String = "server.yaml",
+                                   asExtra: Bool = false) async {
         guard let secret = secret(for: host) else {
             alertText = missingCredentialMessage(host); return
         }
-        guard let cname = host.lastContainerName else {
+        guard let cname = containerName ?? host.lastContainerName else {
             alertText = L10n.containerNotInstalled.localized(); return
         }
         do {
-            let cfg = try await provisioner.recoverConfig(on: host, secret: secret, containerName: cname)
+            let cfg = try await provisioner.recoverConfig(on: host, secret: secret,
+                                                          containerName: cname, configFile: configFile)
             // #303: default-struct values (30/10/1200/1) match OlcrtcConnection's
             // own seiFPS/seiBatch/seiFrag/seiACK defaults (App/Models/OlcrtcConnection.swift)
             // — used as a fallback only if the deployed server.yaml's sei: block
@@ -1155,10 +1581,18 @@ struct ServersView: View {
                 seiFrag:      cfg.seiFrag  ?? 1200,
                 seiACK:       cfg.seiACK   ?? 1
             )
-            let record = ConnectionRecord(name: host.label, details: .olcrtc(params))
+            // #452: an extra-protocol recover names + links the record like an
+            // extra install would (carrier-suffixed name, extraConnectionIDs).
+            let record = ConnectionRecord(
+                name: Self.recordName(host: host, carrier: cfg.carrier, multi: asExtra),
+                details: .olcrtc(params))
             connections.add(record)
             var updated = host
-            updated.lastConnectionID = record.id
+            if asExtra {
+                updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []) + [record.id]
+            } else {
+                updated.lastConnectionID = record.id
+            }
             serverStore.update(updated, password: nil)
             alertText = L10n.recoverResultSuccess_fmt.formatted(cfg.carrier, cfg.transport)
         // boc #314: server.yaml unreadable/unparseable — the key/params can't
@@ -1201,7 +1635,47 @@ struct ServersView: View {
             updated.lastContainerName = result.containerName
             updated.lastConnectionID  = record.id
             serverStore.update(updated, password: nil)
+            // boc #452: sibling protocol containers were restarted with the SAME
+            // new key — refresh every matching record so a multi-protocol host
+            // stays fully usable after a rotation.
+            for sib in result.siblings {
+                guard let sibCfg = try? OlcrtcURI.parse(sib.uri) else { continue }
+                func matches(_ rec: ConnectionRecord) -> Bool {
+                    if case .olcrtc(let p) = rec.details {
+                        return p.carrier == sibCfg.carrier && p.roomID == sibCfg.roomID
+                    }
+                    return false
+                }
+                let linked = (updated.extraConnectionIDs ?? [])
+                    .compactMap { id in connections.connections.first(where: { $0.id == id }) }
+                    .first(where: matches)
+                guard let match = linked ?? connections.connections.first(where: matches),
+                      case .olcrtc(let old) = match.details else { continue }
+                // Mirror the reconfigure merge (#355-style): only the key/room/
+                // transport come from the URI; tuning + secrets are preserved.
+                let refreshed = OlcrtcConnection(
+                    carrier:      sibCfg.carrier,
+                    transport:    sibCfg.transport,
+                    roomID:       sibCfg.roomID,
+                    key:          sibCfg.key.isEmpty ? old.key : sibCfg.key,
+                    clientID:     sibCfg.clientID,
+                    vp8FPS:       old.vp8FPS,
+                    vp8BatchSize: old.vp8BatchSize,
+                    socksUser:    old.socksUser,
+                    socksPass:    old.socksPass,
+                    wbToken:      old.wbToken,
+                    seiFPS:       old.seiFPS,
+                    seiBatch:     old.seiBatch,
+                    seiFrag:      old.seiFrag,
+                    seiACK:       old.seiACK
+                )
+                var updatedRecord = match
+                updatedRecord.details = .olcrtc(refreshed)
+                connections.update(updatedRecord)
+            }
+            // eoc #452
             alertText = L10n.rotateKeyResultAdded_fmt.formatted(cfg.carrier, cfg.transport)
+            await refreshCarriers(host.id)   // #452
         } catch {
             alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
         }
@@ -1285,6 +1759,7 @@ struct ServersView: View {
         serverStore.update(updated, password: nil)
         display[host.id] = .base(.stopped)   // container present; Check confirms run-state
         alertText = L10n.scanRestored_fmt.formatted(container.name)   // #346 was: "Restored: \(container.name)"
+        Task { await refreshCarriers(host.id) }   // #452
     }
 }
 
@@ -1297,16 +1772,46 @@ struct FullAccessShareRequest: Identifiable {
     let payload: FullAccessShare
 }
 
+// boc #452: multi-carrier request payloads — value snapshots (the #330 rule)
+// driving one `.sheet(item:)` / `.confirmationDialog(presenting:)` each.
+
+/// Reconfigure targeted at ONE protocol's container, with the row's current
+/// values as sheet seeds and the record to update on success.
+struct ReconfigureRequest: Identifiable {
+    let host: ServerHost
+    let containerName: String
+    let recordID: UUID?
+    let initialCarrier: String?
+    let initialTransport: String?
+    let initialRoom: String?
+    var id: String { containerName }
+}
+
+struct CarrierRemoveRequest: Identifiable {
+    let host: ServerHost
+    let row: SSHRunner.CarrierInfo
+    var id: String { row.container }
+}
+
+struct CarrierRecoverRequest: Identifiable {
+    let host: ServerHost
+    let container: String
+    let file: String
+    let isPrimary: Bool
+    var id: String { container }
+}
+// eoc #452
+
 // #340: both appearance variants.
 #if DEBUG
 #Preview("Manage VPS — Dark") {
     ServersView(serverStore: ServerHostStore(), connections: ConnectionStore(),
-                logsRouter: LogsRouter(), botStore: BotStore())
+                logsRouter: LogsRouter(), botStore: BotStore(), tunnel: TunnelManager())
         .preferredColorScheme(.dark)
 }
 #Preview("Manage VPS — Light") {
     ServersView(serverStore: ServerHostStore(), connections: ConnectionStore(),
-                logsRouter: LogsRouter(), botStore: BotStore())
+                logsRouter: LogsRouter(), botStore: BotStore(), tunnel: TunnelManager())
         .preferredColorScheme(.light)
 }
 #endif

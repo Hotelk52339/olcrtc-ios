@@ -126,7 +126,8 @@ struct MainTabView: View {
                 .tag(0)
 
             // #339: + logsRouter, so "Container logs" can route to the Logs tab.
-            ServersView(serverStore: serverStore, connections: store, logsRouter: logsRouter, botStore: botStore)
+            // #452: + tunnel, so a protocol row on the host card can connect directly.
+            ServersView(serverStore: serverStore, connections: store, logsRouter: logsRouter, botStore: botStore, tunnel: tunnel)
                 .tabItem { Label(L10n.tabServers.localized(), systemImage: "server.rack") }
                 .tag(1)
 

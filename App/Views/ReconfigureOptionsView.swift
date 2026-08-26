@@ -26,6 +26,24 @@ struct ReconfigureOptionsView: View {
     @State private var carrier   = "telemost"
     @State private var transport = CarrierTransportMatrix.defaultTransport(for: "telemost")
     @State private var roomID    = ""
+
+    // boc #452: seed the form from the protocol row being reconfigured (the
+    // host card now has one row per carrier). nil params keep the old blank
+    // defaults, so the pre-#452 host-level entry point is unchanged.
+    init(initialCarrier: String? = nil,
+         initialTransport: String? = nil,
+         initialRoom: String? = nil,
+         onConfirm: @escaping (InstallOptions) -> Void) {
+        self.onConfirm = onConfirm
+        if let c = initialCarrier {
+            _carrier   = State(initialValue: c)
+            _transport = State(initialValue: initialTransport ?? CarrierTransportMatrix.defaultTransport(for: c))
+        }
+        if let r = initialRoom {
+            _roomID = State(initialValue: r)
+        }
+    }
+    // eoc #452
     // #451: jitsi rendezvous base URL — mirrors InstallOptionsView (#256);
     // used only to normalise a short jitsi room name in submit().
     @State private var jitsiBaseURL = AppConstants.defaultJitsiBaseURL

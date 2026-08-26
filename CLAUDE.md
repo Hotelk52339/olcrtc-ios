@@ -256,6 +256,21 @@ python3 scripts/cut-release.py --dry-run    # tag v<MARKETING_VERSION>.<CFBundle
   `SSHRunnerRecoverConfigTests` assert this for their scripts). `RotateKeyScriptTests`
   also requires every non-comment line inside `rotate-key.sh`'s `# boc srv.sh` blocks
   to exist verbatim in srv.sh (a line-set check with a >80-line floor).
+- Multi-carrier (#452): one VPS can run several protocols at once. The primary
+  install is unchanged; `scripts/add-carrier.sh` (bundled like rotate-key.sh)
+  attaches `server-<carrier>.yaml` + a sibling container `<base>-<carrier>` to
+  the SAME deploy dir (shared binary + shared key, no rebuild, ~seconds) —
+  `SSHRunner.addCarrier` runs it synchronously, no nohup/poll. The host card's
+  per-protocol rows come from `carrierListScript`/`parseCarrierList`
+  (OLCRTC_CARRIER_BEGIN/END blocks; container derived from the yaml name);
+  `removeCarrierScript` deletes a sibling (never the primary),
+  `recoverConfigScript(configFile:)` reads a sibling's yaml, and rotate-key.sh
+  re-keys every `server-*.yaml` + restarts `<base>-*`, reporting
+  `OLCRTC_SIBLING_URI=<container>|<uri>` per sibling (split on the FIRST `|`).
+  Sibling ops (add/remove/start/stop) run OUTSIDE `run()`/HostDisplay —
+  the card base tracks only the primary container. Sibling records live in
+  `ServerHost.extraConnectionIDs`; multi-installs name records
+  "<label> · <Carrier>" (`ServersView.recordName`).
 - The VPS card state is the pure reducer `HostDisplay` (`App/Models`): the base comes
   from a readiness probe when the op returns one, else `HostOp.target`, else the
   previous base (`terminalBase`); `ServersView.run` drives start/terminal
@@ -372,6 +387,13 @@ python3 scripts/cut-release.py --dry-run    # tag v<MARKETING_VERSION>.<CFBundle
   is a superset; 🟡 rows are catalogued but not wired — adding a case flips its row).
 - `SSHRunner.installEnv` ↔ `scripts/srv.sh` boc patches ↔ the `scriptDefaults`
   allow-list inside `ServerScriptParityTests.testEnvVarNamesMatchSrvShBocPatches`.
+- `SSHRunner.addCarrierEnv` ↔ the `$OLCRTC_*` reads in `scripts/add-carrier.sh`
+  (`ServerScriptParityTests.testEnvVarNamesMatchAddCarrierScript`); its
+  `# boc srv.sh` blocks ↔ verbatim srv.sh lines (`AddCarrierScriptTests`, same
+  rule as rotate-key.sh); sibling naming `<base>-<carrier>` /
+  `server-<carrier>.yaml` ↔ `SSHRunner.siblingContainerName` / `carrierYAMLFile`
+  ↔ the name/config derivations inside add-carrier.sh, carrierListScript and
+  rotate-key.sh's #452 block.
 - Container name prefix `olcrtc-server-` in `SSHRunner.containerNamePrefix`, `srv.sh`
   and `olcrtc-bot.py`; image tag `golang:1.26-alpine3.22` in `srv.sh`,
   `readinessScript` and `deepUninstallScript`.

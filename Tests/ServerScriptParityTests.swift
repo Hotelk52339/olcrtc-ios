@@ -150,6 +150,60 @@ final class ServerScriptParityTests: XCTestCase {
         }
     }
 
+    // MARK: #452 — Alignment between addCarrierEnv() and scripts/add-carrier.sh
+
+    /// Mirror of testEnvVarNamesMatchSrvShBocPatches for the sibling-carrier
+    /// script: every $OLCRTC_* var scripts/add-carrier.sh reads must be
+    /// emitted by SSHRunner.addCarrierEnv() or listed as a script-default
+    /// below. The whole file is scanned — it is fully ours, so no boc
+    /// filtering applies.
+    func testEnvVarNamesMatchAddCarrierScript() throws {
+        let url: URL = Bundle.main.url(forResource: "add-carrier", withExtension: "sh")
+            ?? URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()          // Tests/
+                .deletingLastPathComponent()          // olcrtc-ios/
+                .appendingPathComponent("scripts/add-carrier.sh")
+        guard let script = try? String(contentsOf: url, encoding: .utf8) else {
+            throw XCTSkip("scripts/add-carrier.sh not present in this build")
+        }
+
+        let pattern = try NSRegularExpression(pattern: #"\$\{?(OLCRTC_[A-Z_]+)"#)
+        let matches = pattern.matches(in: script, range: NSRange(script.startIndex..., in: script))
+        let reads = Set(matches.compactMap { m -> String? in
+            guard let r = Range(m.range(at: 1), in: script) else { return nil }
+            return String(script[r])
+        })
+
+        // Read with ${VAR:-default} and intentionally not passed — the script
+        // defaults suffice (same rationale as the srv.sh set; videochannel
+        // tuning is never exposed in the UI).
+        let scriptDefaults: Set<String> = [
+            "OLCRTC_SOCKS_PROXY_ADDR", "OLCRTC_SOCKS_PROXY_PORT",
+            "OLCRTC_VIDEO_W", "OLCRTC_VIDEO_H", "OLCRTC_VIDEO_FPS",
+            "OLCRTC_VIDEO_CODEC", "OLCRTC_VIDEO_QR_RECOVERY",
+            "OLCRTC_VIDEO_QR_SIZE", "OLCRTC_VIDEO_TILE_MODULE", "OLCRTC_VIDEO_TILE_RS",
+        ]
+
+        // Cover every conditional branch of addCarrierEnv so each emittable
+        // var name appears at least once.
+        var wbOpts = InstallOptions(carrier: "wbstream", transport: "seichannel", roomID: "r")
+        wbOpts.wbToken = "tok"
+        let allEnvs = [
+            SSHRunner.addCarrierEnv(.init(carrier: "telemost", transport: "vp8channel", roomID: "r"),
+                                    baseContainer: "olcrtc-server-x"),
+            SSHRunner.addCarrierEnv(.init(carrier: "jitsi", transport: "datachannel", roomID: "r"),
+                                    baseContainer: "olcrtc-server-x"),
+            SSHRunner.addCarrierEnv(wbOpts, baseContainer: "olcrtc-server-x"),
+        ].joined(separator: " ")
+
+        XCTAssertFalse(reads.contains("OLCRTC_PIN"),
+            "add-carrier.sh must not read OLCRTC_PIN — siblings reuse the already-built binary")
+        for varName in reads where !scriptDefaults.contains(varName) {
+            XCTAssertTrue(allEnvs.contains(varName),
+                "\(varName) is read by scripts/add-carrier.sh but never set by SSHRunner.addCarrierEnv()")
+        }
+    }
+
     // MARK: #451 — golang builder-image tag parity (drift guard)
 
     /// The Swift side references the Go builder image in three places (the

@@ -236,3 +236,44 @@ echo ""
 echo "OLCRTC_URI=$OLC_URI"
 echo "OLCRTC_CONTAINER=$CONTAINER_NAME"
 # eoc srv.sh
+
+# boc #452: multi-carrier siblings. scripts/add-carrier.sh attaches extra
+# carriers as sibling containers "${CONTAINER_NAME}-<carrier>" running
+# server-<carrier>.yaml from the SAME deploy dir with the SAME key, so a key
+# rotation must rewrite every sibling yaml and restart every sibling
+# container too, and report each resulting URI so the app can update the
+# matching ConnectionRecords (the app splits each line on the FIRST '|').
+# Best-effort per sibling: an unreadable yaml still gets its key line
+# rewritten but reports no URI; a missing/stopped container is ignored.
+# videochannel siblings report a payload-free URI (tuning is server-side
+# defaults there, same as install).
+sib_str() { sed -n "s/^  $1: \"\(.*\)\"\$/\1/p" "$SIB_CONFIG" 2>/dev/null | head -1; }
+sib_int() { sed -n "s/^  $1: \([0-9][0-9]*\)\$/\1/p" "$SIB_CONFIG" 2>/dev/null | head -1; }
+for SIB_CONFIG in "$WORK_DIR"/server-*.yaml; do
+    [ -f "$SIB_CONFIG" ] || continue
+    SIB_CARRIER="${SIB_CONFIG##*/server-}"
+    SIB_CARRIER="${SIB_CARRIER%.yaml}"
+    SIB="${CONTAINER_NAME}-${SIB_CARRIER}"
+    sed -i "s|^  key: \".*\"|  key: \"$KEY\"|" "$SIB_CONFIG" 2>/dev/null || true
+    echo "[*] Rotated key in ${SIB_CONFIG##*/}; restarting ${SIB}..."
+    podman restart "$SIB" >/dev/null 2>&1 || true
+    SIB_PROVIDER=$(sib_str provider)
+    SIB_TRANSPORT=$(sib_str transport)
+    SIB_ROOM=$(sib_str id)
+    if [ -z "$SIB_PROVIDER" ] || [ -z "$SIB_TRANSPORT" ] || [ -z "$SIB_ROOM" ]; then
+        echo "[!] ${SIB_CONFIG##*/} unreadable — key rewritten, URI not reported"
+        continue
+    fi
+    SIB_PAYLOAD=""
+    if [ "$SIB_TRANSPORT" = "vp8channel" ]; then
+        SF=$(sib_int fps); SB=$(sib_int batch_size)
+        [ -n "$SF" ] && [ -n "$SB" ] && SIB_PAYLOAD="<vp8-fps=${SF}&vp8-batch=${SB}>"
+    elif [ "$SIB_TRANSPORT" = "seichannel" ]; then
+        SF=$(sib_int fps); SB=$(sib_int batch_size)
+        SG=$(sib_int fragment_size); SA=$(sib_int ack_timeout_ms)
+        [ -n "$SF" ] && [ -n "$SB" ] && [ -n "$SG" ] && [ -n "$SA" ] && \
+            SIB_PAYLOAD="<fps=${SF}&batch=${SB}&frag=${SG}&ack-ms=${SA}>"
+    fi
+    echo "OLCRTC_SIBLING_URI=${SIB}|olcrtc://${SIB_PROVIDER}?${SIB_TRANSPORT}${SIB_PAYLOAD}@${SIB_ROOM}#${KEY}\$${sub_configname}"
+done
+# eoc #452
