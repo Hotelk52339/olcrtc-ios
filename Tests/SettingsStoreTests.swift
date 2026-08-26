@@ -26,6 +26,7 @@ final class SettingsStoreTests: XCTestCase {
         "settings.containerLogsTailLines",
         "settings.keepAliveSeconds",
         "settings.tunnelMode",   // #vpn (string-backed enum, snapshot pattern still applies)
+        "settings.autoFailover",   // #453
     ]
 
     private var s: SettingsStore { SettingsStore.shared }
@@ -45,6 +46,7 @@ final class SettingsStoreTests: XCTestCase {
             "containerLogsTailLines": s.containerLogsTailLines,
             "keepAliveSeconds":       s.keepAliveSeconds,
             "tunnelMode":             s.tunnelMode,   // #vpn
+            "autoFailover":           s.autoFailover,   // #453
         ]
     }
 
@@ -58,6 +60,7 @@ final class SettingsStoreTests: XCTestCase {
         s.containerLogsTailLines = snapshot["containerLogsTailLines"] as! Int
         s.keepAliveSeconds       = snapshot["keepAliveSeconds"]       as! Int
         s.tunnelMode             = snapshot["tunnelMode"]             as! TunnelMode   // #vpn
+        s.autoFailover           = snapshot["autoFailover"]           as! Bool   // #453
         super.tearDown()
     }
 
@@ -234,6 +237,17 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.string(forKey: "settings.tunnelMode"), "proxy")
     }
 
+    // #453
+    func testAutoFailoverPersistsToUserDefaults() {
+        s.autoFailover = true
+        SettingsStore.flushPendingWrites()
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: "settings.autoFailover"))
+
+        s.autoFailover = false
+        SettingsStore.flushPendingWrites()
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: "settings.autoFailover"))
+    }
+
     // MARK: reset()
 
     func testResetRestoresAllNumericDefaults() {
@@ -246,6 +260,7 @@ final class SettingsStoreTests: XCTestCase {
         s.containerLogsTailLines = 2000
         s.keepAliveSeconds       = 300
         s.tunnelMode             = .vpn   // #vpn: non-numeric, but reset() covers it too
+        s.autoFailover           = true   // #453: non-numeric, reset() covers it too
 
         s.reset()
 
@@ -258,6 +273,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(s.keepAliveSeconds,       SettingsStore.Defaults.keepAliveSeconds)
         XCTAssertEqual(s.fontSizeIndex,          SettingsStore.Defaults.fontSizeIndex)
         XCTAssertEqual(s.tunnelMode,             .proxy)   // #vpn
+        XCTAssertFalse(s.autoFailover)   // #453
     }
 
     // MARK: defaults sanity — protects the Defaults ranges from drift

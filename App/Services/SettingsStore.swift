@@ -97,6 +97,7 @@ final class SettingsStore: ObservableObject {
         static let vpsAutoPingEnabled   = true
         static let vpsAutoPingInterval  = 30
         static let earlyRestartOnWedge  = false   // #440: opt-in, brittle log-signature feature
+        static let autoFailover        = false   // #453: opt-in protocol failover
         static let vpsAutoPingRange     = 10...300
         static let updateCheckEnabled   = true          // #360: opt-out
     }
@@ -221,6 +222,11 @@ final class SettingsStore: ObservableObject {
     @Published var earlyRestartOnWedge: Bool {
         didSet { Self.persist(earlyRestartOnWedge, forKey: Keys.earlyRestartOnWedge) }
     }
+    /// #453: opt-in auto-failover — on repeated reconnect failure switch to
+    /// another protocol on the same VPS (see TunnelManager.requestReconnect).
+    @Published var autoFailover: Bool {
+        didSet { Self.persist(autoFailover, forKey: Keys.autoFailover) }
+    }
     @Published var vpsAutoPingInterval: Int {
         didSet {
             let v = vpsAutoPingInterval.clamped(to: Defaults.vpsAutoPingRange)
@@ -312,6 +318,7 @@ final class SettingsStore: ObservableObject {
         keepAliveSeconds    = (d.object(forKey: Keys.keepAlive)           as? Int)  .map { $0.clamped(to: Defaults.keepAliveRange) }         ?? Defaults.keepAliveSeconds
         vpsAutoPingEnabled  = (d.object(forKey: Keys.vpsAutoPingEnabled)  as? Bool)                                                          ?? Defaults.vpsAutoPingEnabled
         earlyRestartOnWedge = (d.object(forKey: Keys.earlyRestartOnWedge) as? Bool)                                                          ?? Defaults.earlyRestartOnWedge
+        autoFailover        = (d.object(forKey: Keys.autoFailover)        as? Bool)                                                          ?? Defaults.autoFailover           // #453
         vpsAutoPingInterval = (d.object(forKey: Keys.vpsAutoPingInterval) as? Int)  .map { $0.clamped(to: Defaults.vpsAutoPingRange) }       ?? Defaults.vpsAutoPingInterval
         if let arr = d.object(forKey: Keys.enabledIPSources) as? [String] {
             enabledIPSources = Set(arr)
@@ -349,6 +356,7 @@ final class SettingsStore: ObservableObject {
         vpsAutoPingEnabled     = Defaults.vpsAutoPingEnabled
         vpsAutoPingInterval    = Defaults.vpsAutoPingInterval
         earlyRestartOnWedge    = Defaults.earlyRestartOnWedge
+        autoFailover           = Defaults.autoFailover   // #453
         enabledIPSources       = AppConstants.defaultEnabledIPCheckLabels
         speedTestProviderID    = AppConstants.SpeedTest.defaultProviderID
         updateCheckEnabled     = Defaults.updateCheckEnabled   // #360
@@ -414,6 +422,7 @@ final class SettingsStore: ObservableObject {
         static let vpsAutoPingEnabled        = "settings.vpsAutoPingEnabled"
         static let vpsAutoPingInterval       = "settings.vpsAutoPingInterval"
         static let earlyRestartOnWedge       = "settings.earlyRestartOnWedge"
+        static let autoFailover              = "settings.autoFailover"
         static let enabledIPSources          = "settings.enabledIPSources"
         static let speedTestProviderID       = "settings.speedTestProviderID"
         static let updateCheckEnabled        = "settings.updateCheckEnabled"   // #360

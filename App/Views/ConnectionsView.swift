@@ -131,6 +131,17 @@ struct ConnectionsView: View {
             List {
                 Section { heroCard.olcCardRow() }
 
+                // #454: consolidated connection-health card (protocol · exit geo ·
+                // live latency · throughput), only while the tunnel is up.
+                if tunnel.state.isConnected {
+                    Section {
+                        HealthCard(record: tunnel.connectedRecord,
+                                   ipCheck: ipCheck, speed: speed,
+                                   mode: currentMode, maskIPs: settings.maskIPs)
+                            .olcCardRow()
+                    }
+                }
+
                 // boc #327: routing switch removed for now (see the @AppStorage block)
                 // Section {
                 //     OlcCard {
@@ -178,6 +189,16 @@ struct ConnectionsView: View {
             // rather than recomputing in `body`. `initial:` seeds them on appear.
             .onChange(of: store.connections, initial: true) { _, _ in recompute() }
             .onChange(of: store.subscriptionMeta) { _, _ in recompute() }
+            // #454: fetch the exit geo through the tunnel when a session comes up
+            // (feeds the health card's exit row); clear it when the tunnel drops so
+            // the next session never briefly shows the previous exit's location.
+            .onChange(of: tunnel.state) { _, newState in
+                if newState.isConnected {
+                    Task { await ipCheck.refreshExitGeo(via: .tunnel) }
+                } else {
+                    ipCheck.clearExitGeo()
+                }
+            }
             .navigationTitle("OlcRTC")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

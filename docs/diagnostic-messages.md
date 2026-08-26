@@ -57,6 +57,7 @@ set, not exhaustive — extend it as new conditions are caught.
 | OLC-1024 | W | Tunnel verify "bad URL" | Misleading reason — the SOCKS session couldn't be built; fix the message (#287) | app | 🟡 |
 | OLC-1025 | W | Keep-alive "active −N s ago" (future timestamp) | `noteActivity(forAtLeast:)` sets the marker ahead → negative "ago"; clamp it (#287) | app | 🟡 |
 | OLC-1026 | E | Port N is busy — free it or change the port in Settings | Configured SOCKS port held by another process; connect aborts before the engine starts (preflight `isFree`), or a late MobileStart bind race maps here (#308). The port is never auto-slid — it's the contract with external SOCKS clients | app | 🟢 |
+| OLC-1027 | I | Protocol `<a>` is failing — switching to `<b>` | #453 auto-failover: the reconnect budget for the active carrier was spent, so the loop hops to another protocol on the same VPS (opt-in `settings.autoFailover`) instead of giving up | app | 🟢 |
 
 ## Server / core — `OLC-2xxx`
 

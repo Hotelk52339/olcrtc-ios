@@ -21,6 +21,7 @@ struct ConfigView: View {
             List {
                 modeSection
                 explainerSection
+                failoverSection   // #453
             }
             // (audit #299) paint the ground from the token: without this the
             // List keeps the system grouped background, so the Gray scheme's
@@ -92,6 +93,28 @@ struct ConfigView: View {
                 .foregroundStyle(Theme.Palette.textSecondary)
             }
             .olcCardRow()
+        }
+    }
+
+    // MARK: #453 — auto-failover between protocols on one VPS
+
+    private var failoverSection: some View {
+        Section {
+            OlcCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $settings.autoFailover) {
+                        Text(L10n.configFailoverToggle.localized())
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.Palette.textPrimary)
+                    }
+                    Text(L10n.configFailoverExplainer.localized())
+                        .font(.footnote)
+                        .foregroundStyle(Theme.Palette.textSecondary)
+                }
+            }
+            .olcCardRow()
+        } footer: {
+            Text(L10n.configFailoverProxyOnlyFooter.localized())
         }
     }
 }

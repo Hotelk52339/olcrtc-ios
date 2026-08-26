@@ -131,6 +131,32 @@ final class SpeedTest: ObservableObject {
         }
     }
 
+    // #454: a single lightweight latency sample for the Connection-health card's
+    // live readout. Same provider + ping endpoint as `run`, but ONE HEAD request
+    // (no warmup/averaging) and it never touches `isTesting`/`lastResult` — a
+    // background probe, not a user-run speed test, so it must not disturb the UI's
+    // speed-test state. Returns nil on failure ("measuring…" stays).
+    func quickPing(via mode: RouteMode) async -> Double? {
+        let provider = AppConstants.SpeedTest.provider(id: SettingsStore.shared.speedTestProviderID)
+        guard let url = URL(string: provider.pingURL()) else { return nil }
+        let timeout = mode == .tunnel ? AppConstants.SpeedTest.pingTimeoutTunnel
+                                      : AppConstants.SpeedTest.pingTimeoutDirect
+        let session = SOCKSSession.make(mode: mode, timeout: timeout)
+        defer { session.finishTasksAndInvalidate() }
+        var req = URLRequest(url: url)
+        req.httpMethod = "HEAD"
+        let start = Date()
+        do {
+            _ = try await session.data(for: req)
+            // A successful tunnel probe IS activity — mark it so keep-alive skips
+            // its own redundant probe this interval (same as the IP/speed paths).
+            if mode == .tunnel { SOCKSSession.noteTunnelActivity() }
+            return Date().timeIntervalSince(start) * 1000
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: Measurements
 
     private func measurePing(mode: RouteMode, provider: SpeedTestProvider) async -> Double? {

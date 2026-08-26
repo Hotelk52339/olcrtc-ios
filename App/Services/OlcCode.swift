@@ -33,6 +33,7 @@ enum OlcCode: String {
     case tunnelWorks    = "OLC-1007"   // first successful verify → connected
     case tunnelDown     = "OLC-1009"   // verify failed end-to-end after connect
     case portBusy       = "OLC-1026"   // configured SOCKS port held by another process (#308)
+    case failoverSwitch = "OLC-1027"   // #453: auto-failover hop to another protocol on the same VPS
 
     /// Bracketed prefix prepended to a logged line (trailing space included).
     var tag: String { "[\(rawValue)] " }

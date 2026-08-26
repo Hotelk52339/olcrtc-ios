@@ -475,6 +475,10 @@ final class TunnelManager: ObservableObject {
     private nonisolated static let reconnectBaseDelaySeconds: Double = 2
     private nonisolated static let maxReconnectDelaySeconds: Double = 60
     private nonisolated static let maxReconnectAttempts = 6   // 2+4+8+16+32+60 ≈ 122 s, then wait for user
+    // #453: with auto-failover on, spend a SHORTER budget per protocol before
+    // hopping to the next one on the same VPS — the point is to find a working
+    // protocol fast, not to exhaust the full backoff ladder on a blocked one.
+    private nonisolated static let failoverAttemptsPerCandidate = 3   // ~2+4+8 ≈ 14 s per protocol
 
     // MARK: Same-port wait-and-retry (#333)
     //
@@ -617,6 +621,14 @@ final class TunnelManager: ObservableObject {
     /// assignment, so a missed wiring can't silently leave it nil.
     var secretsLocked: (() -> Bool)?
 
+    /// #453: supplies the ordered failover alternatives for a record — the OTHER
+    /// protocols running on the SAME VPS (sibling ConnectionRecords, best-first).
+    /// Injected by the owner (MainTabView wires it to
+    /// `computeFailoverCandidates` over ConnectionStore + ServerHostStore); nil
+    /// (tests/previews) ⇒ no failover, the reconnect loop just gives up as before.
+    /// Consulted only when `settings.autoFailover` is on and `activeMode == .proxy`.
+    var failoverCandidates: (@MainActor (ConnectionRecord) -> [ConnectionRecord])?
+
     /// #437: the live manager, so an App Intent (Shortcuts / automation) can reach
     /// connect/disconnect without the SwiftUI view tree. Weak — the real instance is
     /// retained by `App`'s `@StateObject`; throwaway test/preview instances just
@@ -627,8 +639,10 @@ final class TunnelManager: ObservableObject {
     /// #412: inject the locked-secrets check at construction (default `nil`, so
     /// `TunnelManager()` in tests/previews still means "never locked"). Replaces the
     /// forgettable `.onAppear` wiring that risked a nil ⇒ never-locked bug.
-    init(secretsLocked: (() -> Bool)? = nil) {
+    init(secretsLocked: (() -> Bool)? = nil,
+         failoverCandidates: (@MainActor (ConnectionRecord) -> [ConnectionRecord])? = nil) {   // #453
         self.secretsLocked = secretsLocked
+        self.failoverCandidates = failoverCandidates   // #453
         Self.shared = self   // #437: App Intents reach the live manager here
         // #440: observe the core's own log lines for the wedge detector. Cheap and
         // always installed; `observeCoreLine` is a no-op unless the feature is on
@@ -972,12 +986,20 @@ final class TunnelManager: ObservableObject {
             guard let self else { return }
             defer { self.recoveryTask = nil }
             var attempt = 0
+            // #453: protocols already tried this recovery run (seeded with the
+            // starting record) so a failover hop never re-picks one.
+            var tried: Set<UUID> = self.lastRecord.map { [$0.id] } ?? []
             while !Task.isCancelled {
+                // #453: auto-failover spends a shorter per-protocol budget so it
+                // hops quickly; the normal single-protocol path keeps the full
+                // backoff ladder. Recomputed each iteration (the setting is live).
+                let budget = SettingsStore.shared.autoFailover
+                    ? Self.failoverAttemptsPerCandidate : Self.maxReconnectAttempts
                 // #438: jittered so simultaneously-dropped clients don't rejoin the
                 // carrier room in lockstep.
                 let delay = Self.jitteredBackoffSeconds(attempt: attempt, random: .random(in: 0..<1))
                 LogStore.shared.log(.connection,
-                    L10n.reconnectAttempt_fmt.formatted(attempt + 1, Self.maxReconnectAttempts, Int(delay)))
+                    L10n.reconnectAttempt_fmt.formatted(attempt + 1, budget, Int(delay)))
                 try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled, let record = self.lastRecord else { return }
                 // Tear down whatever is bound to the old/dead path, then attempt a
@@ -999,8 +1021,33 @@ final class TunnelManager: ObservableObject {
                 let ok = await self.connectAndAwait(record)
                 if Task.isCancelled || ok { return }   // superseded, or connected → done
                 attempt += 1
-                if attempt >= Self.maxReconnectAttempts {
-                    LogStore.shared.log(.connection, L10n.reconnectGaveUp.localized(), code: .reconnectFailed)  // OLC-1014
+                if attempt >= budget {
+                    // #453: before giving up on this protocol, hop to another
+                    // one on the SAME VPS (opt-in, proxy mode only — VPN-mode
+                    // recovery is the appex/NEVPNStatus's job). A hop resets the
+                    // attempt budget and continues the same recovery loop, so a
+                    // blocked carrier fails over in ~14 s instead of dead-ending.
+                    if SettingsStore.shared.autoFailover, self.activeMode == .proxy,
+                       let current = self.lastRecord,
+                       let next = Self.nextFailoverCandidate(
+                            current: current,
+                            candidates: self.failoverCandidates?(current) ?? [],
+                            tried: tried) {
+                        tried.insert(next.id)
+                        LogStore.shared.log(.connection,
+                            L10n.failoverSwitching_fmt.formatted(Self.carrierLabelForLog(current),
+                                                                 Self.carrierLabelForLog(next)),
+                            code: .failoverSwitch)   // OLC-1027
+                        self.lastRecord = next
+                        attempt = 0
+                        continue
+                    }
+                    // #453: no untried alternative → give up. Distinct message
+                    // when failover was on and actually hopped (tried > the seed).
+                    let msg = (SettingsStore.shared.autoFailover && tried.count > 1)
+                        ? L10n.failoverAllFailed.localized()
+                        : L10n.reconnectGaveUp.localized()
+                    LogStore.shared.log(.connection, msg, code: .reconnectFailed)  // OLC-1014
                     // #445 (audit fix 3): nil the handle BEFORE the `.failed`
                     // write — the didSet stops the background keeper only when no
                     // recovery is pending, and the `defer` above runs AFTER this
@@ -1008,7 +1055,7 @@ final class TunnelManager: ObservableObject {
                     // final give-up: the keeper MUST stop so a backgrounded app
                     // doesn't burn battery waiting for a user who isn't looking.
                     self.recoveryTask = nil
-                    self.state = .failed(L10n.reconnectGaveUp.localized())
+                    self.state = .failed(msg)
                     return
                 }
             }
@@ -1033,6 +1080,75 @@ final class TunnelManager: ObservableObject {
         let base = backoffDelaySeconds(attempt: attempt)
         let r = min(max(random, 0), 1)
         return base * (1 - 0.25 * r)                    // in [0.75·base, base]
+    }
+
+    // MARK: Auto-failover (#453) — pure helpers
+    //
+    // On repeated reconnect failure for the active protocol, hop to another
+    // protocol on the SAME VPS instead of giving up. The candidate list comes
+    // from `failoverCandidates` (wired to `computeFailoverCandidates` below);
+    // the loop in `requestReconnect` picks the next untried one.
+
+    /// First candidate not yet tried this recovery run and not the current
+    /// record. nil ⇒ every alternative has been tried → give up.
+    nonisolated static func nextFailoverCandidate(current: ConnectionRecord,
+                                                  candidates: [ConnectionRecord],
+                                                  tried: Set<UUID>) -> ConnectionRecord? {
+        candidates.first { $0.id != current.id && !tried.contains($0.id) }
+    }
+
+    /// Failover priority for a (carrier, transport): lower is tried first, so a
+    /// known-good combo is preferred over an intermittent one. Maps the
+    /// CarrierTransportMatrix verdict — recommended(0) < ok(1) < question(2) <
+    /// fail/unknown(3).
+    nonisolated static func failoverRank(carrier: String, transport: String) -> Int {
+        switch CarrierTransportMatrix.compat(carrier: carrier, transport: transport) {
+        case .recommended: return 0
+        case .ok:          return 1
+        case .question:    return 2
+        case .fail, .unknown: return 3
+        }
+    }
+
+    /// Ordered failover alternatives for `current`: the OTHER `.olcrtc` records
+    /// on the SAME VPS (the ServerHost whose primary/extra connection ids
+    /// include `current.id`), best-first by `failoverRank`. Empty when the
+    /// record isn't tied to a known host or the stores are gone. @MainActor —
+    /// it reads the two stores; the wiring closure is invoked on the main actor.
+    @MainActor
+    static func computeFailoverCandidates(_ current: ConnectionRecord,
+                                          store: ConnectionStore?,
+                                          serverStore: ServerHostStore?) -> [ConnectionRecord] {
+        guard let store, let serverStore else { return [] }
+        guard let host = serverStore.hosts.first(where: {
+            $0.lastConnectionID == current.id || ($0.extraConnectionIDs?.contains(current.id) ?? false)
+        }) else { return [] }
+        let ids = [host.lastConnectionID].compactMap { $0 } + (host.extraConnectionIDs ?? [])
+        let records = ids.compactMap { id in store.connections.first(where: { $0.id == id }) }
+        return records
+            .filter { $0.id != current.id }
+            .filter { if case .olcrtc = $0.details { return true } else { return false } }
+            .sorted { a, b in
+                let ra = rank(of: a), rb = rank(of: b)
+                if ra != rb { return ra < rb }
+                return a.displayName < b.displayName   // stable, deterministic
+            }
+    }
+
+    /// #453: failoverRank for a record's olcrtc params (worst rank for a
+    /// non-olcrtc record, which computeFailoverCandidates has already filtered).
+    private nonisolated static func rank(of record: ConnectionRecord) -> Int {
+        guard case .olcrtc(let p) = record.details else { return Int.max }
+        return failoverRank(carrier: p.carrier, transport: p.transport)
+    }
+
+    /// #453: carrier label for the failover log line (falls back to the record's
+    /// display name for a non-olcrtc record, which shouldn't reach failover).
+    private nonisolated static func carrierLabelForLog(_ record: ConnectionRecord) -> String {
+        if case .olcrtc(let p) = record.details {
+            return CarrierTransportMatrix.carrierLabel(p.carrier)
+        }
+        return record.displayName
     }
 
     // MARK: Network-path reconnect (#269)

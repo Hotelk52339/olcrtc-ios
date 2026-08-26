@@ -52,6 +52,23 @@ enum L10nTable {
         .vpnSettingsEntryName:      "OlcRTC",
         .vpnCapabilityUnavailable_fmt: "The system rejected the VPN configuration (%@). This happens when VPN access was declined, or when the app was signed with a free Apple ID — the Network Extension entitlement requires a paid Apple Developer team. Proxy mode still works.",
 
+        // #453: auto-failover
+        .configFailoverToggle:       "Auto-switch protocols",
+        .configFailoverExplainer:    "If the active protocol stops responding, automatically switch to another protocol running on the same server.",
+        .configFailoverProxyOnlyFooter: "Applies in proxy mode.",
+        .failoverSwitching_fmt:      "Protocol %@ is failing — switching to %@",
+        .failoverAllFailed:          "All protocols on this server failed",
+        // #454: connection-health card
+        .healthTitle:                "Connection health",
+        .healthProtocolLabel:        "Protocol",
+        .healthExitLabel:            "Exit",
+        .healthLatencyLabel:         "Latency",
+        .healthThroughputLabel:      "Speed",
+        .healthLatencyMs_fmt:        "%d ms",
+        .healthMeasuring:            "measuring…",
+        .healthLocationUnknown:      "Location unknown",
+        .healthRefresh:              "Refresh",
+
         // Routing
         .routingHeader:     "Routing",
         .routingAllTunnel:  "All through tunnel",
@@ -717,6 +734,23 @@ enum L10nTable {
         .vpnDisconnected:           "VPN-туннель отключён",
         .vpnSettingsEntryName:      "OlcRTC",
         .vpnCapabilityUnavailable_fmt: "Система отклонила конфигурацию VPN (%@). Так бывает, если доступ к VPN был отклонён или приложение подписано бесплатным Apple ID — для Network Extension нужна платная команда Apple Developer. Режим прокси продолжает работать.",
+
+        // #453: auto-failover
+        .configFailoverToggle:       "Авто-переключение протоколов",
+        .configFailoverExplainer:    "Если активный протокол перестаёт отвечать, автоматически переключиться на другой протокол того же сервера.",
+        .configFailoverProxyOnlyFooter: "Работает в режиме прокси.",
+        .failoverSwitching_fmt:      "Протокол %@ не отвечает — переключаюсь на %@",
+        .failoverAllFailed:          "Все протоколы этого сервера недоступны",
+        // #454: connection-health card
+        .healthTitle:                "Состояние соединения",
+        .healthProtocolLabel:        "Протокол",
+        .healthExitLabel:            "Выход",
+        .healthLatencyLabel:         "Задержка",
+        .healthThroughputLabel:      "Скорость",
+        .healthLatencyMs_fmt:        "%d мс",
+        .healthMeasuring:            "измерение…",
+        .healthLocationUnknown:      "Локация неизвестна",
+        .healthRefresh:              "Обновить",
 
         // Routing
         .routingHeader:     "Маршрутизация",

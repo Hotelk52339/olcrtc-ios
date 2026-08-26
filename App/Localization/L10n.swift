@@ -60,6 +60,23 @@ enum L10n: String, CaseIterable {
     case vpnSettingsEntryName               // "OlcRTC" — shown under Settings > VPN
     case vpnCapabilityUnavailable_fmt       // %@ = system error text from saveToPreferences
 
+    // #453: auto-failover between protocols on one server
+    case configFailoverToggle               // settings toggle label
+    case configFailoverExplainer            // what auto-failover does
+    case configFailoverProxyOnlyFooter      // note: proxy-mode only
+    case failoverSwitching_fmt              // "%@ failing — switching to %@" (2 carrier labels)
+    case failoverAllFailed                  // every protocol on the server failed
+    // #454: connection-health card
+    case healthTitle                        // card title
+    case healthProtocolLabel                // row: protocol
+    case healthExitLabel                    // row: exit ip/geo
+    case healthLatencyLabel                 // row: latency
+    case healthThroughputLabel              // row: speed
+    case healthLatencyMs_fmt                // "%d ms"
+    case healthMeasuring                    // live-ping placeholder
+    case healthLocationUnknown              // geo lookup empty/failed
+    case healthRefresh                      // refresh button a11y
+
     // MARK: Routing
     case routingHeader, routingAllTunnel, routingAllDirect, routingViaTunnel, routingDirect
 

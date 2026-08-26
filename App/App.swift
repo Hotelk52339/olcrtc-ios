@@ -57,7 +57,7 @@ struct MainTabView: View {
     @StateObject  private var tunnel      : TunnelManager
     @StateObject  private var ipCheck     = IPChecker()
     @StateObject  private var speed       = SpeedTest()
-    @StateObject  private var serverStore = ServerHostStore()
+    @StateObject  private var serverStore : ServerHostStore   // #453: built in init() so the failover wiring can capture it
     @StateObject  private var botStore    = BotStore()      // #417: bot registry (Manage VPS + Settings)
     @StateObject  private var logsRouter  = LogsRouter()   // #339
     @StateObject  private var updateChecker = UpdateChecker()   // #360
@@ -101,9 +101,18 @@ struct MainTabView: View {
     init() {
         let store = ConnectionStore()
         _store = StateObject(wrappedValue: store)
-        _tunnel = StateObject(wrappedValue: TunnelManager(secretsLocked: { [weak store] in
-            store?.secretsLocked ?? false
-        }))
+        // #453: serverStore is constructed here (not inline) so the auto-failover
+        // provider can capture both stores — the sibling protocols to fail over
+        // to are the ConnectionRecords a ServerHost links (last + extra).
+        let serverStore = ServerHostStore()
+        _serverStore = StateObject(wrappedValue: serverStore)
+        _tunnel = StateObject(wrappedValue: TunnelManager(
+            secretsLocked: { [weak store] in
+                store?.secretsLocked ?? false
+            },
+            failoverCandidates: { [weak store, weak serverStore] current in
+                TunnelManager.computeFailoverCandidates(current, store: store, serverStore: serverStore)
+            }))
     }
 
     /// (audit) explicit font override → that exact size; "System" → the full
