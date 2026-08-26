@@ -92,7 +92,7 @@ struct ServersView: View {
 
     @ObservedObject private var settings = SettingsStore.shared
 
-    var body: some View {
+    private var coreStack: some View {
         NavigationStack {
             List {
                 matrixSection
@@ -298,9 +298,20 @@ struct ServersView: View {
             } message: { _ in
                 Text(L10n.rotateKeyConfirmBody.localized())
             }
-            // boc #452: multi-protocol host card — add-protocol sheet (reuses
-            // InstallOptionsView in single mode, carriers restricted to the
-            // ones not yet installed), remove-protocol confirm, per-row recover.
+        }
+    }
+
+    var body: some View {
+        // #452: the multi-carrier modals (add-protocol sheet, remove/recover
+        // confirms) are split off the main chain — with them inline the Swift
+        // type-checker timed out on ServersView.body ("unable to type-check
+        // this expression in reasonable time").
+        carrierModals(coreStack)
+    }
+
+    @ViewBuilder
+    private func carrierModals(_ content: some View) -> some View {
+        content
             .sheet(item: $addProtocolFor) { host in
                 InstallOptionsView(limitToCarriers: missingCarriers(host),
                                    singleOnly: true) { options, _ in
@@ -347,8 +358,6 @@ struct ServersView: View {
             } message: { _ in
                 Text(L10n.recoverConfirmBody.localized())
             }
-            // eoc #452
-        }
     }
 
     private func removeFromList(_ host: ServerHost) {
