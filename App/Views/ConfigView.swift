@@ -16,6 +16,13 @@ struct ConfigView: View {
     @ObservedObject var tunnel: TunnelManager
     @ObservedObject private var settings = SettingsStore.shared
 
+    /// #455: a live session (not merely "not disconnected") — the only state in
+    /// which the tunnel-mode switch must be locked. `.failed` is deliberately
+    /// NOT live, so a refused VPN start doesn't trap the user on VPN mode.
+    private var sessionLive: Bool {
+        tunnel.state.isConnected || tunnel.state.isConnecting || tunnel.state == .waitingForNetwork
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -48,8 +55,14 @@ struct ConfigView: View {
                         // mid-session would silently not apply, so don't offer
                         // it (dim the whole picker while a session is live;
                         // custom button styles don't dim on .disabled alone).
-                        .disabled(tunnel.state != .disconnected)
-                        .opacity(tunnel.state == .disconnected ? 1 : 0.55)
+                        // #455 was: `.disabled(tunnel.state != .disconnected)` — that
+                        // also locked the picker in `.failed`, so after a VPN start
+                        // was refused (permission/entitlement) the user could no
+                        // longer switch back to proxy without reinstalling. Only a
+                        // LIVE session (connected/connecting/waiting) blocks a
+                        // switch; `.failed` and `.disconnected` both allow it.
+                        .disabled(sessionLive)
+                        .opacity(sessionLive ? 0.55 : 1)
                     if case .unavailable(let reason) = tunnel.vpn.capability {
                         Text(L10n.configVPNUnavailableFooter.localized())
                             .font(.footnote)

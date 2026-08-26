@@ -123,7 +123,12 @@ struct ConnectionsView: View {
     // switch; otherwise route through the tunnel only when it's actually up.
     // #327 was: routingMode == .allDirect ? .direct : (tunnel.state.isConnected ? .tunnel : .direct)
     private var currentMode: RouteMode {
-        tunnel.state.isConnected ? .tunnel : .direct
+        // #455: only the in-app PROXY exposes a local SOCKS port to probe through.
+        // In VPN mode the whole device (this app included) already routes through
+        // the tunnel, so a plain `.direct` request IS tunneled — sending the
+        // diagnostics at the (non-existent) SOCKS port there only produced
+        // "permission denied" and an empty health card. Probe direct in VPN mode.
+        (tunnel.state.isConnected && tunnel.activeMode == .proxy) ? .tunnel : .direct
     }
 
     var body: some View {
@@ -202,7 +207,10 @@ struct ConnectionsView: View {
                     Haptics.error()
                 }
                 if newState.isConnected {
-                    Task { await ipCheck.refreshExitGeo(via: .tunnel) }
+                    // #455 was: hardcoded `.tunnel` — broke exit-geo in VPN mode
+                    // (no local SOCKS). `currentMode` picks `.direct` under VPN,
+                    // which is already tunneled system-wide.
+                    Task { await ipCheck.refreshExitGeo(via: currentMode) }
                 } else {
                     ipCheck.clearExitGeo()
                 }

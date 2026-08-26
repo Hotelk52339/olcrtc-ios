@@ -54,6 +54,11 @@ struct SettingsView: View {
     /// keep the control in place.
     private static let fontAnchorID = "settingsFontAnchor"
 
+    /// #455: confirm before "Reset all settings" — restores defaults (incl.
+    /// tunnel mode → proxy), which unsticks any state that would otherwise
+    /// need an app reinstall.
+    @State private var showResetConfirm = false
+
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
@@ -78,6 +83,18 @@ struct SettingsView: View {
                 .scrollContentBackground(.hidden)
                 .background(Theme.Palette.bg)
                 .onDisappear { socksPassLoaded = false }
+                // #455: reset-to-defaults confirm (unsticks a wedged state
+                // without reinstalling; connections and servers are kept).
+                .confirmationDialog(L10n.resetSettingsConfirmTitle.localized(),
+                                    isPresented: $showResetConfirm, titleVisibility: .visible) {
+                    Button(L10n.resetSettingsAction.localized(), role: .destructive) {
+                        SettingsStore.shared.reset()
+                        Haptics.success()
+                    }
+                    Button(L10n.cancel.localized(), role: .cancel) { }
+                } message: {
+                    Text(L10n.resetSettingsConfirmBody.localized())
+                }
                 .navigationTitle(L10n.settingsTitle.localized())
                 .toolbar {
                     ToolbarItemGroup(placement: .keyboard) {
@@ -344,6 +361,7 @@ struct SettingsView: View {
             OlcButton(L10n.clearAllLogsAction.localized(), systemImage: "trash",
                       role: .danger, fillWidth: true) {
                 LogStore.shared.clearAll()
+                Haptics.success()   // #455: the clear is instant and off-screen (Logs tab), so confirm it fired
             }
         } header: {
             Text(L10n.sectionLogs.localized())
@@ -479,6 +497,14 @@ struct SettingsView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
+            // #455: a reset that gets the app out of any wedged state (e.g. a
+            // tunnel mode that can't be switched back) without reinstalling.
+            OlcButton(L10n.resetSettingsAction.localized(), systemImage: "arrow.counterclockwise",
+                      role: .danger, fillWidth: true) {
+                showResetConfirm = true
+            }
+        } footer: {
+            Text(L10n.resetSettingsFooter.localized()).font(.caption2)
         }
     }
 

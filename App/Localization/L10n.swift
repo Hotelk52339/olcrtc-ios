@@ -89,6 +89,11 @@ enum L10n: String, CaseIterable {
     case logLevelNormal
     case logLevelDebug
     case logLevelVerbose
+    // #455: reset-to-defaults safety valve
+    case resetSettingsAction
+    case resetSettingsFooter
+    case resetSettingsConfirmTitle
+    case resetSettingsConfirmBody
 
     // MARK: Routing
     case routingHeader, routingAllTunnel, routingAllDirect, routingViaTunnel, routingDirect

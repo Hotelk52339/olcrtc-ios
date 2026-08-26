@@ -80,6 +80,11 @@ enum L10nTable {
         .logLevelNormal:             "Normal",
         .logLevelDebug:              "Debug",
         .logLevelVerbose:            "Verbose (all)",
+        // #455: reset-to-defaults
+        .resetSettingsAction:        "Reset all settings",
+        .resetSettingsFooter:        "Restores every setting to its default, including the tunnel mode. Your connections and servers are kept.",
+        .resetSettingsConfirmTitle:  "Reset all settings?",
+        .resetSettingsConfirmBody:   "Every setting returns to its default, including the tunnel mode. Connections and servers are not affected.",
 
         // Routing
         .routingHeader:     "Routing",
@@ -775,6 +780,11 @@ enum L10nTable {
         .logLevelNormal:             "Обычный",
         .logLevelDebug:              "Отладка",
         .logLevelVerbose:            "Подробный (всё)",
+        // #455: reset-to-defaults
+        .resetSettingsAction:        "Сбросить все настройки",
+        .resetSettingsFooter:        "Вернёт все настройки к значениям по умолчанию, включая режим туннеля. Подключения и серверы сохранятся.",
+        .resetSettingsConfirmTitle:  "Сбросить все настройки?",
+        .resetSettingsConfirmBody:   "Все настройки вернутся к значениям по умолчанию, включая режим туннеля. Подключения и серверы не затрагиваются.",
 
         // Routing
         .routingHeader:     "Маршрутизация",
