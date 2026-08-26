@@ -21,6 +21,7 @@ struct ConfigView: View {
             List {
                 modeSection
                 explainerSection
+                failoverSection   // #453
             }
             // (audit #299) paint the ground from the token: without this the
             // List keeps the system grouped background, so the Gray scheme's
@@ -38,7 +39,9 @@ struct ConfigView: View {
 
     private var modeSection: some View {
         Section {
-            OlcCard {
+            // #455: the mode choice is this tab's primary element — lift it a
+            // little more than the guidance cards below it.
+            OlcCard(elevation: .floating) {
                 VStack(alignment: .leading, spacing: 12) {
                     OlcChipPicker(selection: $settings.tunnelMode, options: modeOptions)
                         // The mode is read once, at connect time — switching
@@ -88,10 +91,38 @@ struct ConfigView: View {
                     Text(L10n.configProxyExplainer.localized())
                     Text(L10n.configVPNExplainer.localized())
                 }
-                .font(.subheadline)
+                // #455: explainer text sits at .footnote everywhere (matches the
+                // failover explainer + section footers) — one voice for guidance.
+                .font(.footnote)
                 .foregroundStyle(Theme.Palette.textSecondary)
             }
             .olcCardRow()
+        }
+    }
+
+    // MARK: #453 — auto-failover between protocols on one VPS
+
+    private var failoverSection: some View {
+        Section {
+            OlcCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $settings.autoFailover) {
+                        Text(L10n.configFailoverToggle.localized())
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.Palette.textPrimary)
+                    }
+                    Text(L10n.configFailoverExplainer.localized())
+                        .font(.footnote)
+                        .foregroundStyle(Theme.Palette.textSecondary)
+                }
+            }
+            .olcCardRow()
+        } header: {
+            // #455: a header for structural parity with the mode section (was a
+            // footer-only section, which read as unlabeled next to "Tunnel mode").
+            Text(L10n.configReliabilityHeader.localized())
+        } footer: {
+            Text(L10n.configFailoverProxyOnlyFooter.localized())
         }
     }
 }

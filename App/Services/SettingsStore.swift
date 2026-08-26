@@ -10,13 +10,15 @@ enum LogLevel: Int, CaseIterable, Codable, Comparable {
     case debug   = 3   // current debugLogging=true
     case verbose = 4   // everything including Pion noise
 
+    // #455: localised (was English-only — CLAUDE.md flagged it). Computed at the
+    // point of use (the log-level Picker), so it follows settings.language live.
     var label: String {
         switch self {
-        case .off:     return "Off"
-        case .error:   return "Errors only"
-        case .info:    return "Normal"
-        case .debug:   return "Debug"
-        case .verbose: return "Verbose (all)"
+        case .off:     return L10n.logLevelOff.localized()
+        case .error:   return L10n.logLevelErrors.localized()
+        case .info:    return L10n.logLevelNormal.localized()
+        case .debug:   return L10n.logLevelDebug.localized()
+        case .verbose: return L10n.logLevelVerbose.localized()
         }
     }
 
@@ -97,6 +99,13 @@ final class SettingsStore: ObservableObject {
         static let vpsAutoPingEnabled   = true
         static let vpsAutoPingInterval  = 30
         static let earlyRestartOnWedge  = false   // #440: opt-in, brittle log-signature feature
+        // #455: optimal out-of-the-box defaults — a fresh install should already
+        // survive backgrounding, reconnect on launch, and fail over between
+        // protocols, so the user doesn't have to remember to enable them after a
+        // reinstall. (keepAliveSeconds is already 30 = on.)
+        static let autoConnectOnLaunch  = true    // #455 was: hardcoded false
+        static let backgroundAudio      = true    // #455 was: hardcoded false — keeps the SOCKS port alive in the background
+        static let autoFailover         = true    // #455 was: false — protocol failover on by default
         static let vpsAutoPingRange     = 10...300
         static let updateCheckEnabled   = true          // #360: opt-out
     }
@@ -221,6 +230,11 @@ final class SettingsStore: ObservableObject {
     @Published var earlyRestartOnWedge: Bool {
         didSet { Self.persist(earlyRestartOnWedge, forKey: Keys.earlyRestartOnWedge) }
     }
+    /// #453: opt-in auto-failover — on repeated reconnect failure switch to
+    /// another protocol on the same VPS (see TunnelManager.requestReconnect).
+    @Published var autoFailover: Bool {
+        didSet { Self.persist(autoFailover, forKey: Keys.autoFailover) }
+    }
     @Published var vpsAutoPingInterval: Int {
         didSet {
             let v = vpsAutoPingInterval.clamped(to: Defaults.vpsAutoPingRange)
@@ -300,9 +314,9 @@ final class SettingsStore: ObservableObject {
         vp8BatchSize        = (d.object(forKey: Keys.vp8BatchSize)        as? Int)  .map { $0.clamped(to: Defaults.vp8BatchRange) }          ?? Defaults.vp8BatchSize
         logBufferSize       = (d.object(forKey: Keys.logBufferSize)       as? Int)  .map { $0.clamped(to: Defaults.logBufferRange) }         ?? Defaults.logBufferSize
         containerLogsTailLines = (d.object(forKey: Keys.containerLogsTail) as? Int) .map { $0.clamped(to: Defaults.containerLogsTailRange) } ?? Defaults.containerLogsTail
-        autoConnectOnLaunch = (d.object(forKey: Keys.autoConnectOnLaunch) as? Bool)                                                          ?? false
+        autoConnectOnLaunch = (d.object(forKey: Keys.autoConnectOnLaunch) as? Bool)                                                          ?? Defaults.autoConnectOnLaunch
         autoRemoveConnectionOnUninstall = (d.object(forKey: Keys.autoRemoveConnectionOnUninstall) as? Bool)                                  ?? true
-        backgroundAudio          = (d.object(forKey: Keys.backgroundAudio)          as? Bool)   ?? false
+        backgroundAudio          = (d.object(forKey: Keys.backgroundAudio)          as? Bool)   ?? Defaults.backgroundAudio
         maskIPs                  = (d.object(forKey: Keys.maskIPs)                  as? Bool)   ?? false   // #337
         localSocksAuthEnabled    = (d.object(forKey: Keys.localSocksAuthEnabled)    as? Bool)   ?? false
         localSocksUser           = (d.string(forKey: Keys.localSocksUser))                      ?? ""
@@ -312,6 +326,7 @@ final class SettingsStore: ObservableObject {
         keepAliveSeconds    = (d.object(forKey: Keys.keepAlive)           as? Int)  .map { $0.clamped(to: Defaults.keepAliveRange) }         ?? Defaults.keepAliveSeconds
         vpsAutoPingEnabled  = (d.object(forKey: Keys.vpsAutoPingEnabled)  as? Bool)                                                          ?? Defaults.vpsAutoPingEnabled
         earlyRestartOnWedge = (d.object(forKey: Keys.earlyRestartOnWedge) as? Bool)                                                          ?? Defaults.earlyRestartOnWedge
+        autoFailover        = (d.object(forKey: Keys.autoFailover)        as? Bool)                                                          ?? Defaults.autoFailover           // #453
         vpsAutoPingInterval = (d.object(forKey: Keys.vpsAutoPingInterval) as? Int)  .map { $0.clamped(to: Defaults.vpsAutoPingRange) }       ?? Defaults.vpsAutoPingInterval
         if let arr = d.object(forKey: Keys.enabledIPSources) as? [String] {
             enabledIPSources = Set(arr)
@@ -336,9 +351,9 @@ final class SettingsStore: ObservableObject {
         vp8BatchSize           = Defaults.vp8BatchSize
         logBufferSize          = Defaults.logBufferSize
         containerLogsTailLines = Defaults.containerLogsTail
-        autoConnectOnLaunch    = false
+        autoConnectOnLaunch    = Defaults.autoConnectOnLaunch
         autoRemoveConnectionOnUninstall = true
-        backgroundAudio        = false
+        backgroundAudio        = Defaults.backgroundAudio
         maskIPs                = false   // #337
         localSocksAuthEnabled  = false
         localSocksUser         = ""
@@ -349,6 +364,7 @@ final class SettingsStore: ObservableObject {
         vpsAutoPingEnabled     = Defaults.vpsAutoPingEnabled
         vpsAutoPingInterval    = Defaults.vpsAutoPingInterval
         earlyRestartOnWedge    = Defaults.earlyRestartOnWedge
+        autoFailover           = Defaults.autoFailover   // #453
         enabledIPSources       = AppConstants.defaultEnabledIPCheckLabels
         speedTestProviderID    = AppConstants.SpeedTest.defaultProviderID
         updateCheckEnabled     = Defaults.updateCheckEnabled   // #360
@@ -414,6 +430,7 @@ final class SettingsStore: ObservableObject {
         static let vpsAutoPingEnabled        = "settings.vpsAutoPingEnabled"
         static let vpsAutoPingInterval       = "settings.vpsAutoPingInterval"
         static let earlyRestartOnWedge       = "settings.earlyRestartOnWedge"
+        static let autoFailover              = "settings.autoFailover"
         static let enabledIPSources          = "settings.enabledIPSources"
         static let speedTestProviderID       = "settings.speedTestProviderID"
         static let updateCheckEnabled        = "settings.updateCheckEnabled"   // #360

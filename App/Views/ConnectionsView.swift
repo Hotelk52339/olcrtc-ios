@@ -131,6 +131,17 @@ struct ConnectionsView: View {
             List {
                 Section { heroCard.olcCardRow() }
 
+                // #454: consolidated connection-health card (protocol · exit geo ·
+                // live latency · throughput), only while the tunnel is up.
+                if tunnel.state.isConnected {
+                    Section {
+                        HealthCard(record: tunnel.connectedRecord,
+                                   ipCheck: ipCheck, speed: speed,
+                                   mode: currentMode, maskIPs: settings.maskIPs)
+                            .olcCardRow()
+                    }
+                }
+
                 // boc #327: routing switch removed for now (see the @AppStorage block)
                 // Section {
                 //     OlcCard {
@@ -178,6 +189,24 @@ struct ConnectionsView: View {
             // rather than recomputing in `body`. `initial:` seeds them on appear.
             .onChange(of: store.connections, initial: true) { _, _ in recompute() }
             .onChange(of: store.subscriptionMeta) { _, _ in recompute() }
+            // #454: fetch the exit geo through the tunnel when a session comes up
+            // (feeds the health card's exit row); clear it when the tunnel drops so
+            // the next session never briefly shows the previous exit's location.
+            .onChange(of: tunnel.state) { oldState, newState in
+                // #455: physical feedback on the connect outcome — a success
+                // notification the instant the tunnel verifies, an error buzz if
+                // it gives up. (Only on the transition, not on every body pass.)
+                if newState.isConnected, !oldState.isConnected {
+                    Haptics.success()
+                } else if case .failed = newState, oldState != newState {
+                    Haptics.error()
+                }
+                if newState.isConnected {
+                    Task { await ipCheck.refreshExitGeo(via: .tunnel) }
+                } else {
+                    ipCheck.clearExitGeo()
+                }
+            }
             .navigationTitle("OlcRTC")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -237,7 +266,11 @@ struct ConnectionsView: View {
     // conditionally under their own dividers — the card resized on every
     // state change.
     private var heroCard: some View {
-        OlcCard {
+        // #455: the hero is the app's signature moment — it floats above the
+        // list on glass and, once the tunnel verifies, emits a soft aurora glow
+        // (the `.glow` elevation) so "connected" is felt, not just read.
+        OlcCard(elevation: tunnel.state.isConnected ? .glow : .floating,
+                glass: true) {
             VStack(alignment: .leading, spacing: 12) {
                 OlcStatusPill(tone: heroTone, title: heroTitle) {
                     Toggle("", isOn: globalToggleBinding)
@@ -283,7 +316,9 @@ struct ConnectionsView: View {
                 heroFooter
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
-            .animation(.easeInOut(duration: 0.25), value: tunnel.state)
+            // #455: a gentle spring on state change so the glow/footer settle in
+            // with a premium bounce instead of a flat cross-fade.
+            .animation(.spring(response: 0.42, dampingFraction: 0.82), value: tunnel.state)
         }
     }
 
@@ -379,8 +414,10 @@ struct ConnectionsView: View {
                 || tunnel.state == .waitingForNetwork },
             set: { on in
                 if on, let p = store.primary {
+                    Haptics.impact()            // #455: firm tap the moment connect is committed
                     tunnel.connect(record: p)   // #393: guard now in TunnelManager.connect
                 } else if !on {
+                    Haptics.impact()            // #455
                     tunnel.disconnect()
                 }
             }
@@ -769,6 +806,10 @@ struct ConnectionsView: View {
 
     private func serverRow(_ conn: ConnectionRecord) -> some View {
         let isPrimary = store.primary?.id == conn.id
+        // #455: is THIS row the live tunnel? (connectedRecord — not primary —
+        // is the node actually carrying traffic.) The live row wears the aurora;
+        // the merely-selected primary keeps the calmer star.
+        let isLive = tunnel.connectedRecord?.id == conn.id
 
         // #410: each connection is its own OlcCard on a cleared row (inset 16 via
         // olcCardRow), so its plate width lines up with the hero / diagnostics
@@ -777,15 +818,26 @@ struct ConnectionsView: View {
         // the cards, which a sharp eye reads as a misaligned, slightly longer row.
         return OlcCard {
           HStack(spacing: 12) {
+            // #455: leading indicator — a filled aurora dot when live, the star
+            // ring when it's the selected primary, an empty ring otherwise.
             ZStack {
-                Circle()
-                    .strokeBorder(isPrimary ? Theme.Palette.star : Theme.Palette.textTertiary,
-                                  lineWidth: 1.5)
-                    .frame(width: 24, height: 24)
-                if isPrimary {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.Palette.star)
+                if isLive {
+                    Circle()
+                        .fill(Theme.Palette.auroraGradient)
+                        .frame(width: 24, height: 24)
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                } else {
+                    Circle()
+                        .strokeBorder(isPrimary ? Theme.Palette.star : Theme.Palette.textTertiary,
+                                      lineWidth: 1.5)
+                        .frame(width: 24, height: 24)
+                    if isPrimary {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.Palette.star)
+                    }
                 }
             }
 
@@ -824,9 +876,23 @@ struct ConnectionsView: View {
             OlcOverflowMenu(items: serverMenuItems(conn))
           }
         }
+        // #455: a thin aurora spine marks the live row along its leading edge —
+        // the one calm signal that ties a list row to the glowing hero above.
+        .overlay(alignment: .leading) {
+            if isLive {
+                Capsule()
+                    .fill(Theme.Palette.auroraGradient)
+                    .frame(width: 4)
+                    .padding(.vertical, 12)
+                    .padding(.leading, 3)
+            }
+        }
         .olcCardRow()
         .contentShape(Rectangle())
-        .onTapGesture { store.setPrimary(conn.id) }
+        .onTapGesture {
+            Haptics.tap()   // #455: tap-to-select-primary now has feedback (it's not an OlcButton)
+            store.setPrimary(conn.id)
+        }
         // (audit, HIG accessibility) tap-to-set-primary was a bare onTapGesture
         // — no button trait, no combined label, and the Main capsule was
         // visual-only. One VoiceOver element per row: name + subtitle combined,

@@ -60,6 +60,36 @@ enum L10n: String, CaseIterable {
     case vpnSettingsEntryName               // "OlcRTC" — shown under Settings > VPN
     case vpnCapabilityUnavailable_fmt       // %@ = system error text from saveToPreferences
 
+    // #453: auto-failover between protocols on one server
+    case configFailoverToggle               // settings toggle label
+    case configFailoverExplainer            // what auto-failover does
+    case configFailoverProxyOnlyFooter      // note: proxy-mode only
+    case failoverSwitching_fmt              // "%@ failing — switching to %@" (2 carrier labels)
+    case failoverAllFailed                  // every protocol on the server failed
+    // #454: connection-health card
+    case healthTitle                        // card title
+    case healthProtocolLabel                // row: protocol
+    case healthExitLabel                    // row: exit ip/geo
+    case healthLatencyLabel                 // row: latency
+    case healthThroughputLabel              // row: speed
+    case healthLatencyMs_fmt                // "%d ms"
+    case healthMeasuring                    // live-ping placeholder
+    case healthLocationUnknown              // geo lookup empty/failed
+    case healthRefresh                      // refresh button a11y
+    // #455: premium redesign — editorial-consistency additions
+    case carrierChoiceFooter                // install/reconfigure carrier guidance footer
+    case configReliabilityHeader            // failover section header
+    case unitSeconds                        // "s" unit after numeric fields
+    case sshTestInvalidPort                 // add-host SSH reachability test: bad port
+    case sshTestReachable_fmt               // add-host SSH test: reachable (%@ = rtt)
+    case sshTestUnreachable                 // add-host SSH test: unreachable
+    // #455: localise LogLevel.label (was English-only — CLAUDE.md flagged it)
+    case logLevelOff
+    case logLevelErrors
+    case logLevelNormal
+    case logLevelDebug
+    case logLevelVerbose
+
     // MARK: Routing
     case routingHeader, routingAllTunnel, routingAllDirect, routingViaTunnel, routingDirect
 

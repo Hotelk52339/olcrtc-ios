@@ -90,6 +90,70 @@ enum Theme {
         // `star`: bright yellow wash in dark, muted amber wash in light.
         static let starWeak = Theme.dynamic(dark: UIColor(hex: 0xFFD60A).withAlphaComponent(0.16),
                                             light: UIColor(hex: 0xB8860B).withAlphaComponent(0.14))
+
+        // MARK: Aurora signature (#455 premium redesign)
+        //
+        // The app's own identity: a cyan→violet "aurora" that stands in for the
+        // signal travelling through the tunnel. It carries the CONNECTED state
+        // and every primary action, so the interface has one memorable colour
+        // that isn't the system blue every other app defaults to. Links and
+        // neutral controls still use `accent` (system blue) — the aurora is
+        // spent only on the connect moment and primary CTAs (frontend-design:
+        // "spend your boldness in one place").
+        static let signalCyan   = Color(hex: 0x36D8F5)   // near-cyan, high-energy end
+        static let signalViolet = Color(hex: 0x8B7BFF)   // soft violet, calm end
+        static let signalMid    = Color(hex: 0x5EAEFF)   // blue midpoint (blends toward the system accent)
+
+        /// The signature gradient (top-leading cyan → bottom-trailing violet),
+        /// used for the connected hero ring and primary-button fills.
+        static let auroraGradient = LinearGradient(
+            colors: [signalCyan, signalMid, signalViolet],
+            startPoint: .topLeading, endPoint: .bottomTrailing)
+
+        /// A low-opacity wash of the same gradient for glows and translucent
+        /// fills behind glass (never for text/controls — decoration only).
+        static let auroraSoft = LinearGradient(
+            colors: [signalCyan.opacity(0.22), signalViolet.opacity(0.22)],
+            startPoint: .topLeading, endPoint: .bottomTrailing)
+
+        /// Tint for the connected-state glow/shadow (the cyan end reads as
+        /// "live" against the dark ground).
+        static let connectedGlow = signalCyan
+    }
+
+    // MARK: - Elevation (#455)
+    //
+    // Depth is what separates a flat, templated look from a premium one: content
+    // sits at the base, cards lift a little off it, and the hero/floating layer
+    // lifts more. These are soft, wide, low-opacity shadows (never hard drops) so
+    // the lift reads as light, not as a border. Applied via `.olcShadow(_:)`.
+    enum Elevation {
+        case none, card, floating, glow
+
+        var color: Color {
+            switch self {
+            case .none:     return .clear
+            case .card:     return Color.black.opacity(0.18)
+            case .floating: return Color.black.opacity(0.28)
+            case .glow:     return Theme.Palette.connectedGlow.opacity(0.45)
+            }
+        }
+        var radius: CGFloat {
+            switch self {
+            case .none: return 0
+            case .card: return 10
+            case .floating: return 22
+            case .glow: return 26
+            }
+        }
+        var y: CGFloat {
+            switch self {
+            case .none: return 0
+            case .card: return 4
+            case .floating: return 10
+            case .glow: return 0   // a glow spreads evenly, it doesn't "fall"
+            }
+        }
     }
 
     // MARK: - Metrics (spacing / shape)
@@ -113,16 +177,23 @@ enum Theme {
     // these. Approx. handoff sizes noted in comments.
     // #299 was: statusSubtitle/sectionHeader branched on the Console direction
     // (monospaced) — the direction is gone, so these are the proportional values.
+    // #455: the whole scale moved to SF Rounded. Rounded terminals read as
+    // warmer and more crafted than the default SF — the single cheapest way to
+    // lift the type off "system template" without touching a single call site
+    // (they all go through these tokens). Data stays monospaced (`metricValue`)
+    // so numbers still align in columns. All still map to Dynamic Type text
+    // styles, so the font-size slider keeps scaling everything.
     enum Typography {
-        static let largeTitle     = Font.largeTitle.bold()                                    // 32 / 800
-        static let button         = Font.callout.weight(.semibold)                            // ~16 / 600
-        static let statusTitle    = Font.subheadline.weight(.semibold)                        // ~15 / 600
-        static let statusSubtitle = Font.caption
-        static let sectionHeader  = Font.caption.weight(.semibold)
-        static let chip           = Font.subheadline.weight(.semibold)                        // ~14 / 600
-        static let segment        = Font.subheadline.weight(.semibold)                        // ~14 / 600
-        static let metricLabel    = Font.caption2.weight(.semibold)                           // ~11 / 600 (tracked + uppercased)
-        static let metricValue    = Font.system(.body, design: .monospaced).weight(.semibold) // ~17 / 600 mono
+        static let display        = Font.system(.largeTitle, design: .rounded).weight(.bold)   // #455: hero numerals/state
+        static let largeTitle     = Font.system(.largeTitle, design: .rounded).weight(.bold)   // 32 / 800
+        static let button         = Font.system(.callout,    design: .rounded).weight(.semibold)   // ~16 / 600
+        static let statusTitle    = Font.system(.subheadline, design: .rounded).weight(.semibold)  // ~15 / 600
+        static let statusSubtitle = Font.system(.caption,     design: .rounded)
+        static let sectionHeader  = Font.system(.caption,     design: .rounded).weight(.semibold)
+        static let chip           = Font.system(.subheadline, design: .rounded).weight(.semibold)  // ~14 / 600
+        static let segment        = Font.system(.subheadline, design: .rounded).weight(.semibold)  // ~14 / 600
+        static let metricLabel    = Font.system(.caption2,    design: .rounded).weight(.semibold)  // ~11 / 600 (tracked + uppercased)
+        static let metricValue    = Font.system(.body, design: .monospaced).weight(.semibold)      // ~17 / 600 mono (data aligns)
     }
 }
 

@@ -228,15 +228,19 @@ struct AddServerHostView: View {
     private func testSSH() async {
         guard !Task.isCancelled else { return }
         guard let portInt = Int(port), portInt > 0, portInt <= 65535 else {
-            testResult = "✗ Invalid port"
+            // #455 (editorial) was: hardcoded English "✗ Invalid port" — a
+            // Russian user saw mixed languages. Localised; the ✓/✗ prefix is
+            // kept because `testResult.hasPrefix("✓")` drives the result colour.
+            testResult = "✗ " + L10n.sshTestInvalidPort.localized()
             isTesting = false
             return
         }
         let result = await NetPing.tcp(host: host, port: UInt16(portInt))
         if result.success, let ms = result.ms {
-            testResult = String(format: "✓ Reachable (%.0f ms)", ms)
+            // #455 was: String(format: "✓ Reachable (%.0f ms)", ms)
+            testResult = "✓ " + L10n.sshTestReachable_fmt.formatted(String(format: "%.0f ms", ms))
         } else {
-            testResult = "✗ Unreachable"
+            testResult = "✗ " + L10n.sshTestUnreachable.localized()   // #455 was: "✗ Unreachable"
         }
         isTesting = false
     }

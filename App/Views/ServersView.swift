@@ -1324,14 +1324,20 @@ struct ServersView: View {
     }
 
     private func carrierRowView(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> some View {
-        HStack(spacing: 8) {
+        // #455: each protocol reads as a distinct chip-row. The LIVE one (the
+        // tunnel currently runs through it) carries a restrained aurora wash +
+        // cyan hairline and a slightly heavier label; the rest stay calm on a
+        // faint neutral fill. Aurora is spent only here on "live" and on the
+        // primary CTA — everything else on the card is quiet.
+        let live = isLiveRow(row)
+        return HStack(spacing: 10) {
             Circle()
                 .fill(carrierStatusColor(row))
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(CarrierTransportMatrix.carrierLabel(row.provider))
-                        .font(.subheadline)
+                        .font(.subheadline.weight(live ? .semibold : .regular))
                         .foregroundStyle(Theme.Palette.textPrimary)
                     if row.isPrimary {
                         Text(L10n.protocolPrimaryBadge.localized())
@@ -1344,13 +1350,25 @@ struct ServersView: View {
                     .foregroundStyle(Theme.Palette.textSecondary)
             }
             Spacer()
-            if isLiveRow(row) {
+            if live {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Theme.Palette.green)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Palette.signalCyan)   // #455: aurora, not plain green
                     .accessibilityLabel(L10n.protocolConnectedBadge.localized())
             }
             OlcOverflowMenu(items: carrierMenuItems(host, row: row))
                 .disabled(actionsDisabled || carrierBusyHostID != nil)
+        }
+        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .background(live ? AnyShapeStyle(Theme.Palette.auroraSoft)
+                         : AnyShapeStyle(Theme.Palette.fill.opacity(0.5)),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            if live {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.Palette.signalCyan.opacity(0.35), lineWidth: 1)
+            }
         }
     }
 

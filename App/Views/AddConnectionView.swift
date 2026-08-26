@@ -450,6 +450,7 @@ struct AddConnectionView: View {
             details:   .olcrtc(params)
         )
         onSave(record)
+        Haptics.success()   // #455: a saved/edited connection lands with a success tap
         dismiss()
     }
 

@@ -25,6 +25,9 @@ final class IPChecker: ObservableObject {
 
     @Published var results   : [IPResult] = []
     @Published var isChecking = false
+    // #454: the tunnel exit's geo, surfaced to the Connection-health card (the
+    // same lookup was previously fetched only to write one connect-log line).
+    @Published var exitGeo   : ExitGeo?
 
     // Endpoints live in AppConstants.ipCheckServices; the user enables a subset
     // in Settings (#286). Preserve the catalogue order; if the user disabled
@@ -147,6 +150,20 @@ final class IPChecker: ObservableObject {
         guard let (data, _) = try? await session.data(for: req) else { return nil }
         return parseGeo(data)
     }
+
+    /// #454: refresh `exitGeo` through the given route (tunnel while connected) for
+    /// the Connection-health card. Best-effort: a failed lookup sets nil, which the
+    /// card renders as "location unknown". Own URLSession, invalidated after use.
+    func refreshExitGeo(via mode: RouteMode) async {
+        let session = SOCKSSession.make(mode: mode)
+        defer { session.finishTasksAndInvalidate() }
+        exitGeo = await Self.fetchExitGeo(session: session)
+        if exitGeo != nil, mode == .tunnel { SOCKSSession.noteTunnelActivity() }
+    }
+
+    /// #454: drop the exit geo on disconnect so the next session never briefly
+    /// shows the previous exit's location.
+    func clearExitGeo() { exitGeo = nil }
 
     /// Strict IP parsing via Apple's Network framework — rejects garbage like
     /// "Hello.World" or "Error: 500" that the old `contains(".")` check accepted.

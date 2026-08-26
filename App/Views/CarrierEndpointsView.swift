@@ -148,6 +148,7 @@ struct CarrierEndpointsView: View {
     /// Copies one value (host or IP) and logs it.
     private func copy(_ value: String) {
         UIPasteboard.general.string = value
+        Haptics.success()   // #455: copy confirmation
         LogStore.shared.log(.connection, L10n.carrierEndpointCopied_fmt.formatted(value))
     }
 
@@ -155,6 +156,7 @@ struct CarrierEndpointsView: View {
     private func copyAll(host: String) {
         let all = ([host] + ips).joined(separator: "\n")
         UIPasteboard.general.string = all
+        Haptics.success()   // #455: copy confirmation
         LogStore.shared.log(.connection, L10n.carrierEndpointCopied_fmt.formatted(host))
     }
 
