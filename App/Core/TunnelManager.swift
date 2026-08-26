@@ -990,11 +990,22 @@ final class TunnelManager: ObservableObject {
             // starting record) so a failover hop never re-picks one.
             var tried: Set<UUID> = self.lastRecord.map { [$0.id] } ?? []
             while !Task.isCancelled {
-                // #453: auto-failover spends a shorter per-protocol budget so it
-                // hops quickly; the normal single-protocol path keeps the full
-                // backoff ladder. Recomputed each iteration (the setting is live).
-                let budget = SettingsStore.shared.autoFailover
-                    ? Self.failoverAttemptsPerCandidate : Self.maxReconnectAttempts
+                // #453/#455: a failover hop earns a SHORTENED budget only when
+                // there is actually somewhere to hop TO. Compute the next untried
+                // sibling up front (auto-failover on + proxy mode): when one
+                // exists we spend a short budget so a blocked protocol is
+                // abandoned fast; otherwise we keep the FULL backoff ladder, so a
+                // single-protocol setup is never cut short just because
+                // auto-failover is enabled (it defaults on now — #455). Recomputed
+                // each iteration: the setting is live and `tried` grows per hop.
+                let hop: ConnectionRecord? = (SettingsStore.shared.autoFailover && self.activeMode == .proxy)
+                    ? self.lastRecord.flatMap { cur in
+                        Self.nextFailoverCandidate(current: cur,
+                                                   candidates: self.failoverCandidates?(cur) ?? [],
+                                                   tried: tried)
+                      }
+                    : nil
+                let budget = hop != nil ? Self.failoverAttemptsPerCandidate : Self.maxReconnectAttempts
                 // #438: jittered so simultaneously-dropped clients don't rejoin the
                 // carrier room in lockstep.
                 let delay = Self.jitteredBackoffSeconds(attempt: attempt, random: .random(in: 0..<1))
@@ -1027,15 +1038,12 @@ final class TunnelManager: ObservableObject {
                     // recovery is the appex/NEVPNStatus's job). A hop resets the
                     // attempt budget and continues the same recovery loop, so a
                     // blocked carrier fails over in ~14 s instead of dead-ending.
-                    if SettingsStore.shared.autoFailover, self.activeMode == .proxy,
-                       let current = self.lastRecord,
-                       let next = Self.nextFailoverCandidate(
-                            current: current,
-                            candidates: self.failoverCandidates?(current) ?? [],
-                            tried: tried) {
+                    // #453/#455: hop to the sibling picked up front (nil when
+                    // there is nowhere to fail over to → fall through to give up).
+                    if let next = hop {
                         tried.insert(next.id)
                         LogStore.shared.log(.connection,
-                            L10n.failoverSwitching_fmt.formatted(Self.carrierLabelForLog(current),
+                            L10n.failoverSwitching_fmt.formatted(Self.carrierLabelForLog(record),
                                                                  Self.carrierLabelForLog(next)),
                             code: .failoverSwitch)   // OLC-1027
                         self.lastRecord = next

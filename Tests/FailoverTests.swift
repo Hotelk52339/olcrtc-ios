@@ -80,11 +80,14 @@ final class FailoverTests: XCTestCase {
     // MARK: failoverRank
 
     func testFailoverRankOrdersBestFirst() {
-        // jitsi/datachannel is the recommended combo (rank 0); telemost/vp8channel
-        // is ok (rank 1); wbstream/datachannel is unstable (rank 2). Exact ranks
-        // track CarrierTransportMatrix, so assert the ORDERING, not the integers.
+        // Exact ranks track CarrierTransportMatrix, so assert the ORDERING, not
+        // the integers. Combos with genuinely distinct ranks: jitsi/datachannel
+        // is recommended (rank 0); jitsi/vp8channel is ok (rank 1);
+        // wbstream/datachannel is unstable (rank 2). (telemost/vp8channel is ALSO
+        // recommended = rank 0 — vp8channel is telemost's only stable transport —
+        // so it can't stand in for the "ok" tier here.)
         let rec = TunnelManager.failoverRank(carrier: "jitsi", transport: "datachannel")
-        let ok  = TunnelManager.failoverRank(carrier: "telemost", transport: "vp8channel")
+        let ok  = TunnelManager.failoverRank(carrier: "jitsi", transport: "vp8channel")
         let bad = TunnelManager.failoverRank(carrier: "wbstream", transport: "datachannel")
         XCTAssertLessThan(rec, ok)
         XCTAssertLessThan(ok, bad)
@@ -114,9 +117,11 @@ final class FailoverTests: XCTestCase {
         host.extraConnectionIDs = [extra1.id, extra2.id]
         serverStore.hosts = [host]
 
-        // From `primary`: the two extras, best-first by matrix rank
-        // (jitsi/datachannel recommended < telemost/vp8channel ok). `unrelated`
-        // (not on the host) and `primary` itself are excluded.
+        // From `primary`: the two extras, best-first by matrix rank. Both are
+        // rank 0 here (jitsi/datachannel and telemost/vp8channel are each their
+        // carrier's recommended combo), so the tie falls to the displayName
+        // order — extra1 before extra2. `unrelated` (not on the host) and
+        // `primary` itself are excluded.
         let cands = TunnelManager.computeFailoverCandidates(primary, store: store, serverStore: serverStore)
         XCTAssertEqual(cands.map(\.id), [extra1.id, extra2.id])
     }
