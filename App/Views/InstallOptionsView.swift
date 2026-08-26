@@ -160,7 +160,12 @@ struct InstallOptionsView: View {
     // MARK: Sections
 
     private var carrierSection: some View {
-        Section(L10n.sectionCarrier.localized()) {
+        // #455 (editorial): the carrier section used to be the ONE form section
+        // with a title but no footer, while transport/room/jitsi/wb/sei all
+        // explain themselves — so the app's FIRST and most important choice got
+        // the least guidance. It now has a header + a footer that says which
+        // carrier to pick for what (the `carrierChoiceFooter` string).
+        Section {
             // #452 was: options from CarrierTransportMatrix.carriers — now the
             // (possibly restricted) availableCarriers.
             OlcChipPicker(selection: $carrier,
@@ -170,6 +175,10 @@ struct InstallOptionsView: View {
                     // #452: the new primary can't also be an extra.
                     extras[c] = nil
                 }
+        } header: {
+            Text(L10n.sectionCarrier.localized())
+        } footer: {
+            Text(L10n.carrierChoiceFooter.localized()).font(.caption2)
         }
     }
 
@@ -296,6 +305,14 @@ struct InstallOptionsView: View {
                isOn: binding.enabled)
         if draft(c).enabled {
             OlcChipPicker(selection: binding.transport, options: transportOptions(for: c))
+            // #455 (editorial): the extras used to offer a transport picker with
+            // NO compatibility hint, while the primary transport section shows
+            // one — the same "hint at the top but not at the bottom" gap. Mirror
+            // the primary's compat caption here so every protocol choice is
+            // explained the same way.
+            Text(extraCompat(c))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             if CarrierTransportMatrix.requiresRoomID(carrier: c) {
                 TextField(L10n.fieldRoomID.localized(), text: binding.roomID)
                     .font(.system(.body, design: .monospaced))
@@ -400,6 +417,19 @@ struct InstallOptionsView: View {
         case "telemost": return L10n.roomIDTelemostHint.localized()
         case "wbstream": return L10n.roomIDWbstreamHint.localized()
         default:         return ""
+        }
+    }
+
+    /// #455 (editorial): the compatibility caption for an EXTRA protocol's
+    /// current carrier+transport — the extras' parity with the primary
+    /// transport footer. Reuses the same matrix* strings.
+    private func extraCompat(_ c: String) -> String {
+        switch CarrierTransportMatrix.compat(carrier: c, transport: draft(c).transport) {
+        case .recommended: return L10n.matrixRecommended_fmt.formatted(c)
+        case .ok:          return L10n.matrixWorks_fmt.formatted(c)
+        case .question:    return L10n.matrixQuestion_fmt.formatted(c)
+        case .fail:        return L10n.matrixFail_fmt.formatted(c)
+        case .unknown:     return L10n.matrixUnknown_fmt.formatted(c)
         }
     }
 }

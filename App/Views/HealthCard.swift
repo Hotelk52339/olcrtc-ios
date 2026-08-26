@@ -103,7 +103,8 @@ struct HealthCard: View {
     private var metricsRow: some View {
         HStack(alignment: .top, spacing: 16) {
             OlcMetric(label: L10n.healthLatencyLabel.localized(),
-                      value: latencyValue)
+                      value: latencyValue,
+                      tone: latencyTone)   // #455: green/amber/red by quality
             OlcMetric(label: L10n.healthThroughputLabel.localized(),
                       value: throughputValue,
                       unit: L10n.speedUnitMbps.localized(), unitInLabel: true)
@@ -123,6 +124,18 @@ struct HealthCard: View {
     }
 
     // MARK: Helpers
+
+    /// #455: tint the live latency by quality — under 150 ms reads calm green,
+    /// up to 400 ms amber, worse red (same thresholds the row ping badges use).
+    /// nil (still measuring) stays neutral.
+    private var latencyTone: Color? {
+        guard let ms = latencyMs else { return nil }
+        switch Int(ms.rounded()) {
+        case ..<150: return Theme.Palette.green
+        case ..<400: return Theme.Palette.orange
+        default:     return Theme.Palette.red
+        }
+    }
 
     private var latencyValue: String {
         guard let ms = latencyMs else { return L10n.healthMeasuring.localized() }

@@ -68,6 +68,18 @@ enum L10nTable {
         .healthMeasuring:            "measuring…",
         .healthLocationUnknown:      "Location unknown",
         .healthRefresh:              "Refresh",
+        // #455: premium redesign editorial additions
+        .carrierChoiceFooter:        "Telemost is the hardest to block (vp8channel only). Jitsi with datachannel is the fastest and most stable. WBStream needs an account token.",
+        .configReliabilityHeader:    "Reliability",
+        .unitSeconds:                "s",
+        .sshTestInvalidPort:         "Invalid port",
+        .sshTestReachable_fmt:       "Reachable (%@)",
+        .sshTestUnreachable:         "Unreachable",
+        .logLevelOff:                "Off",
+        .logLevelErrors:             "Errors only",
+        .logLevelNormal:             "Normal",
+        .logLevelDebug:              "Debug",
+        .logLevelVerbose:            "Verbose (all)",
 
         // Routing
         .routingHeader:     "Routing",
@@ -751,6 +763,18 @@ enum L10nTable {
         .healthMeasuring:            "измерение…",
         .healthLocationUnknown:      "Локация неизвестна",
         .healthRefresh:              "Обновить",
+        // #455: premium redesign editorial additions
+        .carrierChoiceFooter:        "Telemost сложнее всего заблокировать (только vp8channel). Jitsi с datachannel — самый быстрый и стабильный. WBStream требует токен аккаунта.",
+        .configReliabilityHeader:    "Надёжность",
+        .unitSeconds:                "с",
+        .sshTestInvalidPort:         "Некорректный порт",
+        .sshTestReachable_fmt:       "Доступен (%@)",
+        .sshTestUnreachable:         "Недоступен",
+        .logLevelOff:                "Выкл.",
+        .logLevelErrors:             "Только ошибки",
+        .logLevelNormal:             "Обычный",
+        .logLevelDebug:              "Отладка",
+        .logLevelVerbose:            "Подробный (всё)",
 
         // Routing
         .routingHeader:     "Маршрутизация",

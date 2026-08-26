@@ -39,7 +39,9 @@ struct ConfigView: View {
 
     private var modeSection: some View {
         Section {
-            OlcCard {
+            // #455: the mode choice is this tab's primary element — lift it a
+            // little more than the guidance cards below it.
+            OlcCard(elevation: .floating) {
                 VStack(alignment: .leading, spacing: 12) {
                     OlcChipPicker(selection: $settings.tunnelMode, options: modeOptions)
                         // The mode is read once, at connect time — switching
@@ -89,7 +91,9 @@ struct ConfigView: View {
                     Text(L10n.configProxyExplainer.localized())
                     Text(L10n.configVPNExplainer.localized())
                 }
-                .font(.subheadline)
+                // #455: explainer text sits at .footnote everywhere (matches the
+                // failover explainer + section footers) — one voice for guidance.
+                .font(.footnote)
                 .foregroundStyle(Theme.Palette.textSecondary)
             }
             .olcCardRow()
@@ -113,6 +117,10 @@ struct ConfigView: View {
                 }
             }
             .olcCardRow()
+        } header: {
+            // #455: a header for structural parity with the mode section (was a
+            // footer-only section, which read as unlabeled next to "Tunnel mode").
+            Text(L10n.configReliabilityHeader.localized())
         } footer: {
             Text(L10n.configFailoverProxyOnlyFooter.localized())
         }

@@ -113,11 +113,12 @@ struct SettingsView: View {
                     .keyboardType(.numberPad)
                     .focused($anyFieldFocused)
                     .frame(width: 90)
-                Button(L10n.randomPortAction.localized()) {
+                // #455: design-system button (was a raw `.bordered`/`.small`
+                // system button — the only one left on this screen) so it
+                // matches every other control and taps with haptic feedback.
+                OlcButton(L10n.randomPortAction.localized(), role: .secondary, compact: true) {
                     settings.socksPort = Int.random(in: 1024...65535)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
 
             Button {
@@ -278,14 +279,14 @@ struct SettingsView: View {
                          presets: [Preset(value: 30,  label: "30"),
                                    Preset(value: 60,  label: "60"),
                                    Preset(value: 120, label: "120")],
-                         unit: "s")
+                         unit: L10n.unitSeconds.localized())   // #455: was hardcoded "s"
             Toggle(L10n.autoConnectOnLaunchLabel.localized(), isOn: $settings.autoConnectOnLaunch)
             Toggle(L10n.autoRemoveConnectionOnUninstallLabel.localized(), isOn: $settings.autoRemoveConnectionOnUninstall)
             numericField(L10n.tunnelCheckLabel.localized(), value: $settings.keepAliveSeconds,
                          presets: [Preset(value: 0,  label: L10n.keepAliveOff.localized()),
                                    Preset(value: 30, label: "30"),
                                    Preset(value: 60, label: "60")],
-                         unit: "s")
+                         unit: L10n.unitSeconds.localized())   // #455: was hardcoded "s"
             Toggle(L10n.backgroundAudioLabel.localized(), isOn: $settings.backgroundAudio)
             // #440: opt-in early restart of a stuck session (off by default). Label
             // is self-explanatory, so the §7 one-footer rule (keep-alive) survives.

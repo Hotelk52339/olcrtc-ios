@@ -270,6 +270,7 @@ struct BotSettingsView: View {
             try await provisioner.deployBot(on: host, secret: secret, config: config)
             let found = try await provisioner.checkBots(on: host, secret: secret, markers: botStore.markers)
             applyFound(found.first { $0.marker == bot.name } ?? found.first)
+            Haptics.success()   // #455: a satisfying confirmation the deploy landed
         } catch {
             errorText = error.localizedDescription
         }
@@ -281,6 +282,7 @@ struct BotSettingsView: View {
         do {
             try await provisioner.removeBot(on: host, secret: secret, marker: d.marker)
             applyFound(nil)
+            Haptics.warning()   // #455: a firmer buzz for a completed destructive op
         } catch {
             errorText = error.localizedDescription
         }

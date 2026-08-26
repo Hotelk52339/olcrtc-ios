@@ -100,12 +100,18 @@ struct ReconfigureOptionsView: View {
     // MARK: Sections
 
     private var carrierSection: some View {
-        Section(L10n.sectionCarrier.localized()) {
+        // #455 (editorial): match InstallOptionsView — a header + a guidance
+        // footer so the carrier choice is explained like every sibling section.
+        Section {
             OlcChipPicker(selection: $carrier,
                           options: CarrierTransportMatrix.carriers.map { ($0, CarrierTransportMatrix.carrierLabel($0)) })
                 .onChange(of: carrier) { _, c in
                     transport = CarrierTransportMatrix.defaultTransport(for: c)
                 }
+        } header: {
+            Text(L10n.sectionCarrier.localized())
+        } footer: {
+            Text(L10n.carrierChoiceFooter.localized()).font(.caption2)
         }
     }
 
