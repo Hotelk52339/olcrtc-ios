@@ -269,8 +269,8 @@ struct ConnectionsView: View {
         // #455: the hero is the app's signature moment — it floats above the
         // list on glass and, once the tunnel verifies, emits a soft aurora glow
         // (the `.glow` elevation) so "connected" is felt, not just read.
-        OlcCard(glass: true,
-                elevation: tunnel.state.isConnected ? .glow : .floating) {
+        OlcCard(elevation: tunnel.state.isConnected ? .glow : .floating,
+                glass: true) {
             VStack(alignment: .leading, spacing: 12) {
                 OlcStatusPill(tone: heroTone, title: heroTitle) {
                     Toggle("", isOn: globalToggleBinding)
