@@ -97,7 +97,13 @@ final class SettingsStore: ObservableObject {
         static let vpsAutoPingEnabled   = true
         static let vpsAutoPingInterval  = 30
         static let earlyRestartOnWedge  = false   // #440: opt-in, brittle log-signature feature
-        static let autoFailover        = false   // #453: opt-in protocol failover
+        // #455: optimal out-of-the-box defaults — a fresh install should already
+        // survive backgrounding, reconnect on launch, and fail over between
+        // protocols, so the user doesn't have to remember to enable them after a
+        // reinstall. (keepAliveSeconds is already 30 = on.)
+        static let autoConnectOnLaunch  = true    // #455 was: hardcoded false
+        static let backgroundAudio      = true    // #455 was: hardcoded false — keeps the SOCKS port alive in the background
+        static let autoFailover         = true    // #455 was: false — protocol failover on by default
         static let vpsAutoPingRange     = 10...300
         static let updateCheckEnabled   = true          // #360: opt-out
     }
@@ -306,9 +312,9 @@ final class SettingsStore: ObservableObject {
         vp8BatchSize        = (d.object(forKey: Keys.vp8BatchSize)        as? Int)  .map { $0.clamped(to: Defaults.vp8BatchRange) }          ?? Defaults.vp8BatchSize
         logBufferSize       = (d.object(forKey: Keys.logBufferSize)       as? Int)  .map { $0.clamped(to: Defaults.logBufferRange) }         ?? Defaults.logBufferSize
         containerLogsTailLines = (d.object(forKey: Keys.containerLogsTail) as? Int) .map { $0.clamped(to: Defaults.containerLogsTailRange) } ?? Defaults.containerLogsTail
-        autoConnectOnLaunch = (d.object(forKey: Keys.autoConnectOnLaunch) as? Bool)                                                          ?? false
+        autoConnectOnLaunch = (d.object(forKey: Keys.autoConnectOnLaunch) as? Bool)                                                          ?? Defaults.autoConnectOnLaunch
         autoRemoveConnectionOnUninstall = (d.object(forKey: Keys.autoRemoveConnectionOnUninstall) as? Bool)                                  ?? true
-        backgroundAudio          = (d.object(forKey: Keys.backgroundAudio)          as? Bool)   ?? false
+        backgroundAudio          = (d.object(forKey: Keys.backgroundAudio)          as? Bool)   ?? Defaults.backgroundAudio
         maskIPs                  = (d.object(forKey: Keys.maskIPs)                  as? Bool)   ?? false   // #337
         localSocksAuthEnabled    = (d.object(forKey: Keys.localSocksAuthEnabled)    as? Bool)   ?? false
         localSocksUser           = (d.string(forKey: Keys.localSocksUser))                      ?? ""
@@ -343,9 +349,9 @@ final class SettingsStore: ObservableObject {
         vp8BatchSize           = Defaults.vp8BatchSize
         logBufferSize          = Defaults.logBufferSize
         containerLogsTailLines = Defaults.containerLogsTail
-        autoConnectOnLaunch    = false
+        autoConnectOnLaunch    = Defaults.autoConnectOnLaunch
         autoRemoveConnectionOnUninstall = true
-        backgroundAudio        = false
+        backgroundAudio        = Defaults.backgroundAudio
         maskIPs                = false   // #337
         localSocksAuthEnabled  = false
         localSocksUser         = ""

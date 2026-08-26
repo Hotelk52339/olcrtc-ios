@@ -192,7 +192,15 @@ struct ConnectionsView: View {
             // #454: fetch the exit geo through the tunnel when a session comes up
             // (feeds the health card's exit row); clear it when the tunnel drops so
             // the next session never briefly shows the previous exit's location.
-            .onChange(of: tunnel.state) { _, newState in
+            .onChange(of: tunnel.state) { oldState, newState in
+                // #455: physical feedback on the connect outcome — a success
+                // notification the instant the tunnel verifies, an error buzz if
+                // it gives up. (Only on the transition, not on every body pass.)
+                if newState.isConnected, !oldState.isConnected {
+                    Haptics.success()
+                } else if case .failed = newState, oldState != newState {
+                    Haptics.error()
+                }
                 if newState.isConnected {
                     Task { await ipCheck.refreshExitGeo(via: .tunnel) }
                 } else {
@@ -258,7 +266,11 @@ struct ConnectionsView: View {
     // conditionally under their own dividers — the card resized on every
     // state change.
     private var heroCard: some View {
-        OlcCard {
+        // #455: the hero is the app's signature moment — it floats above the
+        // list on glass and, once the tunnel verifies, emits a soft aurora glow
+        // (the `.glow` elevation) so "connected" is felt, not just read.
+        OlcCard(glass: true,
+                elevation: tunnel.state.isConnected ? .glow : .floating) {
             VStack(alignment: .leading, spacing: 12) {
                 OlcStatusPill(tone: heroTone, title: heroTitle) {
                     Toggle("", isOn: globalToggleBinding)
@@ -304,7 +316,9 @@ struct ConnectionsView: View {
                 heroFooter
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
-            .animation(.easeInOut(duration: 0.25), value: tunnel.state)
+            // #455: a gentle spring on state change so the glow/footer settle in
+            // with a premium bounce instead of a flat cross-fade.
+            .animation(.spring(response: 0.42, dampingFraction: 0.82), value: tunnel.state)
         }
     }
 
@@ -400,8 +414,10 @@ struct ConnectionsView: View {
                 || tunnel.state == .waitingForNetwork },
             set: { on in
                 if on, let p = store.primary {
+                    Haptics.impact()            // #455: firm tap the moment connect is committed
                     tunnel.connect(record: p)   // #393: guard now in TunnelManager.connect
                 } else if !on {
+                    Haptics.impact()            // #455
                     tunnel.disconnect()
                 }
             }

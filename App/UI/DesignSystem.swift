@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit  // #455: UINotification/UIImpactFeedbackGenerator back the Haptics helper
 
 // #258: Design system — the reusable SwiftUI components every screen will adopt.
 // One button system, one card, one section header, one status vocabulary, one
@@ -9,12 +10,17 @@ import SwiftUI
 
 // MARK: - Shared
 
-/// Press feedback shared by every tappable design-system surface (scale 0.96).
+/// Press feedback shared by every tappable design-system surface: a 0.96 scale
+/// dip plus a light Taptic tap the instant the finger lands (#455), so every
+/// button in the app feels physical to press.
 struct OlcPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { Haptics.tap() }   // #455: tap on press-down, not on release
+            }
     }
 }
 
@@ -37,6 +43,30 @@ struct OlcOption<Value: Hashable>: Identifiable {
     /// Why the option is disabled — spoken by VoiceOver as the chip's hint.
     var disabledReason: String? = nil
     var id: Value { value }
+}
+
+// MARK: - Aurora primitives (#455)
+
+extension View {
+    /// Soft elevation shadow from a `Theme.Elevation` token. The one way depth
+    /// is applied in the app — never a raw `.shadow(...)` in a screen.
+    func olcShadow(_ level: Theme.Elevation) -> some View {
+        shadow(color: level.color, radius: level.radius, x: 0, y: level.y)
+    }
+}
+
+/// #455: one-line haptic feedback so premium moments (connect, disconnect,
+/// selection) have a physical response. Silently no-ops on devices without a
+/// Taptic Engine. Generators are created per call — cheap, and avoids holding a
+/// prepared generator across the app's lifetime.
+enum Haptics {
+    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
+    static func error()   { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+    /// A light tap for toggles / selection changes.
+    static func tap()     { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    /// A firmer tap for a committed action (connect / disconnect press).
+    static func impact()  { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
 }
 
 // MARK: - 1. OlcButton
@@ -110,7 +140,7 @@ struct OlcButton: View {
         let fillWidth: Bool
         let height: CGFloat
         let hPad: CGFloat
-        let background: Color
+        let background: AnyShapeStyle   // #455: lets .primary carry the aurora gradient
         func body(content: Content) -> some View {
             // (audit, HIG typography) was: fixed `.frame(width:height:)` /
             // `.frame(height:)` — clipped labels at large Dynamic Type sizes.
@@ -133,12 +163,15 @@ struct OlcButton: View {
         }
     }
 
-    private var background: Color {
+    // #455: .primary now carries the aurora gradient (the app's signature),
+    // the others keep their flat token fills. AnyShapeStyle so one property can
+    // return either a gradient or a solid.
+    private var background: AnyShapeStyle {
         switch role {
-        case .primary:   return Theme.Palette.accent
-        case .secondary: return Theme.Palette.fill
-        case .danger:    return Theme.Palette.redWeak
-        case .ghost:     return .clear
+        case .primary:   return AnyShapeStyle(Theme.Palette.auroraGradient)
+        case .secondary: return AnyShapeStyle(Theme.Palette.fill)
+        case .danger:    return AnyShapeStyle(Theme.Palette.redWeak)
+        case .ghost:     return AnyShapeStyle(Color.clear)
         }
     }
     private var foreground: Color {
@@ -158,26 +191,42 @@ struct OlcButton: View {
 
 struct OlcCard<Content: View>: View {
     private let padding: CGFloat
+    private let elevation: Theme.Elevation   // #455: soft depth off the ground
+    private let glass: Bool                   // #455: translucent material (hero/floating layer)
     private let content: () -> Content
 
     init(padding: CGFloat = Theme.Metrics.cardPadding,
+         elevation: Theme.Elevation = .card,   // #455: default cards lift a little
+         glass: Bool = false,
          @ViewBuilder content: @escaping () -> Content) {
         self.padding = padding
+        self.elevation = elevation
+        self.glass = glass
         self.content = content
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
     }
 
     var body: some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(padding)
-            .background(Theme.Palette.card)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
+            // #455: glass cards float above content on `.ultraThinMaterial` (the
+            // Liquid-Glass approximation on Xcode 16 / iOS 15+); solid cards keep
+            // the opaque card fill. Both clip content to the rounded shape.
+            .background(glass ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Theme.Palette.card),
+                        in: shape)
+            .clipShape(shape)
             .overlay {
-                // #299: card border width is 0, so this stroke is a no-op today;
-                // the dynamic token (#340) is kept for a future bordered scheme.
-                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                    .strokeBorder(Theme.Palette.cardBorder, lineWidth: Theme.Metrics.cardBorderWidth)
+                // #455: glass gets a faint cyan hairline so its edge catches the
+                // light; solid cards keep the (currently 0-width) scheme border.
+                shape.strokeBorder(glass ? Theme.Palette.signalCyan.opacity(0.14)
+                                         : Theme.Palette.cardBorder,
+                                   lineWidth: glass ? 1 : Theme.Metrics.cardBorderWidth)
             }
+            .olcShadow(elevation)   // #455: depth is applied last, around the clipped shape
     }
 }
 
@@ -454,6 +503,7 @@ struct OlcSegmented<Value: Hashable>: View {
             ForEach(options) { opt in
                 let active = opt.value == selection
                 Button {
+                    if opt.value != selection { Haptics.tap() }   // #455
                     withAnimation(.easeOut(duration: 0.15)) { selection = opt.value }
                 } label: {
                     Text(opt.label)
@@ -509,7 +559,7 @@ struct OlcChipPicker<Value: Hashable>: View {
         FlowLayout(spacing: 8, lineSpacing: 8) {
             ForEach(options) { opt in
                 let active = opt.value == selection
-                Button { selection = opt.value } label: {
+                Button { if opt.value != selection { Haptics.tap() }; selection = opt.value } label: {   // #455
                     Text(opt.label)
                         .font(Theme.Typography.chip)
                         .foregroundStyle(chipForeground(active: active, disabled: opt.disabled))

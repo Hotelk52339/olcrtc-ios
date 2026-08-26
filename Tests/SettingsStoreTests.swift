@@ -260,7 +260,7 @@ final class SettingsStoreTests: XCTestCase {
         s.containerLogsTailLines = 2000
         s.keepAliveSeconds       = 300
         s.tunnelMode             = .vpn   // #vpn: non-numeric, but reset() covers it too
-        s.autoFailover           = true   // #453: non-numeric, reset() covers it too
+        s.autoFailover           = false  // #455: default is now true — mutate away so reset() is proven to restore it
 
         s.reset()
 
@@ -273,7 +273,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(s.keepAliveSeconds,       SettingsStore.Defaults.keepAliveSeconds)
         XCTAssertEqual(s.fontSizeIndex,          SettingsStore.Defaults.fontSizeIndex)
         XCTAssertEqual(s.tunnelMode,             .proxy)   // #vpn
-        XCTAssertFalse(s.autoFailover)   // #453
+        XCTAssertEqual(s.autoFailover, SettingsStore.Defaults.autoFailover)   // #455: assert against the default (now true), not a literal
     }
 
     // MARK: defaults sanity — protects the Defaults ranges from drift
