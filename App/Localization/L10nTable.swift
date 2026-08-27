@@ -136,7 +136,9 @@ enum L10nTable {
         .importByURI:                "Import from URI",
         .scanQRAction:               "Scan QR",
         .pasteURIAction:             "Paste URI",
-        .importHint:                 "Tap Paste to import a URI or a subscription from the clipboard, or Scan QR. The fields below fill in automatically.", // #381 was: "If you have a URI from the server — paste it here and tap «Parse». The fields below will be filled in automatically." — buttons are Scan QR / Paste (Paste also imports subscriptions since #361), there is no "Parse" button.
+        // #458 was: "Tap Paste …" — the button above reads "Paste URI"; a hint may
+        // only use a control's OWN name (audit: every named control must exist).
+        .importHint:                 "Tap Paste URI to import a URI or a subscription from the clipboard, or Scan QR. The fields below fill in automatically.", // #381 was: "If you have a URI from the server — paste it here and tap «Parse». The fields below will be filled in automatically." — buttons are Scan QR / Paste (Paste also imports subscriptions since #361), there is no "Parse" button.
         .clientIDFooter:             "Your device identifier in the room. 'default' works for single-device setups. Use a unique value when multiple devices share the same room.",
         .keyPlaceholder:             "64-char hex key",
         .roomIDLabel:                "Room ID",
@@ -185,7 +187,9 @@ enum L10nTable {
         .actionDone:                 "Done",
         .actionRemoveFromList:       "Remove host from list",
         .removeHostConfirmTitle:     "Remove %@?",
-        .removeHostConfirmMessage:   "The host will be removed from this device's list. The container on the VPS is NOT touched — use Uninstall first if you want to wipe it. SSH password is removed from Keychain.",
+        // #458 was: "use Uninstall first" — no control is called "Uninstall";
+        // the menu item is `actionUninstall`, "Remove container from server".
+        .removeHostConfirmMessage:   "The host will be removed from this device's list. The container on the VPS is NOT touched — use «Remove container from server» first if you want to wipe it. SSH password is removed from Keychain.",
         .uninstallConfirmTitle:      "Uninstall container?",
         .uninstallConfirmBody:       "Only the container (running process) will be removed. Podman, the golang image (~300 MB) and the Go module cache remain on the server. Reinstallation will be fast (~1–2 min).",
         .deepUninstallConfirmBody:   "Removes container, Go cache (~300 MB), and encryption key. Podman and image stay.",
@@ -216,7 +220,12 @@ enum L10nTable {
         .containerStopped_fmt:       "Container stopped: %@",
         .containerNotFound:          "Container not found",
         .containerNotFoundShort:     "not found",
-        .containerNotInstalled:      "Container is not installed yet — tap «Install».",
+        // #458 was: "… — tap «Install»." This fires from `startContainer` /
+        // `stop` / `recoverConnection` / `rotateKey` / `addCarrier`, and in
+        // exactly those states the card's button is «Check server» or «Retry» —
+        // Install is not on the screen. State the fact; the card's own primary
+        // action already offers the right next step for the state it is in.
+        .containerNotInstalled:      "No olcrtc container is installed on this server yet.",
         .readinessNoPodman:              "Ready to install (Podman not found, full setup ~5–7 min)",
         .readinessNoImage:               "Podman ready — first install pulls image (~300 MB, ~3–5 min)",
         .readinessImageReady:            "Image cached — reinstall takes ~1–2 min",
@@ -321,7 +330,10 @@ enum L10nTable {
         .sectionSpeedProvider:       "Speed-test provider",
         .speedProviderFooter:        "Server the speed test runs against. Switch if Cloudflare is slow or blocked on your network.",
         .speedAllFailed:             "All measurements failed",
-        .speedDatachannelHint:       "Tip: video transports (vp8channel/sei/video) trade bandwidth for looking like a call. For more speed, Reconfigure the server to datachannel where your network allows it.",
+        // #458 was: "…Reconfigure the server to datachannel…" — capital-R
+        // "Reconfigure" reads as a control name, and no control carries it; the
+        // item is `actionChangeRoomTransport`, on the server card.
+        .speedDatachannelHint:       "Tip: video transports (vp8channel/sei/video) trade bandwidth for looking like a call. For more speed, switch the server's transport to datachannel with «Change room / transport» on the Servers tab, where your network allows it.",
         .settingsPortLabel:          "Port",
         .checkPortAction:            "Check port",
         .randomPortAction:           "Random",
@@ -753,7 +765,10 @@ enum L10nTable {
         .healthReasonContainerStoppedShort: "Server stopped",
         .healthReasonTimedOut:         "The test ran out of time before any data came back.",
         .healthReasonTimedOutShort:    "Timed out",
-        .healthReasonUnknown:          "The check came back with no clear answer. The Logs tab has the raw details.",
+        // #458 was: "The Logs tab has the raw details." — #457 deleted the Logs
+        // TAB (five tabs became Connect / Servers / Settings). The log lives at
+        // Settings → `settingsOpenLogsRow`, so that is what this must name.
+        .healthReasonUnknown:          "The check came back with no clear answer. Settings → Diagnostics and logs has the raw details.",
         .healthReasonUnknownShort:     "No clear answer",
 
         // #456: health actions — same wording as the same action elsewhere.
@@ -844,6 +859,13 @@ enum L10nTable {
         .protocolStoppedNote:        "Not running on the server",
         .vpsScanBeforeInstall:       "Looking for an existing install…",
         .vpsScanFailed_fmt:          "Couldn't look at what's on this server. %@",
+
+        // #458: unknown is its own answer. None of these name a control that
+        // is not on the same screen — that was the bug.
+        .protocolsNotReadYet:        "The protocol list hasn't been read from this server yet",
+        .addProtocolAllInstalled:    "Every supported protocol is already installed on this server.",
+        .healthNeverProbedHint:      "No request has been pushed through this connection yet",
+        .connectRowVerifyHint:       "Checks this connection with a real request",
     ]
 
     // MARK: Russian
@@ -961,7 +983,8 @@ enum L10nTable {
         .importByURI:                "Импорт по ссылке",
         .scanQRAction:               "Сканировать QR",
         .pasteURIAction:             "Вставить URI",
-        .importHint:                 "Нажми «Вставить», чтобы импортировать URI или подписку из буфера обмена, либо «Сканировать QR». Поля ниже заполнятся автоматически.", // #381 was: "Если у тебя есть URI с сервера — вставь сюда и нажми «Распознать». Поля ниже заполнятся автоматически." — кнопки «Сканировать QR» / «Вставить» (с #361 «Вставить» импортирует и подписки), кнопки «Распознать» нет.
+        // #458 was: «Нажми «Вставить»…» — the button reads «Вставить URI».
+        .importHint:                 "Нажми «Вставить URI», чтобы импортировать URI или подписку из буфера обмена, либо «Сканировать QR». Поля ниже заполнятся автоматически.", // #381 was: "Если у тебя есть URI с сервера — вставь сюда и нажми «Распознать». Поля ниже заполнятся автоматически." — кнопки «Сканировать QR» / «Вставить» (с #361 «Вставить» импортирует и подписки), кнопки «Распознать» нет.
         .clientIDFooter:             "Идентификатор устройства в комнате. «default» подходит для одного устройства. Используй уникальное значение если несколько устройств подключаются к одной комнате.",
         .keyPlaceholder:             "64-символьный hex-ключ",
         .roomIDLabel:                "Идентификатор комнаты",
@@ -1008,7 +1031,9 @@ enum L10nTable {
         .actionDone:                 "Готово",
         .actionRemoveFromList:       "Удалить из списка",
         .removeHostConfirmTitle:     "Удалить %@?",
-        .removeHostConfirmMessage:   "Сервер исчезнет из списка на этом устройстве. Контейнер на VPS НЕ затрагивается — если хочешь его вычистить, сначала нажми Uninstall. Пароль SSH удаляется из Keychain.",
+        // #458 was: «сначала нажми Uninstall» — an English word for a control
+        // whose Russian name is «Удалить контейнер с сервера» (actionUninstall).
+        .removeHostConfirmMessage:   "Сервер исчезнет из списка на этом устройстве. Контейнер на VPS НЕ затрагивается — если хочешь его вычистить, сначала выполни «Удалить контейнер с сервера». Пароль SSH удаляется из Keychain.",
         .uninstallConfirmTitle:      "Удалить контейнер?",
         .uninstallConfirmBody:       "Будет удалён только контейнер (запущенный процесс). Podman, образ golang (~300 МБ) и кеш Go-модулей остаются на сервере. Повторная установка займёт ~1–2 мин.",
         .deepUninstallConfirmBody:   "Удаляет контейнер, кеш Go (~300 МБ) и ключ шифрования. Podman и образ остаются.",
@@ -1039,7 +1064,9 @@ enum L10nTable {
         .containerStopped_fmt:       "Контейнер остановлен: %@",
         .containerNotFound:          "Контейнер не найден",
         .containerNotFoundShort:     "не найден",
-        .containerNotInstalled:      "Контейнер ещё не установлен — нажми «Установить».",
+        // #458 was: «— нажми «Установить».» — see the English entry: «Установить»
+        // is not on the card in the states that raise this.
+        .containerNotInstalled:      "На этом сервере ещё не установлен контейнер olcrtc.",
         .readinessNoPodman:              "Готов к установке (Podman не найден, полная установка ~5–7 мин)",
         .readinessNoImage:               "Podman установлен — первый раз скачает образ (~300 МБ, ~3–5 мин)",
         .readinessImageReady:            "Образ в кеше — переустановка займёт ~1–2 мин",
@@ -1145,7 +1172,9 @@ enum L10nTable {
         .sectionSpeedProvider:       "Провайдер спидтеста",
         .speedProviderFooter:        "Сервер, против которого идёт тест скорости. Смени, если Cloudflare медленный или заблокирован в твоей сети.",
         .speedAllFailed:             "Все измерения не удались",
-        .speedDatachannelHint:       "Подсказка: видео-транспорты (vp8channel/sei/video) жертвуют скоростью ради вида видеозвонка. Для большей скорости смените транспорт сервера на datachannel там, где это позволяет сеть.",
+        // #458: name the control that does it («Сменить комнату / транспорт»),
+        // matching the English entry.
+        .speedDatachannelHint:       "Подсказка: видео-транспорты (vp8channel/sei/video) жертвуют скоростью ради вида видеозвонка. Для большей скорости смените транспорт сервера на datachannel через «Сменить комнату / транспорт» на вкладке «Серверы» там, где это позволяет сеть.",
         .settingsPortLabel:          "Порт",
         .checkPortAction:            "Проверить порт",
         .randomPortAction:           "Случайный",
@@ -1576,7 +1605,9 @@ enum L10nTable {
         .healthReasonContainerStoppedShort: "Сервер остановлен",
         .healthReasonTimedOut:         "Проверка не уложилась во время — данные так и не пришли.",
         .healthReasonTimedOutShort:    "Истекло время",
-        .healthReasonUnknown:          "Проверка не дала ясного ответа. Подробности — на вкладке «Логи».",
+        // #458 was: "… на вкладке «Логи»." — the Logs tab is gone (#457); the log
+        // is reached from Settings → «Диагностика и логи» (settingsOpenLogsRow).
+        .healthReasonUnknown:          "Проверка не дала ясного ответа. Подробности — в «Настройки → Диагностика и логи».",
         .healthReasonUnknownShort:     "Нет ясного ответа",
 
         // #456: действия — те же формулировки, что и у этих действий в других местах.
@@ -1667,5 +1698,12 @@ enum L10nTable {
         .protocolStoppedNote:        "На сервере не запущен",
         .vpsScanBeforeInstall:       "Ищем уже установленное…",
         .vpsScanFailed_fmt:          "Не удалось посмотреть, что на сервере. %@",
+
+        // #458: «неизвестно» — это тоже ответ. Ни одна строка не называет
+        // кнопку, которой нет на том же экране.
+        .protocolsNotReadYet:        "Список протоколов ещё не прочитан с этого сервера",
+        .addProtocolAllInstalled:    "Все поддерживаемые протоколы уже установлены на этом сервере.",
+        .healthNeverProbedHint:      "Через это подключение ещё не проходил ни один запрос",
+        .connectRowVerifyHint:       "Проверить это подключение настоящим запросом",
     ]
 }

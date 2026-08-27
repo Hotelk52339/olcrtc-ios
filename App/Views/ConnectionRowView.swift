@@ -29,6 +29,18 @@ import SwiftUI
 // matches" was a dead end unless the user thought to open an overflow menu.
 // Re-checking runs here; everything else names the screen it lives on rather
 // than drawing a button that cannot work (see `ConnectActionSite`).
+//
+// #458: …and the row now KEEPS that promise in every state that makes one. The
+// `.never` verdict's hint read "Tap Verify to push a real request through this
+// connection" while `fixAction` deliberately returned nil for `.never` — so the
+// sentence named a button the screen refused to draw, which is this release's
+// own dishonesty rule inverted. Two changes here (the third is the wording, in
+// App/Models/NodeHealth.swift):
+//   • the verdict block is a Verify BUTTON in its own right, 44pt tall, and a
+//     sibling of the connect button instead of part of its label — tapping the
+//     words "Not checked yet" used to dial the node rather than check it;
+//   • every state whose suggested action can be honoured on this screen draws
+//     that action by name, `.never` and `.stale` included.
 
 struct ConnectionRowView: View {
 
@@ -43,7 +55,8 @@ struct ConnectionRowView: View {
     let menuItems: [OlcMenuItem]
     /// Tap = connect through this node.
     let onConnect: () -> Void
-    /// The inline "Check" / "Retry" affordance on a failing row.
+    /// Re-probe this node. #458 was: "the inline affordance on a FAILING row" —
+    /// it is the verdict block's own action now, on every row.
     let onVerify: () -> Void
 
     var body: some View {
@@ -63,7 +76,10 @@ struct ConnectionRowView: View {
                 // #457: OUTSIDE the connect Button. A button nested inside another
                 // button does not reliably receive taps and reads as one control
                 // to VoiceOver — and this is the control that repairs the node.
-                inlineFix
+                // #458: the verdict moved in here too — it is a control now, not
+                // a caption (see `healthBlock`).
+                healthBlock
+                elsewhereNote
             }
         }
         // #457: the aurora is a VERDICT, not a style — the spine appears only on
@@ -74,6 +90,10 @@ struct ConnectionRowView: View {
 
     // MARK: The subject + its evidence
 
+    /// #458 was: this column also held `verdictLine` + `evidenceLine`, i.e. the
+    /// health verdict was part of the CONNECT button's label. Tapping the words
+    /// "Not checked yet" dialled the node instead of checking it. The verdict is
+    /// its own control now (`healthBlock`); this button carries only the subject.
     private var infoColumn: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(record.displayName)
@@ -85,8 +105,6 @@ struct ConnectionRowView: View {
                 .foregroundStyle(Theme.Palette.textSecondary)
                 .lineLimit(1)
             metaLine
-            verdictLine
-            evidenceLine
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -103,7 +121,6 @@ struct ConnectionRowView: View {
                 // #457: a reason is never truncated (HIG Typography).
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.top, 3)
     }
 
     /// #457: the SHAPE channel. `.checking` is the one state that earns a moving
@@ -158,34 +175,106 @@ struct ConnectionRowView: View {
         }
     }
 
-    // MARK: The fix, offered where the failure is shown
+    // MARK: The verdict — and the fix, offered where the failure is shown
 
-    /// Only states that mean "something is wrong" get a full inline affordance.
-    /// `.never` / `.stale` also suggest `.verify`, but on a fresh install EVERY
-    /// row is `.never` — a button on all of them would be noise, so those keep
-    /// the section's "Check all" and the row menu.
+    /// #458: the verdict is a CONTROL, not a caption.
+    ///
+    /// The regression it repairs: `.never`'s own hint told the owner to "Tap
+    /// Verify", `HealthDisplay.suggestedAction` returned `.verify` for it — and
+    /// `fixAction` below deliberately answered nil, so the row printed the name
+    /// of a button it refused to draw. Prose promising a control that is not on
+    /// screen is the same class of dishonesty as a green dot with no evidence
+    /// behind it, only inverted.
+    ///
+    /// Now the whole verdict block — glyph, word, dated evidence and the named
+    /// action pill — is ONE button running the same probe as the row menu's
+    /// "Verify", and it is a sibling of the connect button rather than nested
+    /// inside it (a button inside a button does not reliably receive taps).
+    private var healthBlock: some View {
+        Button(action: onVerify) { healthLabel }
+            .buttonStyle(.plain)
+            // A probe already in flight has nothing to re-trigger.
+            .disabled(display.isChecking)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(healthAccessibilityLabel)
+            .accessibilityHint(L10n.connectRowVerifyHint.localized())
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private var healthLabel: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            verdictLine
+            evidenceLine
+            actionPill
+        }
+        // #458: Apple's 44pt minimum, met by the TOUCH region — the drawn text
+        // keeps its own size, so nothing is scaled down to reach it (HIG:
+        // Layout → tap targets). Full row width for the same reason.
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+        .padding(.top, 4)
+    }
+
+    /// #458: VoiceOver reads the verdict as one sentence — the pairing
+    /// `OlcHealthChip` already uses. Localised at the point of use.
+    private var healthAccessibilityLabel: String {
+        "\(display.title). \(display.subtitle)"
+    }
+
+    /// #458 was: only `.broken` / `.inconclusive` / `.handshakeOnly` returned an
+    /// action here, on the reasoning that a button on every unchecked row would
+    /// be noise — which left `.never` and `.stale` naming an invisible button.
+    /// Every state that suggests an action now offers it; `.checking` is the one
+    /// silent state, because a probe is already running.
+    ///
+    /// `HealthDisplay.suggestedAction` itself is UNCHANGED — `ServersView`'s
+    /// `carrierMenuItems` branches on it and `HealthModelTests` pins it.
     private var fixAction: HealthAction? {
         switch display {
-        case .broken, .inconclusive: return display.suggestedAction
-        case .handshakeOnly:         return .verify
-        default:                     return nil
+        case .checking:      return nil
+        // `.handshakeOnly` records no reason (the transport DID come up), so
+        // `suggestedAction` is nil for it — but re-probing is exactly its fix.
+        case .handshakeOnly: return .verify
+        default:             return display.suggestedAction
         }
     }
 
+    /// The part of `fixAction` this screen can actually honour: verify / retry.
+    private var localAction: HealthAction? {
+        guard let action = fixAction,
+              ConnectActionSite.elsewhereNote(for: action) == nil else { return nil }
+        return action
+    }
+
+    /// #458: the named affordance, drawn INSIDE `healthBlock`'s button rather
+    /// than as its own — one control, one target, no nested buttons.
     @ViewBuilder
-    private var inlineFix: some View {
-        if let action = fixAction {
-            if let note = ConnectActionSite.elsewhereNote(for: action) {
-                Label(note, systemImage: "arrow.forward.circle")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
-            } else {
-                OlcButton(action.title, systemImage: "checkmark.shield",
-                          role: .secondary, compact: true, action: onVerify)
-                    .padding(.top, 5)
+    private var actionPill: some View {
+        if let action = localAction {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.shield")
+                Text(action.title)
             }
+            .font(.system(.caption, design: .rounded).weight(.semibold))
+            .foregroundStyle(Theme.Palette.accent)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Theme.Palette.fill, in: Capsule())
+            .overlay { Capsule().strokeBorder(Theme.Palette.fillBorder, lineWidth: 1) }
+            .padding(.top, 2)
+        }
+    }
+
+    /// #457 (unchanged): when the fix lives on another screen the row NAMES that
+    /// screen instead of drawing a button that cannot run here.
+    @ViewBuilder
+    private var elsewhereNote: some View {
+        if let action = fixAction, let note = ConnectActionSite.elsewhereNote(for: action) {
+            Label(note, systemImage: "arrow.forward.circle")
+                .font(.caption2)
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
         }
     }
 
