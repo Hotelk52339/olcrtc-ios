@@ -182,6 +182,15 @@ struct MainTabView: View {
             case .active:
                 store.rehydrateSecrets()
                 tunnel.noteForeground()   // #432: log return + time spent backgrounded
+                // #458: opening the app re-checks what you own, so the first
+                // thing you see is current rather than whatever was true when
+                // you last looked. Protocols only — the server's own SSH probe
+                // needs credentials and runs when the Servers tab appears.
+                // Debounced by `shouldProbe`, so returning to the foreground
+                // repeatedly costs nothing, and it obeys the user's switch.
+                if SettingsStore.shared.refreshOnEntry {
+                    HealthCoordinator.shared.verifyDue(store.connections, using: tunnel)
+                }
             case .background:
                 // #432: record the transition (loud if connected without keep-alive),
                 // then fsync the logs so a following suspend/kill can't drop the tail.

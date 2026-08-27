@@ -61,6 +61,9 @@ enum L10n: String, CaseIterable {
     case configFailoverToggle               // settings toggle label
     case configFailoverExplainer            // what auto-failover does
     case configFailoverProxyOnlyFooter      // note: proxy-mode only
+    // #458: re-check servers and protocols when the app is opened
+    case settingsRefreshOnEntryToggle
+    case settingsRefreshOnEntryExplainer
     case failoverSwitching_fmt              // "%@ failing — switching to %@" (2 carrier labels)
     case failoverAllFailed                  // every protocol on the server failed
     // #454: connection-health card

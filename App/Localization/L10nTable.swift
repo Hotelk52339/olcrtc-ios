@@ -54,6 +54,8 @@ enum L10nTable {
         .configFailoverToggle:       "Auto-switch protocols",
         .configFailoverExplainer:    "If the active protocol stops responding, automatically switch to another protocol running on the same server.",
         .configFailoverProxyOnlyFooter: "Applies in proxy mode.",
+        .settingsRefreshOnEntryToggle:  "Check on opening",
+        .settingsRefreshOnEntryExplainer: "When you open the app, re-check your servers and every protocol on them, so what you see is current. Anything checked in the last couple of minutes is left alone.",
         .failoverSwitching_fmt:      "Protocol %@ is failing — switching to %@",
         .failoverAllFailed:          "All protocols on this server failed",
         // #454: connection-health card
@@ -904,6 +906,8 @@ enum L10nTable {
         .configFailoverToggle:       "Авто-переключение протоколов",
         .configFailoverExplainer:    "Если активный протокол перестаёт отвечать, автоматически переключиться на другой протокол того же сервера.",
         .configFailoverProxyOnlyFooter: "Работает в режиме прокси.",
+        .settingsRefreshOnEntryToggle:  "Проверять при открытии",
+        .settingsRefreshOnEntryExplainer: "При открытии приложения заново проверять серверы и все протоколы на них, чтобы вы видели актуальное состояние. То, что проверялось пару минут назад, не трогается.",
         .failoverSwitching_fmt:      "Протокол %@ не отвечает — переключаюсь на %@",
         .failoverAllFailed:          "Все протоколы этого сервера недоступны",
         // #454: connection-health card

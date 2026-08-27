@@ -251,11 +251,7 @@ struct ConnectionsView: View {
         tunnel.connect(record: conn)
     }
 
-    /// #458: the row's verdict block is a real button now, so a tap on it gets
-    /// the same immediate acknowledgement a tap on the row does. `tap()` (not
-    /// `impact()`) — checking is a light action, connecting is a committed one.
     private func verify(_ conn: ConnectionRecord) {
-        Haptics.tap()
         Task { await health.verify(conn, using: tunnel, force: true) }
     }
 

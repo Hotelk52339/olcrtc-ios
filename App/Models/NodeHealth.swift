@@ -116,18 +116,7 @@ enum HealthDisplay: Equatable, Sendable {
 
     var subtitle: String {
         switch self {
-        // boc #458
-        // #458 was: `L10n.healthNeverCheckedHint` — "Tap Verify to push a real
-        // request through this connection." A subtitle cannot name a control,
-        // because it does not know what its host draws: this ONE string renders
-        // in the connection row, in `ConnectHero`'s evidence line (whose only
-        // button is Connect) and in the VPS card headline via
-        // `HostDisplay.subtitle` — and the owner hit exactly that, reading an
-        // instruction to press a button that was not on the screen.
-        // The replacement states the FACT and names nothing; the affordance is
-        // the host's job (ConnectionRowView draws it for `.never` now).
-        case .never:      return L10n.healthNeverProbedHint.localized()
-        // eoc #458
+        case .never:      return L10n.healthNeverCheckedHint.localized()
         case .checking:   return L10n.healthCheckingHint.localized()
         case .verified(let ms, let age), .fading(let ms, let age):
             let a = HealthAge.label(age)
@@ -166,11 +155,6 @@ enum HealthDisplay: Equatable, Sendable {
     }
 
     /// What the user should DO next; nil when there is nothing to offer.
-    ///
-    /// #458: UNCHANGED on purpose — `ServersView.carrierMenuItems` branches on
-    /// the exact values below and `HealthModelTests` pins them. What changed is
-    /// that `ConnectionRowView` finally RENDERS the `.never` / `.stale` answer
-    /// instead of computing it and dropping it.
     var suggestedAction: HealthAction? {
         switch self {
         case .broken(let r, _), .inconclusive(let r, _): return r.action
