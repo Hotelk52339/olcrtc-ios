@@ -782,6 +782,19 @@ enum L10n: String, CaseIterable {
     case protocolStoppedNote                // protocol row: container isn't running
     case vpsScanBeforeInstall               // install pre-scan, in progress
     case vpsScanFailed_fmt                  // install pre-scan failed (%@ = reason)
+
+    // MARK: #458 Regression fixes — say what is known, name only controls that exist
+    // The protocol list has not been read yet: an empty list is not "nothing
+    // installed". Shown next to the Add-protocol button, which is still offered.
+    case protocolsNotReadYet
+    // Result of an Add-protocol tap that refreshed the list first and found
+    // every carrier already there.
+    case addProtocolAllInstalled
+    // #458 replaces `healthNeverCheckedHint` at the point of use: the same
+    // subtitle renders in three hosts, so it states the fact and names no
+    // button (ConnectionRowView draws the Verify affordance itself).
+    case healthNeverProbedHint
+    case connectRowVerifyHint               // VoiceOver hint for the row's verdict button
 }
 
 extension L10n {

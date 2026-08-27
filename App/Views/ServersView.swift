@@ -795,6 +795,9 @@ struct ServersView: View {
         // A protocol-level op holds the SSH lane just like a HostOp does, so it
         // locks the host's actions too (they would collide on one connection).
         let locked = actionsDisabled || carrierBusyHostID != nil
+        // #458: the quick row needs to know what the big button already offers,
+        // so it can drop the one action it would otherwise duplicate.
+        let primary = primaryAction(state)
         return ServerCardView(
             name:            host.label,
             addressLine:     addressLine(host),
@@ -807,12 +810,16 @@ struct ServersView: View {
             metrics:         metrics(host),
             rows:            carrierRows[host.id] ?? [],
             rowsBusy:        carrierBusyHostID == host.id,
-            canAddProtocol:  !missingCarriers(host).isEmpty,
+            // #458 was: `canAddProtocol: !missingCarriers(host).isEmpty` — [] for
+            // an unread carrier list, so "not scanned yet" hid the action.
+            addProtocol:     addProtocolState(host),
             actionsDisabled: locked,
-            primary:         primaryAction(state),
+            primary:         primary,
             menuItems:       menuItems(host),
+            quickActions:    quickActions(host, primary: primary),   // #458
             onPrimary:       { runPrimary(host, state: state) },
-            onAddProtocol:   { addProtocolFor = host },
+            // #458: reads the protocol list first when we haven't got one.
+            onAddProtocol:   { beginAddProtocol(host) },
             onVerifyAll:     { health.verifyAll(hostRecords(host), using: tunnel) },
             row:             { rowView(host, row: $0) })
     }
@@ -1130,6 +1137,41 @@ struct ServersView: View {
             removeHost = host
         })
         return items
+    }
+
+    // MARK: #458 — the quick row (a VISIBLE SUBSET of that menu)
+    //
+    // #457 replaced the card's four icon buttons with one full-width primary
+    // action, which was right about the primary and wrong about the rest: the
+    // owner's routine actions ended up behind an overflow menu, and on a server
+    // that is installed and running the primary button is **Stop**, so "Check
+    // server" — the thing they press most — had no button on the card at all.
+    // Two or three come back, as icon buttons under the primary one. Each is the
+    // SAME handler as its `menuItems` entry above; nothing here is an operation
+    // that the menu does not also offer.
+
+    private func quickActions(_ host: ServerHost, primary: ServerPrimaryAction) -> [ServerQuickAction] {
+        var out: [ServerQuickAction] = []
+        // Not when the big button is already Check — one card, one Check.
+        if primary != .check {
+            out.append(ServerQuickAction(title: L10n.vpsCheckServer.localized(),
+                                         systemImage: "antenna.radiowaves.left.and.right") {
+                Task { await checkServer(host) }
+            })
+        }
+        // Both of these need a container to be about anything, exactly as in the
+        // menu (`if hasContainer(host)`).
+        if hasContainer(host) {
+            out.append(ServerQuickAction(title: L10n.actionContainerLogs.localized(),
+                                         systemImage: "arrow.down.doc") {
+                logsForHost = host
+            })
+            out.append(ServerQuickAction(title: L10n.actionChangeRoomTransport.localized(),
+                                         systemImage: "slider.horizontal.3") {
+                reconfigureRequest = primaryReconfigureRequest(host)
+            })
+        }
+        return out
     }
 
     // MARK: Actions (each drives the card through `run`; the probe sets base)
@@ -1577,11 +1619,57 @@ struct ServersView: View {
     // state describes the PRIMARY container and doesn't change — following the
     // rotateKey/recoverConnection pattern, serialized by `carrierBusyHostID`.
 
+    // boc #458 — regression 4: "I cannot add jitsi as a second protocol".
+    //
+    // `missingCarriers` returned [] for a host whose protocol list had never
+    // been read, and the card's Add-protocol affordance was `!isEmpty`. So an
+    // unscanned host (never opened, unreachable when it was, or a scan that
+    // threw) said "there is nothing you can add here" — the same sentence a host
+    // running all three carriers says — and there was no way to get the offer
+    // back. An empty answer to "what is missing?" now means only what it can
+    // honestly mean: nothing is missing BECAUSE WE LOOKED.
+
+    /// Carriers this host does not run yet. With no list to compare against,
+    /// every carrier is a candidate — the add-protocol sheet is where the user
+    /// picks one, and the server rejecting a duplicate is a far more honest
+    /// answer than a button that was never drawn.
     private func missingCarriers(_ host: ServerHost) -> [String] {
-        guard let rows = carrierRows[host.id] else { return [] }
+        // #458 was: `guard let rows = carrierRows[host.id] else { return [] }`
+        guard let rows = carrierRows[host.id] else { return CarrierTransportMatrix.carriers }
         let present = Set(rows.map(\.provider))
         return CarrierTransportMatrix.carriers.filter { !present.contains($0) }
     }
+
+    /// #458: the three answers the card is allowed to draw. `.unavailable` is
+    /// reserved for real knowledge — either there is no base deployment to hang a
+    /// sibling container off (`addCarrier` requires `lastContainerName`), or we
+    /// have read the list and every carrier is already installed.
+    private func addProtocolState(_ host: ServerHost) -> ServerAddProtocolState {
+        guard host.lastContainerName != nil else { return .unavailable }
+        guard carrierRows[host.id] != nil    else { return .unknown }
+        return missingCarriers(host).isEmpty ? .unavailable : .available
+    }
+
+    /// #458: Add protocol tapped. With the list already read this is the old
+    /// one-liner; without it, the tap READS the list (the `.unknown` state's
+    /// whole point) and then opens the sheet against what it learned. A refresh
+    /// that comes back empty-handed still opens the sheet — against the full
+    /// carrier list — because swallowing the tap is the bug being fixed.
+    private func beginAddProtocol(_ host: ServerHost) {
+        guard carrierRows[host.id] == nil else { addProtocolFor = host; return }
+        Task {
+            // Same lane and the same spinner as the other protocol-level ops.
+            carrierBusyHostID = host.id
+            await refreshCarriers(host.id)
+            carrierBusyHostID = nil
+            if carrierRows[host.id] != nil, missingCarriers(host).isEmpty {
+                alertText = L10n.addProtocolAllInstalled.localized()
+            } else {
+                addProtocolFor = host
+            }
+        }
+    }
+    // eoc #458
 
     /// Row → the ConnectionRecord to connect with: the host-linked records
     /// first (primary + extras), then any record matching carrier + room.
