@@ -87,6 +87,17 @@ struct ServersView: View {
     /// a regression, not a simplification. Menu items are closures here, not
     /// links, so the push is driven by this optional.
     @State private var logsForHost    : ServerHost?
+    /// #459: the server whose "Manage server" screen is pushed — everything
+    /// rare or destructive that used to sit in the card's 13-item ⋯ menu.
+    // #459 (audit fix): its own wrapper type, NOT a second `ServerHost?`.
+    // `navigationDestination(item:)` requires `D: Hashable` because it appends
+    // the value to the stack's path and then resolves a destination registered
+    // for that TYPE — so two of them bound to `ServerHost?` on one stack are two
+    // registrations for one type, and the one closest to the root wins. With
+    // both keyed on `ServerHost`, `logsForHost` would have pushed the Manage
+    // screen and container logs would have been unreachable again — the exact
+    // regression the #457 audit note above is about.
+    @State private var advancedForHost: AdvancedHostRoute?
     @State private var foundContainers: [SSHRunner.FoundContainer] = []
     @State private var shareConn      : ConnectionRecord?   // #304: share the host's linked connection
     @State private var shareFullAccess: FullAccessShareRequest?   // #135: full-access (SSH) share
@@ -128,29 +139,71 @@ struct ServersView: View {
     /// Observed exactly like `settings`, so a probe result redraws the rows.
     @ObservedObject private var health = HealthCoordinator.shared
 
+    // boc #459: `coreStack` was one `NavigationStack { List { … } }` carrying
+    // the whole lifecycle chain inline. Pull-to-refresh (requirement 6) and the
+    // inline title are two more modifiers on an expression this file has already
+    // blown the type-checker's budget on three times, so the chain is split by
+    // kind ONE level further: the List is its own tiny expression, the two
+    // pushes sit in `hostDestinations`, and everything else is `listChrome`.
+    // Same view, same order, no expression over 8 modifiers.
     private var coreStack: some View {
         NavigationStack {
-            List {
-                // #456 was: matrixSection — a build-time lab table shown as if it
-                // described today. Deleted: the card carries measured evidence now.
+            listChrome(hostDestinations(hostList))
+        }
+    }
 
-                if serverStore.hosts.isEmpty {
-                    emptyState
-                } else {
-                    ForEach(serverStore.hosts) { host in
-                        hostCard(host)
-                    }
-                    .onDelete { serverStore.remove(at: $0) }
+    private var hostList: some View {
+        List {
+            // #456 was: matrixSection — a build-time lab table shown as if it
+            // described today. Deleted: the card carries measured evidence now.
+
+            if serverStore.hosts.isEmpty {
+                emptyState
+            } else {
+                ForEach(serverStore.hosts) { host in
+                    hostCard(host)
                 }
+                .onDelete { serverStore.remove(at: $0) }
+                listFooter
             }
-            // #457: the title stays a large title here (unlike Connect, whose
-            // large title spent 34pt on the brand word "OlcRTC" above a 15pt
-            // truth) — it names the content, not the brand.
-            // #457 was: the app called one place three names — "Manage VPS"
-            // (tab), "VPS list" (this title) and "the Servers tab" (the copy
-            // that points here). Both table entries now read "Servers"/«Серверы»,
-            // so the tab, the title and every reference agree.
+        }
+    }
+
+    /// #459: the two pushes. They live INSIDE the NavigationStack's content —
+    /// `navigationDestination` is collected from the content by the stack, so a
+    /// declaration applied to the NavigationStack itself (where `logsForHost`'s
+    /// used to sit, in `hostSheets`) is not part of that content.
+    @ViewBuilder
+    private func hostDestinations(_ content: some View) -> some View {
+        content
+            // #457 (audit fix): the destination behind the "Container logs"
+            // action. A push, not a tab hop — the log opens already scoped to
+            // this server, so nothing has to re-derive which host it was about.
+            .navigationDestination(item: $logsForHost) { host in
+                LogsView(subject: .container(host),
+                         serverStore: serverStore,
+                         connections: connections)
+            }
+            // #459: everything rare or destructive, one deliberate step away.
+            // Its item type is `AdvancedHostRoute`, not `ServerHost` — see the
+            // note on the `advancedForHost` state above.
+            .navigationDestination(item: $advancedForHost) { route in
+                advancedView(route.host)
+            }
+    }
+
+    @ViewBuilder
+    private func listChrome(_ content: some View) -> some View {
+        content
+            // #459: inline. The tab bar directly below already says "Servers",
+            // so a 34pt second copy of that word spent ~52pt of a screen the
+            // owner described as half empty — the same waste #457 took off
+            // Connect. The card grows into what this gives back.
+            // #459 was: a large-title band, defended by #457's note that the
+            // title "names the content, not the brand" — true, and still not
+            // worth 52pt to say a word the tab bar is already saying.
             .navigationTitle(L10n.serversTitle.localized())
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     // #359: icon-only "+" needs an a11y label (reused newServerTitle).
@@ -158,6 +211,10 @@ struct ServersView: View {
                         .accessibilityLabel(L10n.newServerTitle.localized())
                 }
             }
+            // #459: requirement 6 — the same gesture as Connections, doing the
+            // same job one layer down: re-read the servers, then re-verify what
+            // runs on them.
+            .refreshable { await refreshAllHosts() }
             // #374: structured sweep loop tied to the view lifecycle — SwiftUI
             // cancels it when the view disappears, replacing the old
             // onAppear-start / onDisappear-invalidate Timer pair.
@@ -178,7 +235,34 @@ struct ServersView: View {
                 guard case .running(let msg) = status else { return }
                 advancePhase(note: msg)
             }
+    }
+    // eoc #459
+
+    /// #459: the one fact worth the space under the last card — how old the
+    /// oldest server reading on screen is. No instruction and no "pull to
+    /// refresh" caption: the gesture is standard, and a line telling the user to
+    /// perform a standard gesture is exactly the kind of word this pass removes.
+    /// Absent entirely when nothing has ever been read.
+    @ViewBuilder
+    private var listFooter: some View {
+        if let oldest = oldestReadDate {
+            Section {
+                Text(L10n.healthCheckedAgo_fmt.formatted(
+                        HealthAge.phrase(Date().timeIntervalSince(oldest))))
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
         }
+    }
+
+    /// #459: the oldest REAL reading among the hosts on screen (`lastProbeOK`,
+    /// never the attempt clock). nil ⇒ no host has ever answered, so the footer
+    /// says nothing rather than dating a guess.
+    private var oldestReadDate: Date? {
+        serverStore.hosts.compactMap { lastProbeOK[$0.id] }.min()
     }
 
     // #457 (audit fix): ServersView.coreStack carried 21 chained modifiers in a
@@ -186,6 +270,11 @@ struct ServersView: View {
     // in reasonable time" — the third time this file has hit that budget. The
     // chain is split by KIND: the List and its lifecycle stay in coreStack, the
     // presentation modifiers live in these wrappers. Same view, same order.
+    // #459: that split went one level further — the lifecycle chain is
+    // `listChrome` and the two pushes are `hostDestinations`, both applied
+    // INSIDE the NavigationStack. These wrappers stay outside it, which is
+    // correct for sheets, alerts and dialogs, and wrong for a
+    // `navigationDestination` (see `hostDestinations`).
     @ViewBuilder
     private func hostSheets(_ content: some View) -> some View {
         content
@@ -210,14 +299,10 @@ struct ServersView: View {
                     serverStore.update(updated, secret: secret)
                 }
             }
-            // #457 (audit fix): the destination behind the "Container logs" menu
-            // item. A push, not a tab hop — the log opens already scoped to this
-            // server, so nothing has to re-derive which host it was about.
-            .navigationDestination(item: $logsForHost) { host in
-                LogsView(subject: .container(host),
-                         serverStore: serverStore,
-                         connections: connections)
-            }
+            // #459 was: `.navigationDestination(item: $logsForHost)` — declared
+            // HERE, i.e. on the NavigationStack itself rather than on its
+            // content, where the stack cannot collect it. Moved into
+            // `hostDestinations`, inside the stack, with the new one.
             .sheet(item: $installFor) { host in
                 // #452: multi-protocol install plan (primary + extras).
                 InstallOptionsView { primary, extras in
@@ -285,6 +370,7 @@ struct ServersView: View {
                 Button(L10n.actionRemoveFromList.localized(), role: .destructive) {
                     removeFromList(host)
                     removeHost = nil
+                    advancedForHost = nil   // #459: pop "Manage server" — its subject is gone
                 }
                 Button(L10n.cancel.localized(), role: .cancel) { removeHost = nil }
             } message: { _ in
@@ -301,6 +387,7 @@ struct ServersView: View {
             ) { host in
                 Button(L10n.actionUninstall.localized(), role: .destructive) {
                     uninstallConfirmHost = nil
+                    advancedForHost = nil   // #459: back to the card, where the op's progress shows
                     Task { await uninstall(host) }
                 }
                 Button(L10n.cancel.localized(), role: .cancel) { uninstallConfirmHost = nil }
@@ -318,6 +405,7 @@ struct ServersView: View {
             ) { host in
                 Button(L10n.actionDeepUninstall.localized(), role: .destructive) {
                     deepUninstallConfirmHost = nil
+                    advancedForHost = nil   // #459
                     Task { await deepUninstall(host, removeImage: false) }
                 }
                 Button(L10n.cancel.localized(), role: .cancel) { deepUninstallConfirmHost = nil }
@@ -335,6 +423,7 @@ struct ServersView: View {
             ) { host in
                 Button(L10n.actionReboot.localized(), role: .destructive) {
                     rebootConfirmHost = nil
+                    advancedForHost = nil   // #459
                     Task { await reboot(host) }
                 }
                 Button(L10n.cancel.localized(), role: .cancel) { rebootConfirmHost = nil }
@@ -354,6 +443,7 @@ struct ServersView: View {
             ) { host in
                 Button(L10n.recoverConfirmAction.localized()) {
                     recoverConfirmHost = nil
+                    advancedForHost = nil   // #459
                     Task { await recoverConnection(host) }
                 }
                 Button(L10n.cancel.localized(), role: .cancel) { recoverConfirmHost = nil }
@@ -514,7 +604,9 @@ struct ServersView: View {
     private func currentBase(_ host: ServerHost) -> HostBase { displayState(host).base }
 
     private func hasContainer(_ host: ServerHost) -> Bool { currentBase(host).hasContainer }
-    private func isRunning(_ host: ServerHost)   -> Bool { currentBase(host) == .running }
+    // #459 was: `isRunning(_:)` — its only caller was the ⋯ menu's Start/Stop
+    // pair, which was a literal duplicate of the card's primary button
+    // (`primaryAction` reads the same base) and is gone with it.
 
     // MARK: #456 — verified health (the ONE vocabulary for "is this OK?")
     //
@@ -562,16 +654,12 @@ struct ServersView: View {
                                    lastProbeAge: age, health: hostHealth(host))
     }
 
-    /// #456: protocol rows on this host with no usable evidence — never probed,
-    /// or too old to be worth anything. Drives the "Check all" footer.
-    private func unverifiedCount(_ host: ServerHost) -> Int {
-        hostRecords(host).reduce(into: 0) { acc, rec in
-            switch health.display(for: rec.id) {
-            case .never, .stale: acc += 1
-            default:             break
-            }
-        }
-    }
+    // #459 was: `unverifiedCount(_:)` — the aggregate "N more not checked" that
+    // fed the card's sweep note. The note is gone (pull-to-refresh checks
+    // everything, so a footnote advertising a Verify-all button advertises
+    // nothing), and the fact survives per item: every unchecked protocol row
+    // still says "not checked" in its own chip, which is the honest place to
+    // say it.
 
     /// #304: the ConnectionRecord this host installed/owns (by `lastConnectionID`),
     /// if still present — drives the "Share connection" item on the server card.
@@ -763,6 +851,10 @@ struct ServersView: View {
     // it resolves state into plain values and hands them over. Nothing that
     // RENDERS may grow inside this file again: it has hit the Swift
     // type-checker's expression budget twice already (see `carrierModals`).
+    // #459: same rule, one more file — the pushed management screen is
+    // App/Views/ServerAdvancedView.swift, and `advancedView(_:)` below is its
+    // glue. `quickActions(_:)` is the card's new button row, resolved the same
+    // way: plain values and closures, nothing rendered here.
     //
     // #457 was: hostCard / hostCardTop / hostCardBottom / statusRegion /
     // processCaption / metricsStrip / pingMiniStat / actionBar / primaryButton /
@@ -800,22 +892,87 @@ struct ServersView: View {
             addressLine:     addressLine(host),
             headline:        headline(host, state: state),
             progress:        statusBarFraction(state),
-            processCaption:  processCaptionText(host, state: state),
+            readCaption:     readCaptionText(host),        // #459
             failingCount:    counts.failing,
             protocolCount:   counts.total,
-            uncheckedCount:  unverifiedCount(host),
             metrics:         metrics(host),
             rows:            carrierRows[host.id] ?? [],
             rowsBusy:        carrierBusyHostID == host.id,
             canAddProtocol:  !missingCarriers(host).isEmpty,
             actionsDisabled: locked,
             primary:         primaryAction(state),
+            quickActions:    quickActions(host),           // #459
             menuItems:       menuItems(host),
             onPrimary:       { runPrimary(host, state: state) },
             onAddProtocol:   { addProtocolFor = host },
-            onVerifyAll:     { health.verifyAll(hostRecords(host), using: tunnel) },
+            onManage:        { advancedForHost = AdvancedHostRoute(host: host) },   // #459
             row:             { rowView(host, row: $0) })
     }
+
+    // boc #459: the two verbs the owner reaches for constantly, lifted out of a
+    // thirteen-item ⋯ menu and onto the card.
+    //
+    // TWO, not three, because the third slot has no honest occupant: Start/Stop
+    // is already the primary button, "Add protocol" belongs in the PROTOCOLS
+    // header where its context is, and Update is periodic rather than frequent
+    // (it lives on the Manage screen). Two full-width-ish buttons read as a
+    // pair; three read as a toolbar.
+    //
+    // Gated on `hasContainer`: before anything is installed the card's whole
+    // offer is its primary CTA, and Check / Logs would be reading an empty
+    // server. That gate is also what stops the row from ever duplicating the
+    // primary button — `primary == .check` happens only on `HostBase.unknown`,
+    // which is not `hasContainer`, so the row is absent exactly then.
+    private func quickActions(_ host: ServerHost) -> [ServerQuickAction] {
+        guard hasContainer(host) else { return [] }
+        return [
+            ServerQuickAction(title: L10n.vpsCheckServer.localized(),
+                              systemImage: "antenna.radiowaves.left.and.right") {
+                Task { await checkServer(host) }
+            },
+            ServerQuickAction(title: L10n.actionContainerLogs.localized(),
+                              systemImage: "arrow.down.doc") {
+                logsForHost = host
+            }
+        ]
+    }
+
+    /// #459: resolves one host into `ServerAdvancedView`'s inputs. Every row
+    /// keeps the exact state it always set, so each destructive verb still ends
+    /// in the confirmation dialog `hostConfirmations` already owns.
+    private func advancedView(_ host: ServerHost) -> ServerAdvancedView {
+        ServerAdvancedView(
+            hostLabel:           host.label,
+            isKeyAuth:           host.authMethod == .privateKey,
+            hasRecoverOption:    hasContainer(host) && host.lastConnectionID == nil,
+            hasLinkedConnection: linkedConnection(host) != nil,
+            hasContainer:        hasContainer(host),
+            canDeepUninstall:    currentBase(host) != .noPodman,
+            actionsDisabled:     actionsDisabled || carrierBusyHostID != nil,
+            onRecover:           { recoverConfirmHost = host },
+            onShareFullAccess:   { presentFullAccessShare(host) },
+            // No dialog stands behind Update, so it pops on the way out — the
+            // card is where its progress bar is.
+            onUpdate:            { advancedForHost = nil; Task { await update(host) } },
+            onReboot:            { rebootConfirmHost = host },
+            onUninstall:         { uninstallConfirmHost = host },
+            onDeepUninstall:     { deepUninstallConfirmHost = host },
+            onRemoveHost:        { removeHost = host })
+    }
+
+    /// #451: a key-auth host can't produce a full-access link (it would have to
+    /// embed the private key), so the tap explains instead of sharing. Lifted
+    /// out of `menuItems` unchanged when the row moved to the Manage screen.
+    private func presentFullAccessShare(_ host: ServerHost) {
+        guard host.authMethod != .privateKey else {
+            alertText = L10n.shareFullAccessKeyHostUnavailable.localized()
+            return
+        }
+        guard let conn = linkedConnection(host),
+              let req = fullAccessRequest(host, conn: conn) else { return }
+        shareFullAccess = req
+    }
+    // eoc #459
 
     /// #337: mask the host for display when screenshot-safe mode is on (IP
     /// literals to bullets; hostnames pass through). Display-only — `host.host`
@@ -897,38 +1054,31 @@ struct ServersView: View {
         }
     }
 
-    // MARK: The process caption
+    // MARK: The read stamp
     //
-    // #456: podman's verdict as PLAIN TEXT with its own age — no coloured dot,
-    // because "the process exists" is not a health claim.
-
-    /// #457 was: `L10n.vpsProcessCaption_fmt.formatted(state.base.title, age)` —
-    /// it interpolated `HostBase.title`, a string written to be a card HEADLINE,
-    /// into "Server process: %@". Both `.imageReady` and `.noPodman` title
-    /// "Ready to install", so the caption read "Server process: Ready to install"
-    /// (nonsense for one of them, a false claim for the other), and `.unknown`
-    /// read "Server process: Status unknown". The caption gets its own words.
-    private func processCaptionText(_ host: ServerHost, state: HostDisplay) -> String {
-        // #456 (audit): `lastProbeOK`, not `lastProbe` — the attempt clock is
-        // stamped even when the probe threw, which dated the PREVIOUS reading to
-        // "just now". With no reading at all the seeded base is a GUESS, so the
-        // line says exactly that instead of dressing a guess up with an age.
+    // boc #459: what is LEFT of the process caption — its age, and only its age.
+    //
+    // #459 was: `processCaptionText` + `processWord(_:)` → "Server process is
+    // running · read 2m ago", a whole sentence under the status pill. The
+    // sentence part restated the pill directly above it, and every protocol row
+    // already says whether its own container is up (`protocolStoppedNote`), so
+    // it was the same claim written a third time. The AGE was the load-bearing
+    // half, and it belongs to the readings it dates: the card now prints it on
+    // the metrics block, trailing, where the disk / RAM / uptime numbers it
+    // actually stamps are.
+    //
+    // `lastProbeOK`, not `lastProbe`: the attempt clock is stamped even when the
+    // probe threw, which would date the PREVIOUS reading to "just now". With no
+    // reading at all the seeded base is a GUESS, so the stamp says exactly that
+    // instead of dressing a guess up with an age.
+    // #459 also was: HealthAge.label(…) inside "%@ · read %@ ago" — that is the
+    // "read just now ago" bug. `phrase` carries its own preposition and
+    // `vpsReadAge_fmt` no longer appends one.
+    private func readCaptionText(_ host: ServerHost) -> String {
         guard let probed = lastProbeOK[host.id] else { return L10n.vpsProcessUnread.localized() }
-        return L10n.vpsProcessAge_fmt.formatted(
-            Self.processWord(state.base), HealthAge.label(Date().timeIntervalSince(probed)))
+        return L10n.vpsReadAge_fmt.formatted(HealthAge.phrase(Date().timeIntervalSince(probed)))
     }
-
-    /// #457: the caption's own small vocabulary — four plain facts about the
-    /// server-side process, keyed off what a probe actually found.
-    static func processWord(_ base: HostBase) -> String {
-        switch base {
-        case .running:              return L10n.vpsProcessRunning.localized()
-        case .stopped:              return L10n.vpsProcessStopped.localized()
-        case .imageReady, .noImage: return L10n.vpsProcessNothingInstalled.localized()
-        case .noPodman:             return L10n.vpsProcessNotSetUp.localized()
-        case .unknown:              return L10n.vpsProcessUnread.localized()
-        }
-    }
+    // eoc #459
 
     /// The progress fraction while running; nil when the bar slot is empty.
     private func statusBarFraction(_ state: HostDisplay) -> Double? {
@@ -1015,122 +1165,63 @@ struct ServersView: View {
                 .replacingOccurrences(of: " min",  with: "m")
     }
 
-    // MARK: Overflow menu — the single COMPLETE action set
+    // MARK: Overflow menu — the occasional, non-destructive actions
     //
-    // #258: this is the source of truth. The card's primary + Check buttons are a
-    // derived subset of these items (no more "MUST mirror card buttons" duplication).
-
+    // boc #459: THIRTEEN items became five, and none of the five is destructive.
+    //
+    // The owner's complaint was literal: "to do anything I have to go into those
+    // tiny three dots where SO MUCH is shown". A menu that lists everything is
+    // not a source of truth, it is a wall — the two verbs reached for constantly
+    // sat below Stop and above Update with nothing to tell them apart.
+    //
+    // Where the other eight went, and why NOTHING was removed from the app:
+    //   Check server, Container logs → visible buttons (`quickActions`)
+    //   Start / Stop / Install       → the card's primary button ALREADY offered
+    //                                  exactly these, keyed off the same base;
+    //                                  they were a literal duplicate
+    //   Update, Recover connection, Share full access, Reboot,
+    //   Remove container, Wipe all, Remove host from list
+    //                                → the pushed "Manage server" screen, where
+    //                                  a Form footer can finally say what each
+    //                                  destructive verb destroys
+    //
+    // #258's rule still holds one level up: the card's buttons and this menu are
+    // still ONE derived action set, resolved here from one host state.
     private func menuItems(_ host: ServerHost) -> [OlcMenuItem] {
-        var items: [OlcMenuItem] = [
-            .action(L10n.vpsCheckServer.localized(), systemImage: "antenna.radiowaves.left.and.right") {
-                Task { await checkServer(host) }
-            }
-        ]
+        var items: [OlcMenuItem] = []
 
         if hasContainer(host) {
-            if isRunning(host) {
-                items.append(.action(L10n.actionStop.localized(), systemImage: "stop.fill", role: .destructive) {
-                    Task { await stop(host) }
-                })
-            } else {
-                items.append(.action(L10n.actionStart.localized(), systemImage: "play.fill") {
-                    Task { await startContainer(host) }
-                })
-            }
-            // #457: container logs are now a PUSH scoped to this server, instead
-            // of the old cross-tab teleport (set a router request → jump to tab 3
-            // → the tab re-derives which host it was about). Same item, honest
-            // destination: the log arrives already about THIS server.
-            items.append(.action(L10n.actionContainerLogs.localized(),
-                                 systemImage: "arrow.down.doc") {
-                logsForHost = host
-            })
             items.append(.action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
                 reconfigureRequest = primaryReconfigureRequest(host)   // #452
             })
-            items.append(.action(L10n.actionUpdate.localized(), systemImage: "arrow.triangle.2.circlepath") {
-                Task { await update(host) }
-            })
-            // #303: container is installed but no ConnectionRecord links to it —
-            // surface the recovery action so the user can get a usable connection
-            // without re-installing or losing the room/key.
-            if host.lastConnectionID == nil {
-                items.append(.action(L10n.actionRecoverConnection.localized(), systemImage: "arrow.counterclockwise.circle") {
-                    recoverConfirmHost = host
-                })
-            }
-            items.append(.divider)
-            items.append(.action(L10n.actionUninstall.localized(), systemImage: "trash", role: .destructive) {
-                uninstallConfirmHost = host
-            })
-        } else if currentBase(host) != .unknown {
-            // #457: `else if … != .unknown` — Install is offered only on a base a
-            // real probe RETURNED, matching `primaryAction`. On a never-read
-            // server the menu's first item ("Check server") is the whole offer.
-            // #457 was: a bare `else`, so a server nothing had ever looked at
-            // carried Install in the menu as well as on the button.
-            items.append(.action(L10n.actionInstall.localized(), systemImage: "arrow.down.app") {
-                // #456 was: installFor = host — scan first, then offer a choice.
-                Task { await beginInstall(host) }
-            })
         }
-        // #456 was: the Scan item lived inside the `else` branch above, so it
-        // vanished for good the moment a container was adopted — exactly when a
-        // user wants to look for siblings created outside the app, or after the
+        // #456 was: the Scan item lived inside an `else` branch, so it vanished
+        // for good the moment a container was adopted — exactly when a user
+        // wants to look for siblings created outside the app, or after the
         // recorded name went stale.
         items.append(.action(L10n.actionScanVPS.localized(), systemImage: "magnifyingglass") {
             Task { await scanContainers(host) }
         })
-
         // #419: bot settings — available whether or not a container is installed.
-        items.append(.divider)
-        // #427: robot glyph (custom asset). was: systemImage "bubble.left.and.bubble.right"
+        // #427: robot glyph (custom asset).
         items.append(.action(L10n.botSheetTitle.localized(), assetImage: "RobotIcon") {
             botConfigFor = host
         })
 
-        // Deep uninstall whenever there's something to wipe (Podman present).
-        if currentBase(host) != .noPodman {
-            items.append(.action(L10n.actionDeepUninstall.localized(), systemImage: "flame", role: .destructive) {
-                deepUninstallConfirmHost = host
-            })
-        }
-
-        // #304: share the connection this host owns (URI / QR), moved here from the
-        // Connections tab — the connection is configured on this card.
+        items.append(.divider)
+        // #304: share the connection this host owns (URI / QR) — the connection
+        // is configured on this card. The FULL-ACCESS share is not here: it
+        // hands over SSH credentials, so it sits on the Manage screen with the
+        // rest of the destructive set (#459).
         if let conn = linkedConnection(host) {
-            items.append(.divider)
             items.append(.action(L10n.shareConnectionTitle.localized(), systemImage: "square.and.arrow.up") {
                 shareConn = conn
             })
-            // #135: full-access (co-admin) share — carries the SSH credentials so
-            // the recipient can MANAGE the VPS. Destructive; warned in the sheet.
-            // #451: DISABLED for key-auth hosts — the link would have to embed
-            // the private key. The item stays visible but explains why instead
-            // of sharing (an OlcMenuItem can't render a footer, so the tap IS
-            // the explanation); the URI-only share above remains available.
-            if host.authMethod == .privateKey {
-                items.append(.action(L10n.shareFullAccessTitle.localized(), systemImage: "key.horizontal") {
-                    alertText = L10n.shareFullAccessKeyHostUnavailable.localized()
-                })
-            } else {
-                items.append(.action(L10n.shareFullAccessTitle.localized(), systemImage: "key.horizontal", role: .destructive) {
-                    if let req = fullAccessRequest(host, conn: conn) { shareFullAccess = req }
-                })
-            }
         }
-
-        items.append(.divider)
-        items.append(.action(L10n.actionReboot.localized(), systemImage: "arrow.clockwise", role: .destructive) {
-            rebootConfirmHost = host
-        })
-        items.append(.divider)
         items.append(.action(L10n.edit.localized(), systemImage: "pencil") { editHost = host })
-        items.append(.action(L10n.actionRemoveFromList.localized(), systemImage: "minus.circle", role: .destructive) {
-            removeHost = host
-        })
         return items
     }
+    // eoc #459
 
     // MARK: Actions (each drives the card through `run`; the probe sets base)
 
@@ -1175,7 +1266,8 @@ struct ServersView: View {
         }
         // Returns immediately: the coordinator serialises the probes, caps the
         // pass and skips the room the live tunnel holds. Nodes it doesn't reach
-        // stay honestly "not checked" (see ServerCardView's sweep note).
+        // stay honestly "not checked" — each unchecked protocol row says so in
+        // its own chip (#459).
         // #458 was: `verifyStale` — only never/stale nodes, capped at 6, so a
         // protocol verified 10 minutes ago was left alone and the user still had
         // to ask. `verifyDue` covers EVERY protocol on every server, uncapped,
@@ -1183,6 +1275,63 @@ struct ServersView: View {
         // turning into a probe storm.
         health.verifyDue(serverStore.hosts.flatMap { hostRecords($0) }, using: tunnel)
     }
+
+    // boc #459: requirement 6 — refreshing a server is a swipe down, "same
+    // logic" as Connections, "its info too".
+    //
+    // The manual twin of `refreshOnEntry()`. Same three reads per host, but
+    // FORCED: no `entryProbeStaleSeconds` filter and no `SettingsStore
+    // .refreshOnEntry` guard. That is the contract the toggle now has on both
+    // tabs — the switch decides whether the app checks BY ITSELF; a pull always
+    // checks. `refreshOnEntry` above is untouched, guard and staleness filter
+    // included, so requirement 4 keeps working exactly as it did.
+    //
+    // What one pull re-reads, per host:
+    //   • TCP-22 reachability + its latency  → the PING stat and the
+    //     `unreachable` headline input (`doPing`, inside `silentProbe`)
+    //   • the readiness probe                → HostBase (the status pill) plus
+    //     disk / RAM / uptime and the read stamp
+    //   • the container scan                 → which protocols exist and whether
+    //     each one's process is up (`refreshCarriers`)
+    //   • then a forced end-to-end probe of every protocol on every host
+    //
+    // The system spinner is held for the whole SSH pass, so it means something
+    // (~2–6 s for one host); each card's pill, numbers and read stamp update in
+    // place as its probe returns; then every protocol chip flips to
+    // "Checking…" and resolves one at a time. `silentProbe` never lies on
+    // failure — a probe that throws leaves the base, the stats and `lastProbeOK`
+    // alone, so a failed pull AGES the read stamp instead of inventing a state.
+    private func refreshAllHosts() async {
+        // An SSH op already holds the lane and paints its own progress bar;
+        // queueing probes behind it would tell the user nothing new.
+        // #460 was: `guard !actionsDisabled, !entryRefreshing else { return }` — a
+        // pull that landed while the ON-ENTRY pass was still running returned
+        // instantly, so the system spinner snapped back and the gesture read as
+        // "nothing happened". This is the one tab where entering it starts a
+        // pass of its own, i.e. exactly when a user is most likely to pull. Ride
+        // the running pass out, then do the forced one they asked for: the entry
+        // pass is filtered (only hosts staler than `entryProbeStaleSeconds`, and
+        // only when `refreshOnEntry` is on), so it is not a substitute for it.
+        guard !actionsDisabled else { return }
+        while entryRefreshing {
+            if Task.isCancelled { return }
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return   // the pull was cancelled while waiting
+            }
+        }
+        entryRefreshing = true
+        defer { entryRefreshing = false }
+        for host in serverStore.hosts {
+            if Task.isCancelled { return }
+            await silentProbe(host)
+            await refreshCarriers(host.id)
+        }
+        // Uncapped and forced, unlike the on-entry `verifyDue` — the user asked.
+        health.verifyAll(serverStore.hosts.flatMap { hostRecords($0) }, using: tunnel)
+    }
+    // eoc #459
 
     /// #456: a readiness probe that NEVER lies. On success it sets the base, the
     /// stats and the display clock; on ANY failure it leaves ALL THREE alone, so
@@ -2177,6 +2326,18 @@ struct ServersView: View {
         alertText = L10n.scanRestored_fmt.formatted(container.name)   // #346 was: "Restored: \(container.name)"
         Task { await refreshCarriers(host.id) }   // #452
     }
+}
+
+/// #459 (audit fix): the "Manage server" push's own item TYPE.
+///
+/// `navigationDestination(item:)` takes `D: Hashable` because it appends the
+/// value to the stack's path and resolves the destination registered for that
+/// type — so two of them bound to `ServerHost?` on one stack are two
+/// registrations for one type and only one of them can ever run. ServersView
+/// pushes two different screens off the same host, so the second one carries
+/// its own single-field wrapper rather than a second `ServerHost?`.
+struct AdvancedHostRoute: Hashable {
+    let host: ServerHost
 }
 
 // #135: identifiable wrapper so the full-access share can drive a `.sheet(item:)`

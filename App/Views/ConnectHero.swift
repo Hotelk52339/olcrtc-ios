@@ -19,6 +19,20 @@ import SwiftUI
 //      `SettingsStore.tunnelMode` changes what the word "Connected" MEANS.
 //   5. ONE full-width, labelled action. Never a bare system Toggle.
 //
+// #459: THE HERO'S SUBJECT IS NOT IN THE LIST BELOW IT. `ConnectionsView` skips
+// the row for whichever record this card is about, so the connection's name is
+// printed exactly once per screen — and "which one is selected?" is answered by
+// POSITION (the big card at the top, the one with the button in it) rather than
+// by a badge nobody can find. Two consequences land here:
+//   • the mono `olcrtc · telemost · vp8channel` line is GONE. `olcrtc` is on
+//     every connection and carries no bits; the carrier/transport is stated
+//     once, in Diagnostics → "This session" → Protocol.
+//   • the card grew an OVERFLOW MENU, because the subject no longer has a row
+//     to carry Share / Copy URI / QR / Edit / Remove.
+// #459: the connected evidence line names the EXIT (flag + city, CC) — the one
+// connected-state fact the owner asked about and the only one that is not a
+// number. Every number now lives in Diagnostics, so no figure is printed twice.
+//
 // #457 was: `ConnectionsView.heroCard` — `OlcCard(elevation: .glow, glass: true)`
 // + `OlcStatusPill` + a `Toggle` + `heroServerLine` + `heroFooter`. The glass and
 // the glow are deleted by the design-system partition (`OlcCard(glass:)` and
@@ -45,12 +59,22 @@ struct ConnectHero: View {
     let subject: ConnectionRecord?
     /// The honesty layer's verdict for `subject`, already dated.
     let health: HealthDisplay
+    /// #459: the tunnel exit's flag glyph (`CountryFlag.emoji(iso2:)`), nil when
+    /// the lookup gave no usable country. Computed by `ConnectionsView`, which
+    /// already owns the `IPChecker.refreshExitGeo` call.
+    let exitFlag: String?
+    /// #459: the tunnel exit as "Amsterdam, NL"; nil when the lookup returned
+    /// nothing, in which case the evidence line falls back to the verdict.
+    let exitPlace: String?
     /// Which backend a session runs (or would run) through — the scope line.
     let mode: TunnelMode
     /// The port the live session bound, else the configured one.
     let socksPort: Int
     /// `ConnectionStore.secretsLocked` — the Keychain could not be read yet.
     let secretsLocked: Bool
+    /// #459: the subject's action set — the SAME builder the rows use, because
+    /// the subject has no row of its own any more. Empty ⇒ no menu is drawn.
+    let menuItems: [OlcMenuItem]
     let onConnect: () -> Void
     let onDisconnect: () -> Void
 
@@ -60,8 +84,10 @@ struct ConnectHero: View {
 
     var body: some View {
         OlcCard {
-            VStack(alignment: .leading, spacing: 10) {
-                stateWord
+            // #459 was: spacing 10. The card lost two lines, so the rhythm it
+            // keeps is the design system's own row step.
+            VStack(alignment: .leading, spacing: Theme.Metrics.s3) {
+                headlineRow
                 subjectLine
                 // #457: the HUMAN headline first, the machine detail under it —
                 // never the other way round (Microsoft's error spec: explain the
@@ -69,7 +95,9 @@ struct ConnectHero: View {
                 reasonLine
                 evidenceLine
                 scopeLine
-                Divider().overlay(Theme.Palette.separator)
+                // #459: 4 pt on top of the 12 pt rhythm, so the break before the
+                // one action reads as a break and every other gap stays equal.
+                Divider().overlay(Theme.Palette.separator).padding(.top, 4)
                 primaryControl
                 elsewhereNote
             }
@@ -86,12 +114,38 @@ struct ConnectHero: View {
 
     // MARK: 1. The answer
 
+    /// #459: the answer, and — pinned opposite it — the subject's action set.
+    /// The menu is top-aligned with the state word so it never floats beside
+    /// nothing when the word wraps down a Dynamic Type step.
+    private var headlineRow: some View {
+        HStack(alignment: .top, spacing: Theme.Metrics.s2) {
+            stateWord
+            Spacer(minLength: 8)
+            heroMenu
+        }
+    }
+
+    /// #459: drawn only when there is a subject to act on — an empty menu is a
+    /// control that does nothing.
+    @ViewBuilder
+    private var heroMenu: some View {
+        if subject != nil, !menuItems.isEmpty {
+            OlcOverflowMenu(items: menuItems)
+        }
+    }
+
     private var stateWord: some View {
         Text(stateTitle)
             .font(Theme.Typography.answer)
             .foregroundStyle(Theme.Palette.textPrimary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.55)
+            // #459 (audit) was: .lineLimit(1) + .minimumScaleFactor(0.55). The
+            // answer is the one line here that may never be shrunk or clipped,
+            // and both happened: "Waiting for network…" is 20 characters at the
+            // largeTitle step with the overflow menu beside it, so it already
+            // rendered smaller than `Typography.answer` on a phone, and past the
+            // 0.55 floor (reached a couple of Dynamic Type steps up) it clipped.
+            // It wraps now — `headlineRow` is top-aligned for exactly that.
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -107,30 +161,34 @@ struct ConnectHero: View {
 
     // MARK: 2. The subject
 
+    // boc #459
+    // #459 was: a three-line `VStack` — "Last used" on its own row, the name,
+    // then `subject.subtitle` ("olcrtc · telemost · vp8channel"). Three lines to
+    // say one thing, and the third repeated what every row in the list below
+    // also said. The label now shares the name's baseline, and the mono line is
+    // deleted: the carrier/transport is stated once, in Diagnostics.
     @ViewBuilder
     private var subjectLine: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            if let subject = subject {
+        if let subject = subject {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if !state.isConnected {
-                    Text(L10n.heroLastUsedLabel.localized())
-                        .font(.caption2)
+                    Text(L10n.heroLastUsedLabel.localized().uppercased())
+                        .font(Theme.Typography.caption)
+                        .tracking(0.4)
                         .foregroundStyle(Theme.Palette.textTertiary)
                 }
                 Text(subject.displayName)
-                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .font(Theme.Typography.answerSupport)
                     .foregroundStyle(Theme.Palette.textPrimary)
                     .lineLimit(1)
-                Text(subject.subtitle)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(Theme.Palette.textSecondary)
-                    .lineLimit(1)
-            } else {
-                Text(L10n.heroSubjectNone.localized())
-                    .font(.system(.title3, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Theme.Palette.textSecondary)
             }
+        } else {
+            Text(L10n.heroSubjectNone.localized())
+                .font(Theme.Typography.answerSupport)
+                .foregroundStyle(Theme.Palette.textSecondary)
         }
     }
+    // eoc #459
 
     // MARK: 3. One line of dated evidence
 
@@ -140,18 +198,7 @@ struct ConnectHero: View {
         case .connecting:
             ConnectHeroElapsed(since: connectingSince ?? Date())
         case .connected:
-            // #457 (audit fix) was: anything that is not `.verified` printed
-            // "no data checked through it yet" — which called a REAL measurement
-            // taken four minutes ago "never measured". Understating evidence is
-            // the same fault as overstating it. `.fading` and `.stale` say what
-            // they actually know (in the past tense, which their own subtitle
-            // already does); only the two states that genuinely have no
-            // end-to-end reading fall back to that line. Green stays reserved
-            // for `.verified` — the aurora ring is unaffected.
-            evidenceText(heroEvidenceHasReading ? health.subtitle
-                                                : L10n.heroEvidenceUnverified.localized(),
-                         tone: health.isVerified ? Theme.Palette.green
-                                                 : Theme.Palette.textSecondary)
+            connectedEvidence
         case .waitingForNetwork:
             evidenceText(L10n.heroEvidenceNoNetwork.localized(), tone: Theme.Palette.textSecondary)
         case .failed(let raw):
@@ -163,6 +210,47 @@ struct ConnectHero: View {
                          mono: false)
         case .disconnected:
             evidenceText(subject == nil ? " " : health.subtitle, tone: Theme.Palette.textSecondary)
+        }
+    }
+
+    /// #459: while a session is up, the WHERE outranks the verdict sentence —
+    /// it is the one connected-state fact the numbers in Diagnostics cannot
+    /// state, and printing it here means no figure appears on this screen twice.
+    /// Green still needs `.verified`: the place is where traffic came out, not
+    /// proof that it did.
+    ///
+    /// #457 (audit fix) was, and still is, the fallback: anything that is not
+    /// `.verified` used to print "no data checked through it yet" — which called
+    /// a REAL measurement taken four minutes ago "never measured". `.fading` and
+    /// `.stale` say what they actually know (in the past tense, which their own
+    /// subtitle already does); only the two states that genuinely have no
+    /// end-to-end reading fall back to that line.
+    ///
+    /// #460 (findings 3 / 22): the owner asked, in as many words, where the
+    /// country and the IP even come from. A place name printed with no
+    /// provenance is exactly as unaccountable as a number printed with no date,
+    /// and this is the most prominent place the app prints one — so the method
+    /// is named directly under it. The detail (which service, and that the city
+    /// comes from the same answer) belongs one card down, in Diagnostics → Exit;
+    /// here it is one caption line saying that this is a lookup of the tunnel's
+    /// own exit address, made through the tunnel.
+    @ViewBuilder
+    private var connectedEvidence: some View {
+        if let place = exitPlace {
+            VStack(alignment: .leading, spacing: 2) {
+                evidenceText(exitFlag.map { "\($0) \(place)" } ?? place,
+                             tone: health.isVerified ? Theme.Palette.green
+                                                     : Theme.Palette.textSecondary)
+                Text(L10n.heroExitSourceNote.localized())
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            evidenceText(heroEvidenceHasReading ? health.subtitle
+                                                : L10n.heroEvidenceUnverified.localized(),
+                         tone: health.isVerified ? Theme.Palette.green
+                                                 : Theme.Palette.textSecondary)
         }
     }
 
@@ -217,8 +305,14 @@ struct ConnectHero: View {
              : L10n.heroScopeProxy_fmt.formatted(String(socksPort)))
             .font(.system(.caption2, design: .monospaced))
             .foregroundStyle(Theme.Palette.textTertiary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            // #459 (audit) was: .lineLimit(1) + .minimumScaleFactor(0.8) on a
+            // whole SENTENCE — 58 characters in Russian («Прокси · только
+            // приложения, которые смотрят на 127.0.0.1:8808»). One caption line
+            // barely holds it on a phone at 80% (i.e. already shrunk), and one
+            // Dynamic Type step up it hits the floor and truncates. The line
+            // that says what the word "Connected" MEANS may not be cut, so it
+            // wraps instead.
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: 5. The one action

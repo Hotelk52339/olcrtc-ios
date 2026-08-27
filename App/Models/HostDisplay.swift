@@ -262,9 +262,13 @@ enum HostHeadline: Equatable {
         case .busy(_, let note, let step, let total):
             return note.isEmpty ? "\(step)/\(total)" : "\(note) · \(step)/\(total)"
         case .opFailed(_, let m): return m
+        // boc #459 was: HealthAge.label($0) inside "SSH didn't answer (%@ ago)",
+        // which rendered "SSH didn't answer (just now ago)". `phrase` carries its
+        // own preposition, so the string is now "SSH didn't answer (%@)".
         case .unreachable(let age):
-            return age.map { L10n.vpsHeadlineUnreachableHint_fmt.formatted(HealthAge.label($0)) }
+            return age.map { L10n.vpsHeadlineUnreachableHint_fmt.formatted(HealthAge.phrase($0)) }
                 ?? L10n.vpsHeadlineUnreachableHintNever.localized()
+        // eoc #459
         case .notChecked:         return L10n.vpsHeadlineNotCheckedHint.localized()
         case .containerStopped:   return L10n.vpsHeadlineStoppedHint.localized()
         case .noContainer(let b): return b.subtitle

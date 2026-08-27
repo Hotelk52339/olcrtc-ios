@@ -114,24 +114,37 @@ enum HealthDisplay: Equatable, Sendable {
         }
     }
 
+    // boc #459: every sentence here takes `HealthAge.phrase`, which carries its
+    // own "ago"/«назад». The format strings lost the preposition they used to
+    // append, because appending one to "just now" read "Verified just now ago"
+    // («Проверено только что назад») three times on one screen.
     var subtitle: String {
         switch self {
         case .never:      return L10n.healthNeverCheckedHint.localized()
         case .checking:   return L10n.healthCheckingHint.localized()
         case .verified(let ms, let age), .fading(let ms, let age):
-            let a = HealthAge.label(age)
+            // #459 was: HealthAge.label(age) + "Verified %@ ago · %d ms"
+            let a = HealthAge.phrase(age)
             if let ms { return L10n.healthVerifiedHint_fmt.formatted(a, ms) }
             return L10n.healthVerifiedNoRTTHint_fmt.formatted(a)
         case .handshakeOnly(let age):
-            return L10n.healthHandshakeHint_fmt.formatted(HealthAge.label(age))
+            // #459 was: HealthAge.label(age) + "Joined the room %@ ago, but…"
+            return L10n.healthHandshakeHint_fmt.formatted(HealthAge.phrase(age))
         case .broken(let r, let age), .inconclusive(let r, let age):
-            return "\(r.message) · \(L10n.healthCheckedAgo_fmt.formatted(HealthAge.label(age)))"
+            // #459 was: HealthAge.label(age) + "checked %@ ago"
+            return "\(r.message) · \(L10n.healthCheckedAgo_fmt.formatted(HealthAge.phrase(age)))"
         case .stale(let age):
-            return L10n.healthStaleHint_fmt.formatted(HealthAge.label(age))
+            // #459 was: HealthAge.label(age) + "Last checked %@ ago — …"
+            return L10n.healthStaleHint_fmt.formatted(HealthAge.phrase(age))
         }
     }
+    // eoc #459
 
-    /// Short text for `OlcHealthChip` — "48 ms · 2m", "not checked", "failed 5m ago".
+    /// Short text for `OlcHealthChip` — "48 ms · 2m", "not checked", "failed 2 min ago".
+    // boc #459: a chip takes `HealthAge.short` ONLY where a value beside the age
+    // already supplies the grammar ("48 ms · 2m"); a chip that reads as a
+    // sentence fragment ("worked …", "failed …", "last seen …") takes
+    // `HealthAge.phrase` instead, so nothing has to append "ago" to it.
     var chipLabel: String {
         switch self {
         case .never:        return L10n.healthChipNever.localized()
@@ -141,18 +154,23 @@ enum HealthDisplay: Equatable, Sendable {
         // told apart by colour alone — the exact failure this vocabulary exists
         // to prevent. `.fading` now says it in the past tense.
         case .verified(let ms, let age):
-            let a = HealthAge.label(age)
+            let a = HealthAge.short(age)                                // #459 was: .label(age)
             return ms.map { "\($0) ms · \(a)" } ?? a
         case .fading(let ms, let age):
-            let a = HealthAge.label(age)
+            let a = HealthAge.short(age)                                // #459 was: .label(age)
             return ms.map { L10n.healthChipFaded_fmt.formatted("\($0) ms", a) }
-                ?? L10n.healthChipFadedNoRTT_fmt.formatted(a)
-        case .handshakeOnly(let age): return L10n.healthChipHandshake_fmt.formatted(HealthAge.label(age))
-        case .broken(_, let age):     return L10n.healthChipFailed_fmt.formatted(HealthAge.label(age))
+                // #459: "worked %@" — the string no longer appends "ago" itself.
+                ?? L10n.healthChipFadedNoRTT_fmt.formatted(HealthAge.phrase(age))
+        case .handshakeOnly(let age): return L10n.healthChipHandshake_fmt.formatted(HealthAge.short(age))   // #459
+        // #459 was: "failed %@ ago" + .label → "failed just now ago".
+        case .broken(_, let age):     return L10n.healthChipFailed_fmt.formatted(HealthAge.phrase(age))
         case .inconclusive:           return L10n.healthChipUnchecked.localized()
-        case .stale(let age):         return L10n.healthChipStale_fmt.formatted(HealthAge.label(age))
+        // #459 was: "%@ old" + .label → "just now old". `.stale` is only reached
+        // past HealthPolicy.staleSeconds, so "last seen 3 h ago" is always exact.
+        case .stale(let age):         return L10n.healthChipStale_fmt.formatted(HealthAge.phrase(age))
         }
     }
+    // eoc #459
 
     /// What the user should DO next; nil when there is nothing to offer.
     var suggestedAction: HealthAction? {
@@ -165,12 +183,32 @@ enum HealthDisplay: Equatable, Sendable {
 }
 
 /// #456: compact relative age. Pure → unit-tested.
+// boc #459: split in two, and `label` deliberately RENAMED away so that every
+// call site becomes a compile error instead of a silent grammar bug.
+// #459 was: static func label(_:) → "just now" / "%dm" / "%dh" / "%dd", used
+// both inside sentences that appended "ago" (which produced "Verified just now
+// ago" / «Проверено только что назад») and inside chips that did not.
 enum HealthAge {
-    static func label(_ seconds: TimeInterval) -> String {
+    /// #459: a SELF-CONTAINED relative phrase — "just now", "2 min ago",
+    /// «только что», «2 мин назад». NOTHING may append a preposition to it:
+    /// every format string that takes it must read "Verified %@", never
+    /// "Verified %@ ago". Use this wherever the age sits inside a sentence.
+    static func phrase(_ seconds: TimeInterval) -> String {
         let s = max(0, seconds)
         if s < 60          { return L10n.ageJustNow.localized() }
+        if s < 3600        { return L10n.ageMinutesAgo_fmt.formatted(Int(s / 60)) }
+        if s < 86_400      { return L10n.ageHoursAgo_fmt.formatted(Int(s / 3600)) }
+        return L10n.ageDaysAgo_fmt.formatted(Int(s / 86_400))
+    }
+
+    /// #459: a compact DURATION for an evidence chip, where the value beside it
+    /// ("48 ms · 2m") already supplies the grammar. Never used in a sentence.
+    static func short(_ seconds: TimeInterval) -> String {
+        let s = max(0, seconds)
+        if s < 60          { return L10n.ageNowShort.localized() }
         if s < 3600        { return L10n.ageMinutes_fmt.formatted(Int(s / 60)) }
         if s < 86_400      { return L10n.ageHours_fmt.formatted(Int(s / 3600)) }
         return L10n.ageDays_fmt.formatted(Int(s / 86_400))
     }
 }
+// eoc #459

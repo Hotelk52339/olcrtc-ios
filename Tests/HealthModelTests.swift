@@ -353,18 +353,36 @@ final class HealthModelTests: XCTestCase {
 
     // MARK: HealthAge
 
-    func testHealthAgeBoundaries() {
-        XCTAssertEqual(HealthAge.label(0), L10n.ageJustNow.localized())
-        XCTAssertEqual(HealthAge.label(59), L10n.ageJustNow.localized())
-        XCTAssertEqual(HealthAge.label(-100), L10n.ageJustNow.localized())   // clamped
-        XCTAssertEqual(HealthAge.label(60), L10n.ageMinutes_fmt.formatted(1))
-        XCTAssertEqual(HealthAge.label(3599), L10n.ageMinutes_fmt.formatted(59))
-        XCTAssertEqual(HealthAge.label(3600), L10n.ageHours_fmt.formatted(1))
-        XCTAssertEqual(HealthAge.label(86_399), L10n.ageHours_fmt.formatted(23))
-        XCTAssertEqual(HealthAge.label(86_400), L10n.ageDays_fmt.formatted(1))
+    // #459 was: one `testHealthAgeBoundaries` over `HealthAge.label`, which was
+    // deliberately split in two and renamed away so every call site had to pick
+    // a form. `phrase` is the self-contained sentence fragment (it carries its
+    // own "ago"); `short` is the bare duration for a chip. Same boundaries, both
+    // functions — a bucket that collapses in either one is the bug this pins.
+    func testHealthAgePhraseBoundaries() {
+        XCTAssertEqual(HealthAge.phrase(0), L10n.ageJustNow.localized())
+        XCTAssertEqual(HealthAge.phrase(59), L10n.ageJustNow.localized())
+        XCTAssertEqual(HealthAge.phrase(-100), L10n.ageJustNow.localized())   // clamped
+        XCTAssertEqual(HealthAge.phrase(60), L10n.ageMinutesAgo_fmt.formatted(1))
+        XCTAssertEqual(HealthAge.phrase(3599), L10n.ageMinutesAgo_fmt.formatted(59))
+        XCTAssertEqual(HealthAge.phrase(3600), L10n.ageHoursAgo_fmt.formatted(1))
+        XCTAssertEqual(HealthAge.phrase(86_399), L10n.ageHoursAgo_fmt.formatted(23))
+        XCTAssertEqual(HealthAge.phrase(86_400), L10n.ageDaysAgo_fmt.formatted(1))
         // Each bucket renders differently — no silent collapse.
-        XCTAssertNotEqual(HealthAge.label(59), HealthAge.label(60))
-        XCTAssertNotEqual(HealthAge.label(3599), HealthAge.label(3600))
+        XCTAssertNotEqual(HealthAge.phrase(59), HealthAge.phrase(60))
+        XCTAssertNotEqual(HealthAge.phrase(3599), HealthAge.phrase(3600))
+    }
+
+    func testHealthAgeShortBoundaries() {
+        XCTAssertEqual(HealthAge.short(0), L10n.ageNowShort.localized())
+        XCTAssertEqual(HealthAge.short(59), L10n.ageNowShort.localized())
+        XCTAssertEqual(HealthAge.short(-100), L10n.ageNowShort.localized())   // clamped
+        XCTAssertEqual(HealthAge.short(60), L10n.ageMinutes_fmt.formatted(1))
+        XCTAssertEqual(HealthAge.short(3599), L10n.ageMinutes_fmt.formatted(59))
+        XCTAssertEqual(HealthAge.short(3600), L10n.ageHours_fmt.formatted(1))
+        XCTAssertEqual(HealthAge.short(86_399), L10n.ageHours_fmt.formatted(23))
+        XCTAssertEqual(HealthAge.short(86_400), L10n.ageDays_fmt.formatted(1))
+        XCTAssertNotEqual(HealthAge.short(59), HealthAge.short(60))
+        XCTAssertNotEqual(HealthAge.short(3599), HealthAge.short(3600))
     }
 
     // MARK: chip labels — the shared Connections / Manage VPS vocabulary
@@ -376,7 +394,9 @@ final class HealthModelTests: XCTestCase {
                        L10n.healthChipUnchecked.localized())
         XCTAssertTrue(HealthDisplay.verified(ms: 48, age: 120).chipLabel.contains("48 ms"))
         // A verified chip without an RTT still shows only its age, never a number.
-        XCTAssertEqual(HealthDisplay.verified(ms: nil, age: 120).chipLabel, HealthAge.label(120))
+        // #459: the chip takes the SHORT duration ("2m"), not the phrase — the
+        // value beside it supplies the grammar, so nothing may append "ago".
+        XCTAssertEqual(HealthDisplay.verified(ms: nil, age: 120).chipLabel, HealthAge.short(120))
     }
 
     func testSuggestedActionOffersVerifyWhereNothingIsKnown() {

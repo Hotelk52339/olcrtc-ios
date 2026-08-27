@@ -11,10 +11,27 @@ import SwiftUI
 //
 // Reading order on the card is the order of the questions the owner asks:
 //   1 which server is this        → header
-//   2 what is true right now      → verdict (headline + progress + failures + process line)
+//   2 what is true right now      → verdict (headline + progress + failures)
 //   3 what runs on it, does it work → PROTOCOLS (the content, above the numbers)
-//   4 how is the machine doing    → metrics, demoted
-//   5 what do I do next           → ONE full-width action
+//   4 how is the machine doing    → metrics, demoted, with the age of the reading
+//   5 what do I do next           → two frequent verbs + ONE full-width action
+//   6 what else can I do to it    → "Manage server ›", a push (#459)
+//
+// boc #459: the card grows into the empty half of the Servers screen instead of
+// something new being invented to fill it — 20pt between blocks, roomier
+// protocol rows, and the four affordances the owner reached for most often
+// (Check server, Container logs, the primary verb, and the way to everything
+// else) visible on the card rather than buried in a 13-item ⋯ menu.
+// What LEFT the card in the same pass:
+//   • the process caption ("Server process is running · read 2m ago") — it
+//     restated the status pill and each protocol row already says whether its
+//     own container is up. Only its AGE was load-bearing, so the age survives
+//     as the read stamp on the metrics block, and nothing else does.
+//   • the sweep note ("N more not checked — tap Verify all") — a footnote
+//     advertising a button that pull-to-refresh replaces. Every skipped
+//     protocol still says "not checked" in its own chip, which is the same
+//     fact stated per item instead of in aggregate.
+// eoc #459
 //
 // #457 was: four unlabelled 44pt icon buttons (antenna / arrow.down.doc /
 // slider.horizontal.3 / RobotIcon) squeezing the primary action into a fifth of
@@ -73,6 +90,18 @@ struct ServerCardMetrics {
     let uptime: String
 }
 
+/// #459: one visible quick action. Two of these sit above the primary button —
+/// the verbs the owner reaches for constantly (Check server, Container logs),
+/// which used to cost a ⋯ tap plus a scan of thirteen items. Value-driven and
+/// explicitly typed, like every other input on this card, so the row costs the
+/// type-checker nothing.
+struct ServerQuickAction: Identifiable {
+    let id = UUID()
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+}
+
 struct ServerCardView: View {
     /// Server label.
     let name: String
@@ -83,14 +112,15 @@ struct ServerCardView: View {
     let headline: HostHeadline
     /// Progress-bar fraction while an op runs; nil leaves the slot empty.
     let progress: Double?
-    /// The demoted server-process line, with its own age.
-    let processCaption: String
+    /// #459: how old the machine numbers beside it are ("read 2 min ago"), or
+    /// the honest "nothing has been read yet". The ONLY survivor of the deleted
+    /// process caption: an age the user can see is the age of the reading.
+    /// #459 was: `processCaption` — "Server process is running · read 2m ago".
+    let readCaption: String
     /// Protocols on this server that a probe found BROKEN or data-less.
     let failingCount: Int
     /// How many protocols that count is out of.
     let protocolCount: Int
-    /// Protocols with no usable evidence at all — drives the "Verify all" note.
-    let uncheckedCount: Int
     let metrics: ServerCardMetrics
     let rows: [SSHRunner.CarrierInfo]
     /// A protocol-level op (add / remove / sibling start-stop) is in flight.
@@ -98,11 +128,17 @@ struct ServerCardView: View {
     let canAddProtocol: Bool
     let actionsDisabled: Bool
     let primary: ServerPrimaryAction
-    /// The single COMPLETE action set for this server.
+    /// #459: the frequent verbs, promoted out of the menu. Empty ⇒ the row is
+    /// not drawn at all (nothing is installed yet, so Logs / Check would read an
+    /// empty server and the card's whole offer is its primary CTA).
+    let quickActions: [ServerQuickAction]
+    /// The safe, occasional action set for this server (5 items). Everything
+    /// rare or destructive lives behind `onManage` (#459).
     let menuItems: [OlcMenuItem]
     let onPrimary: () -> Void
     let onAddProtocol: () -> Void
-    let onVerifyAll: () -> Void
+    /// #459: push the full server-management screen.
+    let onManage: () -> Void
     /// Row factory — ServersView owns the resolution from a container to a record.
     let row: (SSHRunner.CarrierInfo) -> ProtocolRowView
 
@@ -113,12 +149,19 @@ struct ServerCardView: View {
 
     var body: some View {
         OlcCard {
-            VStack(alignment: .leading, spacing: 12) {
+            // #459: 12 → 20 between blocks (Theme.Metrics.s5, "block ↔ block
+            // inside a card"). Six children, five gaps: the card reads as five
+            // answers instead of one dense slab, and the ~40pt it costs comes
+            // straight out of the empty half of the screen.
+            // #459 was: VStack(alignment: .leading, spacing: 12) { header;
+            // verdict; protocolsSection; metricsStrip; footer }
+            VStack(alignment: .leading, spacing: Theme.Metrics.s5) {
                 header
                 verdict
                 protocolsSection
-                metricsStrip
-                footer
+                metricsBlock
+                actions
+                manageRow
             }
             .animation(.easeOut(duration: 0.2), value: headline)
         }
@@ -144,13 +187,15 @@ struct ServerCardView: View {
 
     // MARK: 2 — what is true right now
 
+    /// #459 was: a third line here, `Text(processCaption)` — "Server process is
+    /// running · read 2m ago". The pill directly above it already answers "what
+    /// is true right now", and each protocol row answers it per container, so
+    /// the sentence was the same claim written a third time. Its age moved to
+    /// the numbers it actually dates (see `metricsBlock`).
     private var verdict: some View {
         VStack(alignment: .leading, spacing: 8) {
             statusRegion
             failureBanner
-            Text(processCaption)
-                .font(.caption2)
-                .foregroundStyle(Theme.Palette.textTertiary)
         }
     }
 
@@ -188,7 +233,8 @@ struct ServerCardView: View {
     @ViewBuilder
     private var protocolsSection: some View {
         if !rows.isEmpty || canAddProtocol {
-            VStack(alignment: .leading, spacing: 6) {
+            // #459 was: spacing 6 — see ProtocolRowView's own padding note.
+            VStack(alignment: .leading, spacing: Theme.Metrics.s2 + 2) {
                 protocolsHeader
                 ForEach(rows) { info in row(info) }
             }
@@ -223,38 +269,88 @@ struct ServerCardView: View {
     // value (a cell costs the wider of the two) in two columns, and folds to one
     // column at accessibility text sizes. Nothing shrinks — scaling text down
     // makes the reading unreadable, which defeats the point of showing it.
-    private var metricsStrip: some View {
-        ServerMetricsGrid(metrics: metrics)
-            .opacity(isBusy ? 0.45 : 1)
+    /// #459: the numbers, with the age of the reading pinned to their top-right
+    /// corner. Nothing else moved — `ServerMetricsGrid` (#458) is what makes the
+    /// values structurally un-truncatable and must not be regressed.
+    /// #459 was: `metricsStrip` — the grid alone; its age was a sentence three
+    /// blocks up, attached to a claim about the process rather than to these.
+    private var metricsBlock: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s2) {
+            // No `lineLimit` and no `minimumScaleFactor`, for the same reason
+            // the grid below has neither: the Russian never-read stamp is a
+            // whole sentence, and a stamp that truncates is a stamp that lies
+            // about how old the numbers are (#459).
+            Text(readCaption)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Palette.textTertiary)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            ServerMetricsGrid(metrics: metrics)
+        }
+        .opacity(isBusy ? 0.45 : 1)
     }
 
-    // MARK: 5 — the one next step
+    // MARK: 5 — what do I do next (two frequent verbs + the one primary action)
 
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s3) {
+            quickRow
             OlcButton(primary.title, systemImage: primary.systemImage,
                       role: primary.role, isBusy: primary.isBusy,
                       fillWidth: true, action: onPrimary)
                 .disabled(actionsDisabled && !primary.isBusy)
-            sweepNote
         }
     }
 
-    /// #456/#457: an automatic sweep is capped and only touches nodes with no
-    /// usable evidence, so everything it skipped must SAY it was skipped rather
-    /// than look fine.
+    /// #459: the two verbs that were reached for constantly through the ⋯ menu.
+    /// They can never duplicate the primary button: `primary == .check` happens
+    /// only on `HostBase.unknown`, and a host nothing has read carries no
+    /// container, so ServersView hands us an empty array exactly then.
     @ViewBuilder
-    private var sweepNote: some View {
-        if uncheckedCount > 0 {
-            HStack(spacing: 8) {
-                Text(L10n.healthSweepSkipped_fmt.formatted(uncheckedCount))
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.textTertiary)
-                Button(L10n.healthVerifyAllAction.localized(), action: onVerifyAll)
-                    .font(.caption2)
-                    .disabled(actionsDisabled)
+    private var quickRow: some View {
+        if !quickActions.isEmpty {
+            HStack(spacing: Theme.Metrics.s2) {
+                ForEach(quickActions) { item in
+                    OlcButton(item.title, systemImage: item.systemImage,
+                              role: .secondary, fillWidth: true, compact: true,
+                              action: item.action)
+                        .frame(maxWidth: .infinity)
+                }
             }
+            .frame(maxWidth: .infinity)
+            .disabled(actionsDisabled)
         }
+    }
+
+    // MARK: 6 — everything else (#459)
+
+    /// #459: the way to the rare and the destructive. Eleven ⋯ items became one
+    /// row: a push whose `Form` can give every destructive verb a sentence
+    /// saying what it destroys — which a `Menu` cannot render at all. That is
+    /// why "Wipe all olcrtc data from server" used to sit in a scrolling list
+    /// with nothing but its own name to warn you.
+    private var manageRow: some View {
+        VStack(spacing: Theme.Metrics.s3) {
+            Divider().overlay(Theme.Palette.separator)
+            manageButton
+        }
+    }
+
+    private var manageButton: some View {
+        Button(action: onManage) {
+            HStack {
+                Text(L10n.vpsManageServer.localized())
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+            }
+            .font(Theme.Typography.caption)
+            .foregroundStyle(Theme.Palette.textSecondary)
+            .contentShape(Rectangle())
+            .frame(minHeight: 32)
+        }
+        .buttonStyle(.plain)
+        .disabled(actionsDisabled)
     }
 }
 
@@ -273,6 +369,20 @@ struct ServerCardView: View {
 // There is no `minimumScaleFactor` anywhere in here, and there must not be: a
 // measured value that has to shrink to fit is a value the owner cannot read, and
 // an unreadable truth is the failure this whole release was about.
+//
+// #459 (re-audit, do not regress): the screenshot that reported "DISK 3.5/8.…"
+// predates this grid. Truncation is structurally impossible here only while ALL
+// FOUR rules hold together, so they are written down:
+//   1. label ABOVE value (`OlcMetric`) — a cell costs max(label, value);
+//   2. two equal-width columns (`maxWidth: .infinity` per cell), one at
+//      accessibility sizes;
+//   3. NO `minimumScaleFactor` and NO `lineLimit` on a LABEL — a label that
+//      cannot wrap is a label that truncates. Only the VALUE keeps
+//      `OlcMetric`'s own `lineLimit(1)`, because a wrapped number is a lie;
+//   4. the data side guarantees the value fits: `shortUsage` → "3.5/8.0G",
+//      `shortRAM` → "0.4/1.9G", `shortUptime` → "13:57"/"3d",
+//      `pingValue` → "255ms"/"✕"/"—" — ≤ 9 monospaced characters, i.e. ~62pt
+//      inside a ≥150pt column on the narrowest supported phone.
 
 private struct ServerMetricsGrid: View {
     let metrics: ServerCardMetrics

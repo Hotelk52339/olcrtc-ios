@@ -6,7 +6,7 @@ import SwiftUI
 // Settings), and a whole tab holding one 2-option picker plus one toggle — while
 // nine sibling settings lived in SettingsView — was the clearest possible proof
 // it was a section, not a destination. Its two live sections moved here as small
-// section views that `SettingsView.tunnelSection` composes FIRST in the Settings
+// section views that `SettingsView.tunnelGroup` composes FIRST in the Settings
 // form: this is the most consequential setting in the app (it changes what the
 // word "Connected" MEANS — one SOCKS port versus the whole device), so it leads.
 //
@@ -21,6 +21,11 @@ import SwiftUI
 // ("a local SOCKS5 server inside the app…", "a system-wide tunnel via a Network
 // Extension…"). Replaced by `TunnelSettingsComparison`: three consequence rows
 // written for the user, not for the implementer.
+//
+// #460: the owner singled that comparison out as the pattern that reads well,
+// so it stays exactly as it is, and `TunnelSettingsComparisonRow` / `…Cell` are
+// the shape to reuse anywhere else two options have to be compared. The second
+// section here is no longer "Reliability" — see `TunnelSettingsOnOpenSection`.
 
 // MARK: - Mode picker
 
@@ -78,11 +83,22 @@ struct TunnelSettingsModeSection: View {
     }
 }
 
-// MARK: - Reliability / auto-failover (#453)
+// MARK: - When the app opens (#460, was Reliability / auto-failover — #453)
 
-/// #453 + #457: auto-failover between protocols on one server. Moved verbatim
-/// out of the Config tab; only the card wrapper is gone (see above).
-struct TunnelSettingsReliabilitySection: View {
+/// #460 (requirement 26): the RELIABILITY section held two unrelated things —
+/// auto-failover between protocols, and "re-check what you own on entry". The
+/// failover control moved to the Connections screen, next to the list of
+/// protocols it switches between, and must exist in exactly ONE place; the
+/// storage did not move (`SettingsStore.autoFailover` is the same value, bound
+/// from there now). What is left here is launch behaviour, so the header names
+/// that: connect by yourself, and check by yourself.
+///
+/// #460 was: `TunnelSettingsReliabilitySection` — header `configReliabilityHeader`
+/// ("Reliability"), rows `configFailoverToggle` + `configFailoverExplainer`,
+/// footer `configFailoverProxyOnlyFooter` ("Applies in proxy mode."). The
+/// Connections card re-uses the toggle label and the proxy-only line; the
+/// header and the long explainer have no reader left.
+struct TunnelSettingsOnOpenSection: View {
     @ObservedObject private var settings = SettingsStore.shared
 
     /// Explicit (and empty) so the initializer is unambiguously `internal` —
@@ -92,18 +108,20 @@ struct TunnelSettingsReliabilitySection: View {
 
     var body: some View {
         Section {
-            Toggle(L10n.configFailoverToggle.localized(), isOn: $settings.autoFailover)
-            TunnelSettingsNote(text: L10n.configFailoverExplainer.localized())
+            // #460: auto-connect came out of the eight-row "Connection" section
+            // (finding 13). It is launch behaviour, and it reads as one subject
+            // with the check below it.
+            Toggle(L10n.autoConnectOnLaunchLabel.localized(), isOn: $settings.autoConnectOnLaunch)
+            TunnelSettingsNote(text: L10n.autoConnectOnLaunchNote.localized())
             // #458: check what you own when the app opens, so the first screen is
             // current instead of showing whatever was true when you last looked.
             Toggle(L10n.settingsRefreshOnEntryToggle.localized(), isOn: $settings.refreshOnEntry)
             TunnelSettingsNote(text: L10n.settingsRefreshOnEntryExplainer.localized())
         } header: {
-            Text(L10n.configReliabilityHeader.localized())
-        } footer: {
-            Text(L10n.configFailoverProxyOnlyFooter.localized())
-                .font(.caption2)
+            Text(L10n.settingsSectionOnOpen.localized())
         }
+        // #460: no section footer — each explanation is a note under its own
+        // toggle, so nothing can describe a control four rows away (finding 10).
     }
 }
 
@@ -209,6 +227,10 @@ struct TunnelSettingsComparisonCell: View {
 
 /// #457: one quiet inline note treatment for the tunnel section — the same
 /// guidance voice (footnote, secondary) the rest of Settings uses in its footers.
+/// #460: now the treatment for EVERY per-row explanation in Settings. A `Form`
+/// footer belongs to its whole section, so an explanation written for one
+/// control ended up under an unrelated row (findings 10, 11, 20); a note sits
+/// under the control it describes and cannot drift.
 struct TunnelSettingsNote: View {
     let text: String
 
@@ -242,14 +264,14 @@ struct TunnelSettingsUnavailableNote: View {
 #Preview("Tunnel settings — Dark") {
     Form {
         TunnelSettingsModeSection(tunnel: TunnelManager())
-        TunnelSettingsReliabilitySection()
+        TunnelSettingsOnOpenSection()
     }
     .preferredColorScheme(.dark)
 }
 #Preview("Tunnel settings — Light") {
     Form {
         TunnelSettingsModeSection(tunnel: TunnelManager())
-        TunnelSettingsReliabilitySection()
+        TunnelSettingsOnOpenSection()
     }
     .preferredColorScheme(.light)
 }

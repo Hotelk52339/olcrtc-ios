@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - ConnectionsView — the Connect tab (#457)
+// MARK: - ConnectionsView — the Connect tab (#457, restructured #459)
 //
 // JOB: state the truth about the tunnel right now, and offer the ONE action that
 // changes it. Nothing is drawn that cannot be dated.
@@ -8,12 +8,39 @@ import SwiftUI
 // Top to bottom:
 //   1. ConnectHero          — the state as the largest text on the screen, the
 //                             connection it applies to, one line of dated
-//                             evidence, the scope, and one labelled button.
-//   2. HealthCard           — the dated evidence strip, only while a session is up.
-//   3. Connections          — one row per connection: glyph + word + age, plus the
-//                             fix when something is wrong. TAP = connect.
-//   4. Diagnostics          — IP check / speed test / carrier endpoints, demoted
-//                             below the list (see the DIAGNOSTICS note below).
+//                             evidence, the scope, one labelled button, and that
+//                             connection's action menu.
+//   2. Diagnostics          — "This session" (protocol / exit / response time,
+//                             only while connected) + "Checks" (IP check / speed
+//                             test / carrier endpoints). See HealthCard.swift.
+//   2b. Auto-switch         — #460: the failover switch, moved off the Settings
+//                             tab to sit with the protocols it switches between.
+//   3. Switch to            — one row per OTHER connection: name, kind, and one
+//                             `OlcHealthChip`. TAP = connect.
+//
+// #459: THE ONE STRUCTURAL DECISION — the hero's subject is NOT in the list.
+// `heroSubjectID` (the live node while a session is up, else `store.primary`) is
+// skipped when the rows are drawn, so a connection's name appears exactly once
+// on this screen. That answers both halves of the owner's complaint: the
+// duplication between the hero and the rows is gone BY CONSTRUCTION, and "which
+// one is selected?" is answered by POSITION and CONTAINER — the selected node is
+// the big card at the top, the one with the button in it. That is the only
+// selection marker; no accent bar, no badge, no new vocabulary. (The existing
+// `auroraVerdictRing` is a VERDICT mark, not a selection mark.)
+//
+// The filtering happens at RENDER time, not in `recompute()`: keeping `groups`
+// whole means `groupHeader`'s failing count and `groupFooter`'s subscription
+// metadata still describe the real group, and a group whose only member is the
+// hero's subject renders as an empty `Section` rather than silently dropping its
+// quota footer.
+//
+// #459: DIAGNOSTICS MOVED ABOVE THE LIST. It describes the hero's subject, and
+// the list is a switcher, so the switcher goes last. (#457's note about demoting
+// it below the list, and about a future pushed "Check & why" screen, is retired:
+// Diagnostics is now the ONE card, having absorbed the old `HealthCard`.)
+//
+// #459: PULL TO REFRESH replaces the per-group "Verify all" button. See
+// `refreshEverything()`.
 //
 // #457 (structure) was: hero → diagnostics → servers, with `.navigationTitle("OlcRTC")`
 // above it all. A 34 pt brand name carrying no information sat over a 15 pt
@@ -24,14 +51,9 @@ import SwiftUI
 //
 // #457 (surgery discipline): this file had already hit the SwiftUI type-checker's
 // expression budget twice. Every change is by EXTRACTION — the hero lives in
-// ConnectHero.swift, the row in ConnectionRowView.swift, the strip in
-// HealthCard.swift, and the diagnostics card is a sibling struct below with its
-// own small body. Nothing here has a `body` over ~40 lines.
-//
-// DIAGNOSTICS: the plan retires this card into a pushed "Check & why" screen. That
-// screen does not exist yet, and IP check / speed test / carrier endpoints have no
-// other entry point, so the card is DEMOTED (moved under the list) rather than
-// deleted. Delete it in the same change that lands CheckView.
+// ConnectHero.swift, the row in ConnectionRowView.swift, the diagnostics card in
+// HealthCard.swift, and the List's modifiers are split across two small wrapper
+// functions. Nothing here has a `body` over ~20 lines or a chain over ~8.
 //
 // #456: the row verdicts are `HealthCoordinator`'s persisted, timestamped
 // evidence. Green means an HTTP 2xx came back through that node's OWN SOCKS
@@ -98,23 +120,80 @@ struct ConnectionsView: View {
     // MARK: Body
 
     var body: some View {
+        // #459: the List's modifiers are split across two wrappers. This file has
+        // blown the SwiftUI type-checker's budget twice; one chain of eleven
+        // modifiers on a `List` whose content is four dynamic sections is exactly
+        // how it happened.
         NavigationStack {
-            List {
-                Section { heroBlock }
-                if tunnel.state.isConnected {
-                    Section {
-                        HealthCard(record: tunnel.connectedRecord,
-                                   ipCheck: ipCheck, speed: speed,
-                                   mode: currentMode, maskIPs: settings.maskIPs)
-                            .olcCardRow()
-                    }
-                }
-                connectionsSection
-                diagnosticsSection
-            }
+            // #460: a third wrapper (`listBars`) rather than a longer chain —
+            // this file has blown the SwiftUI type-checker's budget twice and
+            // the bar fixes are four modifiers on their own.
+            listWiring(listBars(listChrome(connectionList)))
+        }
+        // #459: the manual equivalent of the pull, on entry — governed by the
+        // "Check on opening" switch. The contract, stated once: THE TOGGLE
+        // DECIDES WHETHER THE APP CHECKS BY ITSELF; A PULL ALWAYS CHECKS.
+        .onAppear { entrySweep() }
+        // #456: an in-flight native probe can't be interrupted, but leaving the tab
+        // stops the coordinator from starting further ones.
+        .onDisappear { health.cancelAll() }
+    }
+
+    /// #459 was: `HealthCard` sat between the hero and the list, and Diagnostics
+    /// sat under the list. Both reported latency; only one of them could date it.
+    private var connectionList: some View {
+        List {
+            Section { heroBlock }
+            diagnosticsSection
+            // #460 (instruction 26): the auto-switch control sits with the
+            // protocols it switches between, immediately above the switcher.
+            autoSwitchSection
+            connectionsSection
+        }
+    }
+
+    private func listChrome(_ content: some View) -> some View {
+        content
             .scrollContentBackground(.hidden)
             .background(Theme.Palette.bg)
-            .refreshable { await refreshSubscriptions() }
+            // #459 was: `refreshSubscriptions()` only, with a per-group "Verify
+            // all" button in every section header.
+            .refreshable { await refreshEverything() }
+    }
+
+    // boc #460
+    /// #460 (findings 1 and 4): BOTH SYSTEM BARS WERE DRAWING OVER THE CONTENT.
+    ///
+    /// `.scrollContentBackground(.hidden)` + a custom `Theme.Palette.bg` leaves
+    /// the navigation bar and the tab bar on their transparent scroll-edge
+    /// appearance, so a scrolled `List` does not disappear behind them — it
+    /// shows THROUGH them. On the owner's phone that clipped the top of the
+    /// hero's state word (the largest, most important text in the app) under the
+    /// navigation bar, and cut the last row's badge in half under the tab bar.
+    ///
+    /// Forcing both bars to draw their background is the fix: content that
+    /// scrolls under a bar is now covered by it, cleanly. Visibility only — no
+    /// style argument — so each bar keeps the SYSTEM material it would have
+    /// shown anyway; a flat `Palette.bg` fill here would make this tab's bars
+    /// look unlike every other tab's.
+    ///
+    /// The bottom content margin braces that belt: the last card gets the same
+    /// breathing room above the tab bar that a section gets from its neighbour,
+    /// instead of ending flush against it.
+    ///
+    /// NOTE for the other tabs: ServersView and SettingsView draw the same
+    /// `scrollContentBackground(.hidden)` + custom-background List, so they have
+    /// the same defect and want the same two lines.
+    private func listBars(_ content: some View) -> some View {
+        content
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(.visible, for: .tabBar)
+            .contentMargins(.bottom, Theme.Metrics.s6, for: .scrollContent)
+    }
+    // eoc #460
+
+    private func listWiring(_ content: some View) -> some View {
+        content
             .onChange(of: store.connections, initial: true) { _, _ in recompute() }
             .onChange(of: store.subscriptionMeta) { _, _ in recompute() }
             .onChange(of: tunnel.state) { old, new in stateChanged(from: old, to: new) }
@@ -122,17 +201,13 @@ struct ConnectionsView: View {
             // space spent on a word carrying no information.
             .navigationTitle(L10n.tabConnections.localized())
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button { activeSheet = .add } label: { Image(systemName: "plus") }
-                        .accessibilityLabel(L10n.newConnectionTitle.localized())
-                }
-            }
+            .toolbar { ToolbarItem(placement: .primaryAction) { addButton } }
             .sheet(item: $activeSheet) { sheetContent($0) }
-        }
-        // #456: an in-flight native probe can't be interrupted, but leaving the tab
-        // stops the coordinator from starting further ones.
-        .onDisappear { health.cancelAll() }
+    }
+
+    private var addButton: some View {
+        Button { activeSheet = .add } label: { Image(systemName: "plus") }
+            .accessibilityLabel(L10n.newConnectionTitle.localized())
     }
 
     // MARK: 1. Hero
@@ -141,9 +216,14 @@ struct ConnectionsView: View {
         ConnectHero(state: tunnel.state,
                     subject: heroSubject,
                     health: heroSubject.map { health.display(for: $0.id) } ?? HealthDisplay.never,
+                    exitFlag: exitFlag,
+                    exitPlace: exitPlace,
                     mode: tunnel.state.isConnected ? tunnel.activeMode : settings.tunnelMode,
                     socksPort: tunnel.boundPort ?? settings.socksPort,
                     secretsLocked: store.secretsLocked,
+                    // #459: the subject has no row any more, so it carries the
+                    // row's own action set — the SAME builder, not a copy.
+                    menuItems: heroSubject.map { rowMenuItems($0) } ?? [],
                     onConnect: { heroConnect() },
                     onDisconnect: { heroDisconnect() })
             .olcCardRow()
@@ -154,6 +234,23 @@ struct ConnectionsView: View {
     /// else the last-used one, which is also the node a Connect tap will dial.
     private var heroSubject: ConnectionRecord? {
         tunnel.state.isConnected ? tunnel.connectedRecord : store.primary
+    }
+
+    /// #459: the hero's subject is drawn in the hero, never again in the list.
+    private var heroSubjectID: UUID? { heroSubject?.id }
+
+    /// #459: the exit as the hero prints it — "Amsterdam, NL". nil whenever the
+    /// lookup gave nothing usable, in which case the hero falls back to the
+    /// honesty layer's own dated sentence.
+    private var exitPlace: String? {
+        guard let geo = ipCheck.exitGeo, geo != IPChecker.ExitGeo() else { return nil }
+        let place = [geo.city, geo.country].compactMap { $0 }.joined(separator: ", ")
+        return place.isEmpty ? nil : place
+    }
+
+    private var exitFlag: String? {
+        guard let cc = ipCheck.exitGeo?.country else { return nil }
+        return CountryFlag.emoji(iso2: cc)
     }
 
     private func heroConnect() {
@@ -183,7 +280,36 @@ struct ConnectionsView: View {
         }
     }
 
-    // MARK: 2. The connection list
+    // MARK: 2b. Auto-switch — the setting that lives with its subject (#460)
+
+    // boc #460
+    /// #460 (instruction 26): `SettingsStore.autoFailover` had UI only in
+    /// Settings, several screens away from the protocols it switches between.
+    /// The rule it encodes — "if Telemost dies and Jitsi works, move over" — is
+    /// about THIS list, so the control sits directly above it. Same stored
+    /// value, one place: this is a move, not a second setting.
+    ///
+    /// Shown only with something to switch BETWEEN. Failover picks another
+    /// protocol on the same server, so with a single connection the control
+    /// would govern nothing; the moment a second one exists it appears.
+    @ViewBuilder
+    private var autoSwitchSection: some View {
+        // #460 (audit fix) was: `if store.connections.count > 1`. The control was
+        // REMOVED from Settings so it would live in exactly one place — and this
+        // gate then meant a one-connection install had it in NO place at all, with
+        // no way to see or change a setting that is on by default. It is shown
+        // whenever there is anything at all; the card itself explains that it needs
+        // a second protocol on the same server before it can do anything.
+        if !store.connections.isEmpty {
+            Section {
+                ConnectAutoSwitchCard()
+                    .olcCardRow()
+            }
+        }
+    }
+    // eoc #460
+
+    // MARK: 3. The connection list — the switcher
 
     @ViewBuilder
     private var connectionsSection: some View {
@@ -198,12 +324,12 @@ struct ConnectionsView: View {
                 .olcCardRow()
             }
         } else {
-            if store.hasSubscriptions {
-                Section { pullToRefreshHint }
-            }
+            // #459 was: a `pullToRefreshHint` row — a caption instructing the
+            // user to perform a standard system gesture. The gesture now does
+            // considerably more, and still needs no caption.
             ForEach(groups, id: \.group) { group in
                 Section {
-                    ForEach(group.items) { conn in row(conn) }
+                    connectionRows(group.items)
                 } header: {
                     groupHeader(group.group, items: group.items)
                 } footer: {
@@ -213,10 +339,35 @@ struct ConnectionsView: View {
         }
     }
 
+    /// #459: the hero's subject is skipped. `excluded` is read once per SECTION,
+    /// never per row (CLAUDE.md: don't derive in `body` on a view that
+    /// re-evaluates ~10×/s during a speed test), and the filtering is a per-row
+    /// `if` rather than a `filter` so no new array is built either.
+    private func connectionRows(_ items: [ConnectionRecord]) -> some View {
+        let excluded = heroSubjectID
+        return ForEach(items) { conn in
+            rowUnlessHeroSubject(conn, excluded: excluded)
+        }
+    }
+
+    @ViewBuilder
+    private func rowUnlessHeroSubject(_ conn: ConnectionRecord, excluded: UUID?) -> some View {
+        if conn.id != excluded { row(conn) }
+    }
+
+    /// #459: a group whose ONLY member is the hero's subject keeps its Section —
+    /// so `groupFooter`'s subscription quota still renders — but drops its header,
+    /// because a "Switch to" heading over nothing is a promise the list can't keep.
+    private func hasVisibleRows(_ items: [ConnectionRecord]) -> Bool {
+        let excluded = heroSubjectID
+        return items.contains { $0.id != excluded }
+    }
+
     private func row(_ conn: ConnectionRecord) -> some View {
+        // #459 was: also `isLive:` — the live node is the hero's subject and is
+        // therefore never in this list, so the "Live" badge could never render.
         ConnectionRowView(record: conn,
                           display: health.display(for: conn.id),
-                          isLive: tunnel.connectedRecord?.id == conn.id,
                           maskIPs: settings.maskIPs,
                           menuItems: rowMenuItems(conn),
                           onConnect: { connect(conn) },
@@ -263,19 +414,25 @@ struct ConnectionsView: View {
 
     // MARK: Section chrome
 
-    /// #457 was: every group drew its name, including the default one — whose
-    /// label is "Connections", identical to the tab it sits in, costing a full row
-    /// to say nothing. The default group's header now carries only what it can
-    /// prove: how many of its nodes are known to be failing, and the check control.
+    /// #459: the default group's header says what the list below it IS — a
+    /// switcher for everything that is not the hero's subject. #457 had left it
+    /// blank because its own name ("Connections") repeated the tab it sits in;
+    /// "Switch to" is the same length and carries the whole structural decision.
+    ///
+    /// #459 was: `groupHealthControl` — a per-group "Verify all" button plus its
+    /// spinner, sitting in a section header. Pull-to-refresh replaces it, checks
+    /// EVERYTHING rather than one group, and reports progress per row instead of
+    /// through one header spinner.
     @ViewBuilder
     private func groupHeader(_ group: String, items: [ConnectionRecord]) -> some View {
-        HStack(spacing: 8) {
-            if group != ConnectionRecord.defaultGroupName {
-                Text(ConnectionRecord.displayGroupName(group))
+        if hasVisibleRows(items) {
+            HStack(spacing: 8) {
+                Text(group == ConnectionRecord.defaultGroupName
+                     ? L10n.connectListOtherHeader.localized()
+                     : ConnectionRecord.displayGroupName(group))
+                failingBadge(items)
+                Spacer()
             }
-            failingBadge(items)
-            Spacer()
-            groupHealthControl(items)
         }
     }
 
@@ -297,22 +454,12 @@ struct ConnectionsView: View {
         return L10n.connectGroupFailing_fmt.formatted(counts.failing, counts.total)
     }
 
-    /// #456: "Check all" for one group. The coordinator probes strictly
-    /// sequentially and never probes the room the live tunnel holds; it returns at
-    /// once, and the spinner tracks its own in-flight set.
-    @ViewBuilder
-    private func groupHealthControl(_ items: [ConnectionRecord]) -> some View {
-        if items.contains(where: { health.isChecking($0.id) }) {
-            ProgressView().controlSize(.mini)
-        } else {
-            Button(L10n.healthVerifyAllAction.localized(), systemImage: "checkmark.shield") {
-                health.verifyAll(items, using: tunnel)
-            }
-            .font(.caption2)
-            .buttonStyle(.borderless)
-            .textCase(nil)
-        }
-    }
+    // boc #459
+    // #459 was: `groupHealthControl(_:)` — an `if items.contains(where: health
+    // .isChecking) { ProgressView() } else { Button(healthVerifyAllAction) { … } }`
+    // in every section header. The owner asked for "something like the Verify all
+    // button — but not a button, a SWIPE DOWN". `refreshEverything()` below is it.
+    // eoc #459
 
     @ViewBuilder
     private func groupFooter(_ group: String) -> some View {
@@ -321,24 +468,19 @@ struct ConnectionsView: View {
         }
     }
 
-    /// #411: pulling the list down force-refreshes every subscription source.
-    private var pullToRefreshHint: some View {
-        Label(L10n.pullToRefreshSubscriptions.localized(), systemImage: "arrow.down.circle")
-            .font(.caption)
-            .foregroundStyle(Theme.Palette.textTertiary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .listRowBackground(Color.clear)
-    }
+    // MARK: 2. Diagnostics — the ONE card (defined in HealthCard.swift)
 
-    // MARK: 3. Diagnostics (demoted below the list — see the file header)
-
+    /// #459: promoted ABOVE the list (it describes the hero's subject) and merged
+    /// with the old `HealthCard`. `Diagnostics` is the name that survives.
     private var diagnosticsSection: some View {
         Section {
-            ConnectDiagnosticsCard(ipCheck: ipCheck, speed: speed,
-                                   mode: currentMode, maskIPs: settings.maskIPs,
-                                   carrierParams: activeOlcrtcParams,
-                                   onSpeedTest: { runSpeedTest() },
-                                   onCarrierEndpoints: { activeSheet = .carrierEndpoints($0) })
+            DiagnosticsCard(record: tunnel.connectedRecord,
+                            ipCheck: ipCheck, speed: speed,
+                            mode: currentMode, maskIPs: settings.maskIPs,
+                            isConnected: tunnel.state.isConnected,
+                            carrierParams: activeOlcrtcParams,
+                            onSpeedTest: { runSpeedTest() },
+                            onCarrierEndpoints: { activeSheet = .carrierEndpoints($0) })
                 .olcCardRow()
         } header: {
             Text(L10n.diagnosticsTitle.localized())
@@ -370,11 +512,13 @@ struct ConnectionsView: View {
     /// primary — i.e. missing on exactly the row you most wanted) and "What's
     /// wrong?" (an alert). Tapping the row connects; the reason and its fix are on
     /// the row itself.
+    ///
+    /// #459 was: this menu also opened with "Verify". The row's `OlcHealthChip`
+    /// IS the verify affordance now — a 44 pt target that re-probes on tap — and
+    /// the hero, which shows this same menu for its own subject, is covered by
+    /// the pull gesture.
     private func rowMenuItems(_ conn: ConnectionRecord) -> [OlcMenuItem] {
         var items: [OlcMenuItem] = []
-        items.append(.action(L10n.healthActionVerify.localized(), systemImage: "checkmark.shield") {
-            verify(conn)
-        })
         // #456: connection-ONLY share — the `olcrtc://` URI and nothing else, so it
         // grants NO VPS/SSH access.
         items.append(.action(L10n.shareConnectionTitle.localized(), systemImage: "square.and.arrow.up") {
@@ -469,6 +613,144 @@ struct ConnectionsView: View {
         guard store.hasSubscriptions else { return }
         _ = await store.refreshAllSources()
     }
+
+    // MARK: Refresh — the gesture that replaced the button (#459)
+
+    /// #459: how long the pull spinner may be held for the health sweep. The
+    /// sweep is sequential and each probe owns a 20 s budget
+    /// (`HealthPolicy.probeTimeoutMs`), so without a cap one dead carrier would
+    /// pin the spinner for minutes. Past the cap the sweep keeps running and the
+    /// rows keep saying "Checking…", which is the honest report either way.
+    private static let pullSweepMaxSeconds: TimeInterval = 20
+
+    /// #459 was: `refreshSubscriptions()` alone, with a per-group "Verify all"
+    /// button beside it. A pull now refreshes the STATE OF EVERYTHING, which is
+    /// what the owner asked the gesture to mean:
+    ///   • every connection's end-to-end health probe (`verifyDue`, the same pass
+    ///     the on-entry sweep runs — uncapped, no staleness filter, and left to
+    ///     the coordinator so `sweepTask` bookkeeping and `cancelAll()` still
+    ///     apply to it);
+    ///   • the tunnel's exit geo, while a session is up (the hero's evidence line
+    ///     and Diagnostics → Exit both read it);
+    ///   • every subscription source.
+    ///
+    /// It ignores `SettingsStore.refreshOnEntry`: that switch governs only what
+    /// the app does BY ITSELF.
+    private func refreshEverything() async {
+        // #460 (audit fix) was: `verifyDue`, which passes `force: false`, so
+        // `shouldProbe` refused every node checked in the last two minutes and
+        // the gesture did nothing while still showing a spinner. A pull is an
+        // EXPLICIT request — the debounce exists to keep AUTOMATIC passes cheap,
+        // not to ignore the user. `verifyAll` forces.
+        health.verifyAll(store.connections, using: tunnel)
+        if tunnel.state.isConnected {
+            await ipCheck.refreshExitGeo(via: currentMode)
+        }
+        await refreshSubscriptions()
+        await awaitSweep()
+    }
+
+    /// #459: hold the spinner while the coordinator is actually probing, so the
+    /// gesture reports real work instead of snapping back on a fire-and-forget.
+    /// Gives up on the cap, and the moment the refresh task itself is cancelled.
+    private func awaitSweep() async {
+        // The sweep is a `Task` the coordinator has only just scheduled; give it
+        // the actor before deciding it never started.
+        try? await Task.sleep(for: .milliseconds(120))
+        let deadline = Date().addingTimeInterval(Self.pullSweepMaxSeconds)
+        while !Task.isCancelled, Date() < deadline, sweepInFlight {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    private var sweepInFlight: Bool {
+        store.connections.contains { health.isChecking($0.id) }
+    }
+
+    /// #459: the automatic twin of the pull, on tab entry — the same uncapped
+    /// `verifyDue` pass, but debounced by `HealthPolicy.minRecheckSeconds` and
+    /// gated on the user's "Check on opening" switch. Connections had no on-entry
+    /// sweep at all before this, so that switch governed only the Servers tab and
+    /// the foreground transition.
+    private func entrySweep() {
+        guard settings.refreshOnEntry else { return }
+        health.verifyDue(store.connections, using: tunnel)
+    }
+}
+
+// MARK: - ConnectAutoSwitchCard (#460 — instruction 26)
+//
+// #460: the auto-failover switch, moved here from Settings → RELIABILITY. It
+// binds to `SettingsStore.shared.autoFailover` — the SAME stored value the old
+// Settings row bound to, so nothing about persistence or the failover machinery
+// in `TunnelManager` changes; only where the control is drawn.
+//
+// It is a designed row, not a bare `Toggle` dropped on a card: a tinted glyph
+// that says "swap", the rule in one sentence, the one condition that limits it
+// ("Applies in proxy mode" — in VPN mode the core runs in the appex and
+// `TunnelManager` gates failover on `activeMode == .proxy`), and the switch
+// itself pinned opposite. The switch is the only control, so there is no
+// second, invisible tap target fighting it for the row.
+//
+// Its own struct with its own `SettingsStore` observation: ConnectionsView's
+// `body` re-evaluates ~10×/s during a speed test and must not grow, and a
+// toggle flip should re-render this card rather than the whole screen.
+
+private struct ConnectAutoSwitchCard: View {
+    @ObservedObject private var settings = SettingsStore.shared
+
+    var body: some View {
+        OlcCard {
+            HStack(alignment: .top, spacing: Theme.Metrics.s3) {
+                glyph
+                labels
+                Spacer(minLength: Theme.Metrics.s2)
+                control
+            }
+        }
+    }
+
+    private var glyph: some View {
+        Image(systemName: "arrow.triangle.2.circlepath")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Theme.Palette.accent)
+            .frame(width: 30, height: 30)
+            .background(Theme.Palette.fill,
+                        in: RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius,
+                                             style: .continuous))
+            .accessibilityHidden(true)
+    }
+
+    private var labels: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
+            Text(L10n.configFailoverToggle.localized())
+                .font(Theme.Typography.label)
+                .foregroundStyle(Theme.Palette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            // #460: the SHORT explainer. The Settings one
+            // (`configFailoverExplainer`) is a settings-page sentence; this
+            // screen gets the same rule in one line.
+            Text(L10n.connectAutoSwitchHint.localized())
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(L10n.configFailoverProxyOnlyFooter.localized())
+                .font(.caption2)
+                .foregroundStyle(Theme.Palette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The label is hidden because `labels` above IS the label; VoiceOver gets it
+    /// back explicitly, with the rule as the hint.
+    private var control: some View {
+        Toggle("", isOn: $settings.autoFailover)
+            .labelsHidden()
+            .tint(Theme.Palette.accent)
+            .accessibilityLabel(L10n.configFailoverToggle.localized())
+            .accessibilityHint(L10n.connectAutoSwitchHint.localized())
+            .onChange(of: settings.autoFailover) { _, _ in Haptics.tap() }
+    }
 }
 
 // MARK: - SubscriptionMetaFooter (#363, extracted #457)
@@ -529,186 +811,12 @@ private struct SubscriptionMetaFooter: View {
     }
 }
 
-// MARK: - ConnectDiagnosticsCard (#258, extracted #457)
-//
-// #457: the three manual probes, in one card, DEMOTED below the connection list.
-// They are the only entry points to `IPChecker.checkAll`, `SpeedTest.run` and the
-// #328 carrier-endpoint exclusions; the plan re-parents all three into a pushed
-// "Check & why" screen, and this card is deleted in the change that lands it.
-
-private struct ConnectDiagnosticsCard: View {
-    @ObservedObject var ipCheck: IPChecker
-    @ObservedObject var speed: SpeedTest
-    let mode: RouteMode
-    let maskIPs: Bool
-    let carrierParams: OlcrtcConnection?
-    let onSpeedTest: () -> Void
-    let onCarrierEndpoints: (OlcrtcConnection) -> Void
-
-    /// #264: when the IP check last finished.
-    @State private var ipCheckTime: Date?
-
-    var body: some View {
-        OlcCard(padding: 0) {
-            VStack(spacing: 0) {
-                ipRow
-                Divider().overlay(Theme.Palette.separator)
-                speedRow
-                Divider().overlay(Theme.Palette.separator)
-                carrierRow
-            }
-            .padding(.horizontal, Theme.Metrics.cardPadding)
-        }
-    }
-
-    private var ipRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.ipCheckTitle.localized())
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                ConnectIPStatus(ipCheck: ipCheck, maskIPs: maskIPs)
-                if let t = ipCheckTime, !ipCheck.isChecking {
-                    Label(t.formatted(date: .omitted, time: .shortened), systemImage: "clock")
-                        .font(.caption2)
-                        .foregroundStyle(Theme.Palette.textTertiary)
-                }
-            }
-            Spacer(minLength: 8)
-            OlcButton(L10n.ipCheckRun.localized(), role: .secondary, isBusy: ipCheck.isChecking) {
-                Task { await ipCheck.checkAll(via: mode); ipCheckTime = Date() }
-            }
-        }
-        .padding(.vertical, 12)
-    }
-
-    private var speedRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            HStack(alignment: .top, spacing: 16) {
-                OlcMetric(label: L10n.speedLabelPing.localized(),
-                          value: value(speed.lastResult?.pingMs, L10n.speedPingValue_fmt.localized()),
-                          unit: L10n.speedUnitMs.localized(), unitInLabel: true)
-                OlcMetric(label: L10n.speedLabelDL.localized(),
-                          value: value(speed.lastResult?.downloadMbps, L10n.speedRateValue_fmt.localized()),
-                          unit: L10n.speedUnitMbps.localized(), unitInLabel: true)
-                OlcMetric(label: L10n.speedLabelUL.localized(),
-                          value: value(speed.lastResult?.uploadMbps, L10n.speedRateValue_fmt.localized()),
-                          unit: L10n.speedUnitMbps.localized(), unitInLabel: true)
-            }
-            Spacer(minLength: 8)
-            OlcButton(L10n.speedTestRun.localized(), role: .secondary,
-                      isBusy: speed.isTesting, action: onSpeedTest)
-        }
-        .padding(.vertical, 12)
-    }
-
-    private var carrierRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.carrierEndpointsTitle.localized())
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                Text(carrierParams != nil
-                     ? L10n.carrierEndpointsReadyHint.localized()
-                     : L10n.carrierEndpointsConnectHint.localized())
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.textSecondary)
-            }
-            Spacer(minLength: 8)
-            OlcButton(L10n.carrierEndpointsCheckAction.localized(), role: .secondary) {
-                if let params = carrierParams { onCarrierEndpoints(params) }
-            }
-            .disabled(carrierParams == nil)
-        }
-        .padding(.vertical, 12)
-    }
-
-    private func value(_ v: Double?, _ format: String) -> String {
-        if speed.isTesting { return "…" }
-        guard let v else { return "—" }
-        return String(format: format, v)
-    }
-}
-
-// MARK: - ConnectIPStatus (extracted #457)
-//
-// The IP-check result block: collapsed agreement line, the DNS-leak warning, or
-// the per-source list. Its own struct so the diagnostics card's body stays small.
-
-private struct ConnectIPStatus: View {
-    @ObservedObject var ipCheck: IPChecker
-    let maskIPs: Bool
-
-    var body: some View {
-        if ipCheck.isChecking {
-            Text(L10n.ipChecking.localized())
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Theme.Palette.textSecondary)
-        } else if !hasResults {
-            Text(L10n.ipNotChecked.localized())
-                .font(.caption)
-                .foregroundStyle(Theme.Palette.textSecondary)
-        } else if collapsed, let ip = summaryIP {
-            // #337: mask for display only — the value behind it stays real.
-            Text(L10n.ipSourcesAgree_fmt.formatted(IPMask.display(ip, masked: maskIPs),
-                                                   ipCheck.results.filter { $0.ip != nil }.count))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Theme.Palette.green)
-        } else {
-            VStack(alignment: .leading, spacing: 3) {
-                if allDone, Set(ipCheck.results.compactMap { $0.ip }).count > 1 {
-                    leakWarning
-                }
-                ForEach(ipCheck.results) { r in sourceRow(r) }
-            }
-        }
-    }
-
-    private var leakWarning: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.caption2)
-                .foregroundStyle(Theme.Palette.red)
-            Text(L10n.ipDnsLeak.localized())
-                .font(.caption)
-                .foregroundStyle(Theme.Palette.red)
-        }
-    }
-
-    @ViewBuilder
-    private func sourceRow(_ r: IPResult) -> some View {
-        HStack {
-            Text(r.label)
-                .font(.caption2)
-                .foregroundStyle(Theme.Palette.textSecondary)
-            Spacer()
-            if let ip = r.ip {
-                Text(IPMask.display(ip, masked: maskIPs))
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(Theme.Palette.textPrimary)
-            } else if let err = r.error {
-                Text(err)
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.red)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } else {
-                Text("—").foregroundStyle(Theme.Palette.textSecondary)
-            }
-        }
-    }
-
-    private var collapsed: Bool {
-        let ips = ipCheck.results.compactMap { $0.ip }
-        guard ips.count >= 2 else { return false }
-        return Set(ips).count == 1
-    }
-    private var summaryIP: String? { ipCheck.results.compactMap { $0.ip }.first }
-    private var hasResults: Bool { ipCheck.results.contains { $0.ip != nil || $0.error != nil } }
-    private var allDone: Bool {
-        !ipCheck.results.isEmpty && ipCheck.results.allSatisfy { $0.ip != nil || $0.error != nil }
-    }
-}
+// boc #459
+// #459 was: ConnectDiagnosticsCard and ConnectIPStatus lived here. Both moved
+// into HealthCard.swift, where the old health strip merged into them as the
+// Diagnostics card's "This session" block. A move, not a cut — and this file
+// sheds the ~180 lines the type-checker was carrying for them.
+// eoc #459
 
 // #340: both appearance variants.
 #if DEBUG
