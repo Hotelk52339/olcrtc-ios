@@ -2,8 +2,11 @@ import SwiftUI
 
 // MARK: - ServersView
 //
-// Third tab. Manages SSH credentials for VPS hosts where we can install /
-// uninstall olcrtc, plus triggers those operations from the device.
+// #457: the SECOND of three tabs (Connect · Servers · Settings). Manages SSH
+// credentials for the servers where we can install / uninstall olcrtc, plus
+// triggers those operations from the device.
+// #457 was: "Third tab" — it was the third of five before Config and Logs
+// stopped being tabs.
 //
 // #258: SINGLE-SOURCE display model (replaces the old dual-source
 // `statusIconInfo`, which read `provisioner.status` + per-host `readiness`
@@ -23,11 +26,15 @@ import SwiftUI
 struct ServersView: View {
     @ObservedObject var serverStore: ServerHostStore
     @ObservedObject var connections: ConnectionStore
-    /// #339: "Container logs" routes to the Logs tab through this app-level
-    /// router (MainTabView switches the tab, LogsView consumes).
-    /// #334 was: `let logsRouter` — now observed so the card reacts to
-    /// `fetchingHostID` and shows a busy indicator during a container-log fetch.
-    @ObservedObject var logsRouter: LogsRouter
+    // boc #457: `@ObservedObject var logsRouter: LogsRouter` is gone with the
+    // Logs TAB. Container logs become a pushed, subject-scoped destination
+    // (`LogsView(subject: .container(host))`) owned by the navigation layer —
+    // a push carries its context for free, so the cross-tab back-channel
+    // (`LogsRouter.request` + `MainTabView.onChange { selectedTab = 3 }` +
+    // `fetchingHostID` + this file's `containerLogBusyStrip`) has nothing left
+    // to do. Nothing here invents a route in its place.
+    // #457 was: @ObservedObject var logsRouter: LogsRouter
+    // eoc #457
     /// Per-tab lifecycle, NOT a shared singleton — intentional split from
     /// `TunnelManager.shared` / `SettingsStore.shared` / `LogStore.shared`.
     @StateObject  private var provisioner = Provisioner()
@@ -74,6 +81,12 @@ struct ServersView: View {
     @State private var installChoice  : InstallChoiceRequest?
     // eoc #456
     @State private var scanFor        : ServerHost?
+    /// #457 (audit fix): the server whose container log is being pushed. The
+    /// "Container logs" menu item was deleted with the Logs TAB, but its
+    /// replacement push was never wired, so container logs became unreachable —
+    /// a regression, not a simplification. Menu items are closures here, not
+    /// links, so the push is driven by this optional.
+    @State private var logsForHost    : ServerHost?
     @State private var foundContainers: [SSHRunner.FoundContainer] = []
     @State private var shareConn      : ConnectionRecord?   // #304: share the host's linked connection
     @State private var shareFullAccess: FullAccessShareRequest?   // #135: full-access (SSH) share
@@ -130,6 +143,13 @@ struct ServersView: View {
                     .onDelete { serverStore.remove(at: $0) }
                 }
             }
+            // #457: the title stays a large title here (unlike Connect, whose
+            // large title spent 34pt on the brand word "OlcRTC" above a 15pt
+            // truth) — it names the content, not the brand.
+            // #457 was: the app called one place three names — "Manage VPS"
+            // (tab), "VPS list" (this title) and "the Servers tab" (the copy
+            // that points here). Both table entries now read "Servers"/«Серверы»,
+            // so the tab, the title and every reference agree.
             .navigationTitle(L10n.serversTitle.localized())
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -158,6 +178,17 @@ struct ServersView: View {
                 guard case .running(let msg) = status else { return }
                 advancePhase(note: msg)
             }
+        }
+    }
+
+    // #457 (audit fix): ServersView.coreStack carried 21 chained modifiers in a
+    // single expression and CI failed with "unable to type-check this expression
+    // in reasonable time" — the third time this file has hit that budget. The
+    // chain is split by KIND: the List and its lifecycle stay in coreStack, the
+    // presentation modifiers live in these wrappers. Same view, same order.
+    @ViewBuilder
+    private func hostSheets(_ content: some View) -> some View {
+        content
             .sheet(isPresented: $showAdd) {
                 // #295: pass every existing label so the sheet can reject a
                 // duplicate (case-insensitive / sanitised-prefix) name.
@@ -178,6 +209,14 @@ struct ServersView: View {
                                   otherLabels: serverStore.hosts.filter { $0.id != host.id }.map(\.label)) { updated, secret in
                     serverStore.update(updated, secret: secret)
                 }
+            }
+            // #457 (audit fix): the destination behind the "Container logs" menu
+            // item. A push, not a tab hop — the log opens already scoped to this
+            // server, so nothing has to re-derive which host it was about.
+            .navigationDestination(item: $logsForHost) { host in
+                LogsView(subject: .container(host),
+                         serverStore: serverStore,
+                         connections: connections)
             }
             .sheet(item: $installFor) { host in
                 // #452: multi-protocol install plan (primary + extras).
@@ -221,6 +260,11 @@ struct ServersView: View {
             .sheet(item: $shareFullAccess) { req in
                 ShareConnectionView(conn: req.conn, fullAccess: req.payload)
             }
+    }
+
+    @ViewBuilder
+    private func hostConfirmations(_ content: some View) -> some View {
+        content
             .alert(L10n.okPrompt.localized(), isPresented: Binding(
                 get: { alertText != nil },
                 set: { if !$0 { alertText = nil } }
@@ -337,7 +381,6 @@ struct ServersView: View {
             } message: { _ in
                 Text(L10n.rotateKeyConfirmBody.localized())
             }
-        }
     }
 
     var body: some View {
@@ -345,7 +388,8 @@ struct ServersView: View {
         // confirms) are split off the main chain — with them inline the Swift
         // type-checker timed out on ServersView.body ("unable to type-check
         // this expression in reasonable time").
-        carrierModals(coreStack)
+        // #457: three wrappers instead of one 21-modifier expression.
+        carrierModals(hostConfirmations(hostSheets(coreStack)))
     }
 
     @ViewBuilder
@@ -713,185 +757,177 @@ struct ServersView: View {
     }
 
     // MARK: Host card
+    //
+    // #457: the card itself now lives in App/Views/ServerCardView.swift and the
+    // protocol row in App/Views/ProtocolRowView.swift. Everything below is glue —
+    // it resolves state into plain values and hands them over. Nothing that
+    // RENDERS may grow inside this file again: it has hit the Swift
+    // type-checker's expression budget twice already (see `carrierModals`).
+    //
+    // #457 was: hostCard / hostCardTop / hostCardBottom / statusRegion /
+    // processCaption / metricsStrip / pingMiniStat / actionBar / primaryButton /
+    // protocolsSection / carrierRowView / carrierRowLead / healthSweepFooter /
+    // containerLogBusyStrip — ~340 lines of view code in this file.
 
     private func hostCard(_ host: ServerHost) -> some View {
-        let state = displayState(host)
-        return Section {
-            OlcCard {
-                // #456: split into two halves. Adding the process caption made
-                // this VStack seven children deep, and this file has already hit
-                // the Swift type-checker's limit once (see `carrierModals`).
-                VStack(alignment: .leading, spacing: 12) {
-                    hostCardTop(host, state: state)
-                    hostCardBottom(host, state: state)
+        Section {
+            serverCard(host)
+                // #452: lazy first load of the protocol rows (skipped while an op
+                // holds the SSH lane; refreshed after every op anyway).
+                .onAppear {
+                    guard carrierRows[host.id] == nil, host.lastContainerName != nil,
+                          !actionsDisabled else { return }
+                    Task { await refreshCarriers(host.id) }
                 }
-                .animation(.easeInOut(duration: 0.35), value: state)
-                // #334: fade the container-log busy strip in/out smoothly.
-                .animation(.easeInOut(duration: 0.35), value: logsRouter.fetchingHostID)
-            }
-            // #452: lazy first load of the protocol rows (skipped while an op
-            // holds the SSH lane; refreshed after every op anyway).
-            .onAppear {
-                guard carrierRows[host.id] == nil, host.lastContainerName != nil,
-                      !actionsDisabled else { return }
-                Task { await refreshCarriers(host.id) }
-            }
-            .olcCardRow()
-        } footer: {
-            healthSweepFooter(host)   // #456
+                .olcCardRow()
         }
     }
 
-    /// #456: identity + what is TRUE right now (headline pill, progress, and the
-    /// demoted podman caption). The top half answers "what is the state?".
-    @ViewBuilder
-    private func hostCardTop(_ host: ServerHost, state: HostDisplay) -> some View {
-        // Header: label + connection + the single complete action menu
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(host.label)
-                    .font(.headline)
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                // #337: mask the host for display when screenshot-safe
-                // mode is on (IP literals → •••.•••.•••.x; hostnames
-                // pass through). Display-only: host.host stays real.
-                Text("\(host.username)@\(IPMask.display(host.host, masked: settings.maskIPs)):\(String(host.port))")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(Theme.Palette.textSecondary)
-            }
-            Spacer()
-            OlcOverflowMenu(items: menuItems(host))
-                .disabled(actionsDisabled)
-        }
-
-        // #334: container-log fetch runs on the Logs tab (#339), so it
-        // isn't a HostOp and never reaches `statusRegion`. Surface its
-        // progress here from the router's published in-flight host.
-        containerLogBusyStrip(host)
-
-        statusRegion(host, state: state)
-
-        // #456: podman's own verdict, demoted to a caption directly under the
-        // pill — text, with its own age, never a green light.
-        processCaption(host, state: state)
+    /// #457: resolves one host into `ServerCardView`'s inputs. Arguments are
+    /// listed in the struct's declaration order — Swift enforces that order for
+    /// a memberwise init, and getting it wrong is a compile error.
+    private func serverCard(_ host: ServerHost) -> ServerCardView {
+        let state  = displayState(host)
+        // #457 (requirement 2): the count the headline is allowed to be
+        // optimistic about. `summary` reports the BEST evidence, so without this
+        // a host with one working and one dead protocol reads as simply fine.
+        let counts = health.failingCount(for: hostRecords(host).map(\.id))
+        // A protocol-level op holds the SSH lane just like a HostOp does, so it
+        // locks the host's actions too (they would collide on one connection).
+        let locked = actionsDisabled || carrierBusyHostID != nil
+        return ServerCardView(
+            name:            host.label,
+            addressLine:     addressLine(host),
+            headline:        headline(host, state: state),
+            progress:        statusBarFraction(state),
+            processCaption:  processCaptionText(host, state: state),
+            failingCount:    counts.failing,
+            protocolCount:   counts.total,
+            uncheckedCount:  unverifiedCount(host),
+            metrics:         metrics(host),
+            rows:            carrierRows[host.id] ?? [],
+            rowsBusy:        carrierBusyHostID == host.id,
+            canAddProtocol:  !missingCarriers(host).isEmpty,
+            actionsDisabled: locked,
+            primary:         primaryAction(state),
+            menuItems:       menuItems(host),
+            onPrimary:       { runPrimary(host, state: state) },
+            onAddProtocol:   { addProtocolFor = host },
+            onVerifyAll:     { health.verifyAll(hostRecords(host), using: tunnel) },
+            row:             { rowView(host, row: $0) })
     }
 
-    /// #456: numbers, protocols and actions — the bottom half answers "what can
-    /// I do next?".
-    @ViewBuilder
-    private func hostCardBottom(_ host: ServerHost, state: HostDisplay) -> some View {
-        // #341 was: metrics only when idle on a container-bearing
-        // base — the card changed height with every state flip.
-        // Fixed footprint now: the strip is ALWAYS rendered ("—"
-        // placeholders, dimmed while an op runs).
-        metricsStrip(host, state: state)
-
-        // #452: per-protocol rows (multi-carrier host).
-        protocolsSection(host, state: state)
-
-        actionBar(host, state: state)
+    /// #337: mask the host for display when screenshot-safe mode is on (IP
+    /// literals to bullets; hostnames pass through). Display-only — `host.host`
+    /// stays real.
+    private func addressLine(_ host: ServerHost) -> String {
+        "\(host.username)@\(IPMask.display(host.host, masked: settings.maskIPs)):\(String(host.port))"
     }
 
-    /// #456: an automatic pass is capped and only touches nodes with no usable
-    /// evidence, so the rest must SAY they were skipped rather than look fine.
-    @ViewBuilder
-    private func healthSweepFooter(_ host: ServerHost) -> some View {
-        let pending = unverifiedCount(host)
-        if pending > 0 {
-            HStack(spacing: 8) {
-                Text(L10n.healthSweepSkipped_fmt.formatted(pending))
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.textTertiary)
-                Button(L10n.healthVerifyAllAction.localized()) {
-                    health.verifyAll(hostRecords(host), using: tunnel)
-                }
-                .font(.caption2)
-                .disabled(actionsDisabled)
-            }
-        }
+    /// #457: one protocol row, resolved. The view is dumb; the resolution from a
+    /// container to a saved connection stays here, where the stores are.
+    private func rowView(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> ProtocolRowView {
+        ProtocolRowView(
+            title:             CarrierTransportMatrix.carrierLabel(row.provider),
+            transport:         CarrierTransportMatrix.transportLabel(row.transport),
+            isPrimary:         row.isPrimary,
+            isLive:            isLiveRow(row),
+            isRunningOnServer: Self.isUp(row.status),
+            health:            rowHealth(host, row: row),
+            menuDisabled:      actionsDisabled || carrierBusyHostID != nil,
+            menuItems:         carrierMenuItems(host, row: row),
+            onVerify:          { verifyRow(host, row: row) })
     }
 
-    /// #334: a compact busy row shown only while THIS host's container-log
-    /// fetch is in flight (on the Logs tab). Reuses the `.progress` status tone
-    /// + OlcProgressBar, mirroring an in-card operation. The `.transition` +
-    /// the card's own animation (keyed on `fetchingHostID` below) keep it from
-    /// snapping in — see #335 for the start-jank lesson.
-    @ViewBuilder
-    private func containerLogBusyStrip(_ host: ServerHost) -> some View {
-        if logsRouter.fetchingHostID == host.id {
-            VStack(alignment: .leading, spacing: 8) {
-                OlcStatusPill(tone: .progress,
-                              title: L10n.actionContainerLogs.localized(),
-                              subtitle: L10n.logsPhaseReceiving.localized()) {
-                    ProgressView().controlSize(.small)
-                }
-                OlcProgressBar(fraction: 1)   // indeterminate-ish: the fetch has no fraction here
-            }
-            .transition(.opacity)
+    /// #457 was: `row.status.shortLabel.hasPrefix("Up")` repeated at three call
+    /// sites — string-matching a label that is also user-visible text.
+    /// `ContainerStatus.parse` already decided this; ask it instead.
+    static func isUp(_ status: ContainerStatus) -> Bool {
+        if case .running = status { return true }
+        return false
+    }
+
+    /// #457: three container-lifecycle states, three DIFFERENT glyphs — running,
+    /// present-but-stopped, and not-there-at-all were one dot in three hues.
+    /// Neutral colour throughout: none of this is a health claim, and the label
+    /// beside it already says "Up 3 hours" / "Exited (137) …" / "Not found".
+    static func scanGlyph(_ status: ContainerStatus) -> String {
+        switch status {
+        case .running:  return "play.circle"
+        case .stopped:  return "pause.circle"
+        case .notFound: return "questionmark.circle"
         }
     }
 
-    // Status region — exactly one of: operation / error / base.
-    // #341: fixed-height container (≈58pt) so the pill / pill+bar / failed
-    // pill swap never changes the card height; the existing `.animation`
-    // crossfades the content.
-    // #335: the pill is now ALWAYS rendered in the same top slot — only its
-    // tone/title/subtitle change — and the progress bar lives in a fixed-height
-    // slot BELOW it that just fades its opacity. Previously the `.running` case
-    // wrapped the pill in its own VStack while `.base`/`.failed` rendered a bare
-    // pill, so when the op started the crossfade animated the pill from one
-    // vertical anchor to another, overlapping the text for ~0.5s. One stable
-    // pill position kills the overlap.
-    // #456: the pill no longer reports podman. `HostHeadline` decides
-    // busy → op-failed → unreachable → not-checked-yet → container stopped →
-    // nothing installed → the aggregated VERIFIED health of this host's
-    // protocols. An unreachable VPS therefore reads "can't reach the server",
-    // never a fabricated "stopped" (requirement 2), and "Running" can no longer
-    // be the whole story (requirement 1).
-    @ViewBuilder
-    private func statusRegion(_ host: ServerHost, state: HostDisplay) -> some View {
-        let bar = statusBarFraction(state)
-        let h = headline(host, state: state)
-        VStack(alignment: .leading, spacing: 8) {
-            OlcStatusPill(tone: h.tone, title: h.title, subtitle: h.subtitle) {
-                if state.isRunning { ProgressView().controlSize(.small) }
-            }
-            // #338 was: ProgressView(value:total:).tint(amber) — extracted into
-            // the shared OlcProgressBar (also used by the Logs fetch). The slot
-            // is always present (fixed 4pt) so the pill above never reflows when
-            // the bar appears/disappears; opacity carries the transition (#335).
-            OlcProgressBar(fraction: bar ?? 0)
-                .opacity(bar == nil ? 0 : 1)
+    // MARK: The primary action
+    //
+    // #457: the card offers exactly ONE next step, and never one that no
+    // evidence justifies.
+    // #457 was: `primaryButton`'s `else` branch rendered a full-width **Install**
+    // for every base without a container — INCLUDING `.unknown`, i.e. a server
+    // nothing had ever read. `scripts/srv.sh` force-removes every
+    // `olcrtc-server-*` container before installing, so one tap on a re-added
+    // VPS destroyed a working deployment and every sibling protocol on it.
+    // `.unknown` now offers **Check server**; Install appears only on a base a
+    // real probe returned.
+
+    private func primaryAction(_ state: HostDisplay) -> ServerPrimaryAction {
+        switch state {
+        case .running: return .busy
+        case .failed:  return .retry
+        case .base(let b):
+            if b == .running  { return .stop }
+            if b.hasContainer { return .start }
+            if b == .unknown  { return .check }
+            return .install
         }
-        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
     }
 
-    // #456 was: statusTone / statusTitle / statusSubtitle — three per-state
-    // helpers that read the pill straight off `HostDisplay`, i.e. straight off
-    // podman. They now live in the pure `HostHeadline` reducer, which also knows
-    // about reachability, probe age and measured health.
-
-    /// #456: podman's verdict as PLAIN TEXT with its own age — no coloured dot,
-    /// because "the process exists" is not a health claim. This is where the old
-    /// green "Running" pill's content went.
-    @ViewBuilder
-    private func processCaption(_ host: ServerHost, state: HostDisplay) -> some View {
-        Text(processCaptionText(host, state: state))
-            .font(.caption2)
-            .foregroundStyle(Theme.Palette.textTertiary)
+    private func runPrimary(_ host: ServerHost, state: HostDisplay) {
+        switch state {
+        case .running:
+            break   // the button is a spinner; nothing to dispatch
+        case .failed(let op, _, _, _):
+            Task { await retry(op, on: host) }
+        case .base(let b):
+            if b == .running       { Task { await stop(host) } }
+            else if b.hasContainer { Task { await startContainer(host) } }
+            else if b == .unknown  { Task { await checkServer(host) } }
+            else                   { Task { await beginInstall(host) } }
+        }
     }
 
-    /// #456: split out as a pure String so the caption view above stays a
-    /// two-modifier expression (type-checker budget — see `carrierModals`).
+    // MARK: The process caption
+    //
+    // #456: podman's verdict as PLAIN TEXT with its own age — no coloured dot,
+    // because "the process exists" is not a health claim.
+
+    /// #457 was: `L10n.vpsProcessCaption_fmt.formatted(state.base.title, age)` —
+    /// it interpolated `HostBase.title`, a string written to be a card HEADLINE,
+    /// into "Server process: %@". Both `.imageReady` and `.noPodman` title
+    /// "Ready to install", so the caption read "Server process: Ready to install"
+    /// (nonsense for one of them, a false claim for the other), and `.unknown`
+    /// read "Server process: Status unknown". The caption gets its own words.
     private func processCaptionText(_ host: ServerHost, state: HostDisplay) -> String {
-        let base = state.base.title
-        // #456 (audit) was: `lastProbe` — the attempt clock. A failed probe stamped
-        // it, so the caption dated the PREVIOUS reading to "just now".
-        guard let probed = lastProbeOK[host.id] else {
-            return L10n.vpsProcessCaptionNever_fmt.formatted(base)
+        // #456 (audit): `lastProbeOK`, not `lastProbe` — the attempt clock is
+        // stamped even when the probe threw, which dated the PREVIOUS reading to
+        // "just now". With no reading at all the seeded base is a GUESS, so the
+        // line says exactly that instead of dressing a guess up with an age.
+        guard let probed = lastProbeOK[host.id] else { return L10n.vpsProcessUnread.localized() }
+        return L10n.vpsProcessAge_fmt.formatted(
+            Self.processWord(state.base), HealthAge.label(Date().timeIntervalSince(probed)))
+    }
+
+    /// #457: the caption's own small vocabulary — four plain facts about the
+    /// server-side process, keyed off what a probe actually found.
+    static func processWord(_ base: HostBase) -> String {
+        switch base {
+        case .running:              return L10n.vpsProcessRunning.localized()
+        case .stopped:              return L10n.vpsProcessStopped.localized()
+        case .imageReady, .noImage: return L10n.vpsProcessNothingInstalled.localized()
+        case .noPodman:             return L10n.vpsProcessNotSetUp.localized()
+        case .unknown:              return L10n.vpsProcessUnread.localized()
         }
-        return L10n.vpsProcessCaption_fmt.formatted(
-            base, HealthAge.label(Date().timeIntervalSince(probed)))
     }
 
     /// The progress fraction while running; nil when the bar slot is empty.
@@ -900,46 +936,43 @@ struct ServersView: View {
         return Double(min(phase + 1, op.stepCount)) / Double(max(op.stepCount, 1))
     }
 
-    // #341 was: metricsRow — a conditional 4×OlcMetric two-deck row (17pt mono).
-    // Now a one-line always-rendered strip: PING 27ms · DISK 36/40G · RAM
-    // 241/2048M · UP 11d, dimmed while an op runs.
-    private func metricsStrip(_ host: ServerHost, state: HostDisplay) -> some View {
+    // MARK: Metrics
+    //
+    // #457: the numbers describe the MACHINE, not whether anything on it works,
+    // so the card draws them below the protocol rows. The formatting statics stay
+    // on this type — `VPSStatFormattingTests` pins them by name.
+
+    private func metrics(_ host: ServerHost) -> ServerCardMetrics {
         let stats = vpsStats[host.id]
-        // #408: drop the "·" separators and pack the stats closer. The separators
-        // plus their padding ate roughly a third of the row, squeezing the values
-        // until they truncated ("4.4/4…", "501/19…"); the uppercase-tertiary label
-        // vs. mono-primary value contrast already delineates each stat without a
-        // glyph between them. #408 was: HStack(spacing: 8) with a `statDot` between
-        // every OlcMiniStat.
-        return HStack(spacing: 12) {
-            pingMiniStat(host)
+        return ServerCardMetrics(
+            ping:     pingValue(host),
+            pingTone: pingTone(host),
             // #346: labels through L10n (ru = en for the abbreviations); units
             // like "G"/"M"/"d" inside the values stay English.
-            OlcMiniStat(label: L10n.vpsStatDisk.localized(), value: Self.shortUsage(stats?.disk))
+            disk:     Self.shortUsage(stats?.disk),
             // #451: shortRAM, not shortUsage — a 2 GB VPS reports "407M/1967M"
-            // and the 9-char "407/1967M" overflowed the 4-stat row on 375pt
-            // phones, ellipsizing mid-value ("407/19…" — the reported bug).
-            OlcMiniStat(label: L10n.vpsStatRAM.localized(),  value: Self.shortRAM(stats?.ram))
-            OlcMiniStat(label: L10n.vpsStatUp.localized(),   value: Self.shortUptime(stats?.uptime))
-            Spacer(minLength: 0)
-        }
-        .opacity(state.isRunning ? 0.45 : 1)
+            // and the 9-char "407/1967M" overflowed the strip on 375pt phones.
+            ram:      Self.shortRAM(stats?.ram),
+            uptime:   Self.shortUptime(stats?.uptime))
     }
 
-    private func pingMiniStat(_ host: ServerHost) -> OlcMiniStat {
+    private func pingValue(_ host: ServerHost) -> String {
         switch pingLatencies[host.id] {
-        case .some(.some(let ms)):
-            // #346: "Ping" label through L10n (ru = en); "ms" stays English.
-            // #456 was: tone: ms < 100 ? green : ms < 300 ? orange : red — an SSH
-            // round-trip says NOTHING about whether the tunnel passes traffic, and
-            // that green was one of the loudest false-green sources on this card.
-            // A reachable value is now neutral; only the honest negative stays red.
-            return OlcMiniStat(label: L10n.vpsStatPing.localized(), value: String(format: "%.0fms", ms),
-                               tone: Theme.Palette.textPrimary)
-        case .some(.none):
-            return OlcMiniStat(label: L10n.vpsStatPing.localized(), value: "✕", tone: Theme.Palette.red)
-        case .none:
-            return OlcMiniStat(label: L10n.vpsStatPing.localized(), value: "—", tone: Theme.Palette.textTertiary)
+        case .some(.some(let ms)): return String(format: "%.0fms", ms)
+        case .some(.none):         return "✕"
+        case .none:                return "—"
+        }
+    }
+
+    /// #456 was: `ms < 100 ? green : ms < 300 ? orange : red` — an SSH round-trip
+    /// says NOTHING about whether the tunnel passes traffic, and that green was
+    /// one of the loudest false-green sources on this card. A reachable value is
+    /// neutral; only the honest negative stays red.
+    private func pingTone(_ host: ServerHost) -> Color {
+        switch pingLatencies[host.id] {
+        case .some(.some): return Theme.Palette.textPrimary
+        case .some(.none): return Theme.Palette.red
+        case .none:        return Theme.Palette.textTertiary
         }
     }
 
@@ -982,78 +1015,6 @@ struct ServersView: View {
                 .replacingOccurrences(of: " min",  with: "m")
     }
 
-    // Action bar — one contextual primary + three fixed icon-only quick
-    // actions (#341: 44×44 tinted OlcIconButtons; was one antenna OlcButton).
-    // Everything here is a subset of `menuItems`; nothing is card-exclusive.
-    @ViewBuilder
-    private func actionBar(_ host: ServerHost, state: HostDisplay) -> some View {
-        HStack(spacing: 8) {
-            primaryButton(host, state: state)
-            OlcIconButton(systemImage: "antenna.radiowaves.left.and.right") {
-                Task { await checkServer(host) }
-            }
-            .disabled(actionsDisabled)
-            .accessibilityLabel(L10n.vpsCheckServer.localized())
-            OlcIconButton(systemImage: "arrow.down.doc", tint: Theme.Palette.green) {
-                logsRouter.request = .init(hostID: host.id, autofetch: true)   // #339 route
-            }
-            .disabled(actionsDisabled || !hasContainer(host))
-            .accessibilityLabel(L10n.actionContainerLogs.localized())
-            OlcIconButton(systemImage: "slider.horizontal.3", tint: Theme.Palette.orange) {
-                reconfigureRequest = primaryReconfigureRequest(host)   // #452
-            }
-            .disabled(actionsDisabled || !hasContainer(host))
-            .accessibilityLabel(L10n.actionChangeRoomTransport.localized())
-            // #419: bot control — LAST in the row, available regardless of
-            // container state. Adding it shrinks the fill-width primary button.
-            // #427: robot glyph (custom asset — no robot SF Symbol). was: bubble.left.and.bubble.right
-            OlcIconButton(assetImage: "RobotIcon", tint: Theme.Palette.accent) {
-                botConfigFor = host
-            }
-            .disabled(actionsDisabled)
-            .accessibilityLabel(L10n.botSheetTitle.localized())
-        }
-    }
-
-    @ViewBuilder
-    private func primaryButton(_ host: ServerHost, state: HostDisplay) -> some View {
-        switch state {
-        case .running:
-            OlcButton(L10n.vpsWorking.localized(), role: .secondary, isBusy: true, fillWidth: true) {}
-        case .failed(let op, _, _, _):
-            OlcButton(L10n.actionRetry.localized(), systemImage: "arrow.clockwise",
-                      role: .primary, fillWidth: true) {
-                Task { await retry(op, on: host) }
-            }
-            .disabled(actionsDisabled)
-        case .base(let b):
-            if b.hasContainer {
-                if b == .running {
-                    OlcButton(L10n.actionStop.localized(), systemImage: "stop.fill",
-                              role: .danger, fillWidth: true) {
-                        Task { await stop(host) }
-                    }
-                    .disabled(actionsDisabled)
-                } else {
-                    OlcButton(L10n.actionStart.localized(), systemImage: "play.fill",
-                              role: .primary, fillWidth: true) {
-                        Task { await startContainer(host) }
-                    }
-                    .disabled(actionsDisabled)
-                }
-            } else {
-                OlcButton(L10n.actionInstall.localized(), systemImage: "arrow.down.app",
-                          role: .primary, fillWidth: true) {
-                    // #456 was: installFor = host — Install is the primary CTA
-                    // whenever no container is KNOWN, which includes "never
-                    // probed", and srv.sh wipes every olcrtc container. Scan first.
-                    Task { await beginInstall(host) }
-                }
-                .disabled(actionsDisabled)
-            }
-        }
-    }
-
     // MARK: Overflow menu — the single COMPLETE action set
     //
     // #258: this is the source of truth. The card's primary + Check buttons are a
@@ -1076,11 +1037,13 @@ struct ServersView: View {
                     Task { await startContainer(host) }
                 })
             }
-            // #339 was: "Download container logs" → fetchLogs(host) + sheet.
-            // Now routes to the Logs tab (Container category, this host) and
-            // auto-starts the fetch there.
-            items.append(.action(L10n.actionContainerLogs.localized(), systemImage: "arrow.down.doc") {
-                logsRouter.request = .init(hostID: host.id, autofetch: true)
+            // #457: container logs are now a PUSH scoped to this server, instead
+            // of the old cross-tab teleport (set a router request → jump to tab 3
+            // → the tab re-derives which host it was about). Same item, honest
+            // destination: the log arrives already about THIS server.
+            items.append(.action(L10n.actionContainerLogs.localized(),
+                                 systemImage: "arrow.down.doc") {
+                logsForHost = host
             })
             items.append(.action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
                 reconfigureRequest = primaryReconfigureRequest(host)   // #452
@@ -1100,7 +1063,12 @@ struct ServersView: View {
             items.append(.action(L10n.actionUninstall.localized(), systemImage: "trash", role: .destructive) {
                 uninstallConfirmHost = host
             })
-        } else {
+        } else if currentBase(host) != .unknown {
+            // #457: `else if … != .unknown` — Install is offered only on a base a
+            // real probe RETURNED, matching `primaryAction`. On a never-read
+            // server the menu's first item ("Check server") is the whole offer.
+            // #457 was: a bare `else`, so a server nothing had ever looked at
+            // carried Install in the menu as well as on the button.
             items.append(.action(L10n.actionInstall.localized(), systemImage: "arrow.down.app") {
                 // #456 was: installFor = host — scan first, then offer a choice.
                 Task { await beginInstall(host) }
@@ -1204,7 +1172,7 @@ struct ServersView: View {
         }
         // Returns immediately: the coordinator serialises the probes, caps the
         // pass and skips the room the live tunnel holds. Nodes it doesn't reach
-        // stay honestly "not checked" (see `healthSweepFooter`).
+        // stay honestly "not checked" (see ServerCardView's sweep note).
         health.verifyStale(serverStore.hosts.flatMap { hostRecords($0) }, using: tunnel)
     }
 
@@ -1323,16 +1291,40 @@ struct ServersView: View {
     // whenever no container is on record — which includes "never probed". So a
     // host we don't know is scanned first, and anything found becomes a choice.
 
+    // boc #457: the scan is now VISIBLE and its failure is FATAL to the install.
+    // #457 was: the whole body ran silently (tapping Install blocked for seconds
+    // with no feedback at all) and swallowed the error —
+    //   `guard let found = try? await provisioner.scanContainers(…) else { installFor = host }`
+    // — so a scan that could not run fell straight through to the destructive
+    // branch. Nothing may be asserted from an absence of information: a failed
+    // scan offers NEITHER fork, and says why on the card.
     private func beginInstall(_ host: ServerHost) async {
+        guard !actionsDisabled else { return }
         guard !currentBase(host).hasContainer, let secret = secret(for: host) else {
             installFor = host; return
         }
-        guard let found = try? await provisioner.scanContainers(on: host, secret: secret),
-              !found.isEmpty else {
-            installFor = host; return
+        let previous = currentBase(host)
+        // The card already knows how to render a running op — reuse it rather
+        // than inventing a second busy vocabulary. `.check` is the honest verb:
+        // this IS a read of the server, and its Retry re-runs the full check.
+        display[host.id] = HostDisplay.start(.check, from: previous)
+            .advanced(note: L10n.vpsScanBeforeInstall.localized())
+        do {
+            let found = try await provisioner.scanContainers(on: host, secret: secret)
+            display[host.id] = .base(previous)
+            if found.isEmpty { installFor = host }
+            else             { installChoice = InstallChoiceRequest(host: host, found: found) }
+        } catch {
+            LogStore.shared.log(.provisioning,
+                "⚠ pre-install scan failed: \(error.localizedDescription)")
+            // The raw Citadel / stderr text never becomes the headline — route it
+            // through the same mapper the health layer uses (#456).
+            let why = HealthFailureMapper.reason(forSSH: error.localizedDescription).message
+            display[host.id] = HostDisplay.start(.check, from: previous)
+                .failed(message: L10n.vpsScanFailed_fmt.formatted(why))
         }
-        installChoice = InstallChoiceRequest(host: host, found: found)
     }
+    // eoc #457
 
     /// #456: adopt what is already running — link the container, then recover its
     /// connection (room + key) from the deployed server.yaml. Nothing is
@@ -1627,101 +1619,17 @@ struct ServersView: View {
         tunnel.connect(record: record)
     }
 
-    @ViewBuilder
-    private func protocolsSection(_ host: ServerHost, state: HostDisplay) -> some View {
-        let rows = carrierRows[host.id] ?? []
-        if hasContainer(host) || !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(L10n.protocolsSectionHeader.localized().uppercased())
-                        .font(.caption2)
-                        .foregroundStyle(Theme.Palette.textTertiary)
-                    if carrierBusyHostID == host.id {
-                        ProgressView().controlSize(.mini)
-                    }
-                    Spacer()
-                    if !missingCarriers(host).isEmpty {
-                        Button {
-                            addProtocolFor = host
-                        } label: {
-                            Label(L10n.addProtocolAction.localized(), systemImage: "plus.circle")
-                                .font(.caption)
-                        }
-                        .disabled(actionsDisabled || carrierBusyHostID != nil)
-                    }
-                }
-                ForEach(rows) { row in
-                    carrierRowView(host, row: row)
-                }
-            }
-            .opacity(state.isRunning ? 0.45 : 1)
-        }
-    }
-
-    private func carrierRowView(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> some View {
-        // #455: each protocol reads as a distinct chip-row. The LIVE one (the
-        // tunnel currently runs through it) carries a restrained aurora wash +
-        // cyan hairline and a slightly heavier label; the rest stay calm on a
-        // faint neutral fill. Aurora is spent only here on "live" and on the
-        // primary CTA — everything else on the card is quiet.
-        let live = isLiveRow(row)
-        return HStack(spacing: 10) {
-            // #456: the leading block moved into its own builder — the row gained
-            // an evidence chip and this file has already hit the type-checker once.
-            carrierRowLead(host, row: row)
-            Spacer()
-            if live {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Palette.signalCyan)   // #455: aurora, not plain green
-                    .accessibilityLabel(L10n.protocolConnectedBadge.localized())
-            }
-            // #456: the evidence — "48 ms · 2m" / "not checked" / "failed 5m ago".
-            // Tapping it runs a real end-to-end probe for THIS protocol.
-            OlcHealthChip(display: rowHealth(host, row: row),
-                          onTap: { verifyRow(host, row: row) })
-            OlcOverflowMenu(items: carrierMenuItems(host, row: row))
-                .disabled(actionsDisabled || carrierBusyHostID != nil)
-        }
-        .padding(.vertical, 7)
-        .padding(.horizontal, 10)
-        .background(live ? AnyShapeStyle(Theme.Palette.auroraSoft)
-                         : AnyShapeStyle(Theme.Palette.fill.opacity(0.5)),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            if live {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Theme.Palette.signalCyan.opacity(0.35), lineWidth: 1)
-            }
-        }
-    }
-
-    /// #456: the row's leading block — the health dot and the labels. The dot is
-    /// the VERIFIED tone (green only for a fresh end-to-end pass); podman keeps
-    /// its say as text on the subtitle line, next to the transport.
-    @ViewBuilder
-    private func carrierRowLead(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> some View {
-        // #456 was: Circle().fill(carrierStatusColor(row)) — green iff
-        // `row.status.shortLabel.hasPrefix("Up")`, i.e. green from `podman ps`.
-        OlcStatusDot(tone: rowHealth(host, row: row).tone)
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                Text(CarrierTransportMatrix.carrierLabel(row.provider))
-                    .font(.subheadline.weight(isLiveRow(row) ? .semibold : .regular))
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                if row.isPrimary {
-                    Text(L10n.protocolPrimaryBadge.localized())
-                        .font(.caption2)
-                        .foregroundStyle(Theme.Palette.textTertiary)
-                }
-            }
-            // #456 was: the transport label alone — the container's status now
-            // rides along as plain text, demoted from a coloured dot.
-            Text("\(CarrierTransportMatrix.transportLabel(row.transport)) · \(row.status.shortLabel)")
-                .font(.caption2)
-                .foregroundStyle(Theme.Palette.textSecondary)
-        }
-    }
+    // boc #457: `protocolsSection`, `carrierRowView` and `carrierRowLead` moved
+    // to App/Views/ProtocolRowView.swift (the row) and App/Views/ServerCardView.swift
+    // (the section around it); `rowView` above resolves one row's inputs. What
+    // changed on the way out:
+    //   • #455's aurora WASH, its `signalCyan` hairline and the cyan checkmark
+    //     are gone — `Theme.Palette.auroraSoft` is deleted, and "live" was a
+    //     colour with no word behind it. The aurora is now a 3pt leading spine
+    //     shown only on a live row a probe has VERIFIED: a verdict, not a style.
+    //   • the raw `podman ps` status ("Up 3 hours", "Exited (137) 5 minutes ago")
+    //     is out of the row subtitle; a stopped protocol says so in one sentence.
+    // eoc #457
 
     // #456 was: carrierStatusColor(_:) — the podman-"Up"→green rule that painted
     // the user's dead telemost row green. Deleted; the dot is health-driven now.
@@ -1738,17 +1646,29 @@ struct ServersView: View {
 
     private func carrierMenuItems(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> [OlcMenuItem] {
         let rowState = rowHealth(host, row: row)   // #456
-        // #456: Verify goes FIRST — the honest answer to "can I use this?" is one
+        let suggested = rowState.suggestedAction   // #457
+        var items: [OlcMenuItem] = []
+        // boc #457: a verdict that names its own fix must OFFER that fix, and
+        // offer it first. `HealthReason.action` has always returned one
+        // (keyMismatch → Recover connection, roomInvalid → Change room) and it
+        // was never wired to anything — the row menu opened with actions that
+        // assume the protocol already works. Whichever item the verdict points
+        // at is hoisted to the top and skipped in its usual position below, so
+        // the menu never lists the same action twice.
+        if suggested == .recoverConnection { items.append(recoverItem(host, row: row)) }
+        if suggested == .checkRoom         { items.append(reconfigureItem(host, row: row)) }
+        // eoc #457
+        // #456: Verify comes next — the honest answer to "can I use this?" is one
         // tap away, instead of buried under actions that assume it already works.
-        var items: [OlcMenuItem] = [
-            .action(L10n.healthActionVerify.localized(), systemImage: "checkmark.shield") {
-                verifyRow(host, row: row)
-            },
-            .action(L10n.protocolConnectAction.localized(), systemImage: "personalhotspot") {
-                connectVia(host, row: row)
-            }
-        ]
-        if row.status.shortLabel.hasPrefix("Up") {
+        items.append(.action(L10n.healthActionVerify.localized(), systemImage: "checkmark.shield") {
+            verifyRow(host, row: row)
+        })
+        items.append(.action(L10n.protocolConnectAction.localized(), systemImage: "personalhotspot") {
+            connectVia(host, row: row)
+        })
+        // #457 was: `row.status.shortLabel.hasPrefix("Up")` — string-matching a
+        // user-visible label. `ContainerStatus.parse` already decided this.
+        if Self.isUp(row.status) {
             items.append(.action(L10n.actionStop.localized(), systemImage: "stop.fill", role: .destructive) {
                 if row.isPrimary { Task { await stop(host) } }
                 else             { Task { await stopCarrier(host, row: row) } }
@@ -1759,21 +1679,15 @@ struct ServersView: View {
                 else             { Task { await startCarrier(host, row: row) } }
             })
         }
-        items.append(.action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
-            // #456: seeded through the shared builder, so the wbstream token and
-            // the jitsi instance the record already holds are carried in.
-            reconfigureRequest = rowReconfigureRequest(host, row: row)
-        })
+        if suggested != .checkRoom { items.append(reconfigureItem(host, row: row)) }   // #457
         // #456 was: `if connectionRecord(host, row: row) == nil` — the user's actual
         // incident was the opposite case: they reinstalled the server, so its key
         // changed, their stored key stopped matching, and the handshake failed with
         // "read welcome / handshake client". A row whose probe reported a key
         // mismatch now offers Recover right here, stale record and all.
-        if connectionRecord(host, row: row) == nil || rowState.suggestedAction == .recoverConnection {
-            items.append(.action(L10n.actionRecoverConnection.localized(), systemImage: "arrow.counterclockwise.circle") {
-                recoverRowRequest = CarrierRecoverRequest(
-                    host: host, container: row.container, file: row.file, isPrimary: row.isPrimary)
-            })
+        // #457: …and when the verdict asked for it, it is already at the top.
+        if suggested != .recoverConnection, connectionRecord(host, row: row) == nil {
+            items.append(recoverItem(host, row: row))
         }
         // #456: explain a failure in human terms, in place — never raw core log
         // lines. "Couldn't check" gets the same item; it is a different sentence.
@@ -1792,6 +1706,25 @@ struct ServersView: View {
             })
         }
         return items
+    }
+
+    /// #457: "Re-read the settings from the server" as ONE item, so it can be
+    /// hoisted to the top of the menu when the verdict asks for it without being
+    /// written out twice.
+    private func recoverItem(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> OlcMenuItem {
+        .action(L10n.actionRecoverConnection.localized(), systemImage: "arrow.counterclockwise.circle") {
+            recoverRowRequest = CarrierRecoverRequest(
+                host: host, container: row.container, file: row.file, isPrimary: row.isPrimary)
+        }
+    }
+
+    /// #457: same, for "Change room / transport".
+    private func reconfigureItem(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> OlcMenuItem {
+        .action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
+            // #456: seeded through the shared builder, so the wbstream token and
+            // the jitsi instance the record already holds are carried in.
+            reconfigureRequest = rowReconfigureRequest(host, row: row)
+        }
     }
 
     /// Passive rows refresh — logs failures, never alerts.
@@ -2170,17 +2103,17 @@ struct ServersView: View {
                                 Text(container.name)
                                     .font(.system(.body, design: .monospaced))
                                 HStack(spacing: 8) {
-                                    Circle()
-                                        // #350 was: Color.green / Color.orange — route through Theme.Palette.
-                                        // #456 (audit) was: `hasPrefix("Up") ? Theme.Palette.green`
-                                        // — the LAST podman-"Up"→green rule left in the app, the
-                                        // same one deleted from `carrierRowLead`. Nothing here has
-                                        // probed anything: these are container names scraped off
-                                        // the VPS. Neutral; the status text beside it still says
-                                        // "Up 3 hours", and green stays reserved for a verified probe.
-                                        .fill(container.status == .notFound ? Color.secondary :
-                                              container.status.shortLabel.hasPrefix("Up") ? Theme.Palette.textTertiary : Theme.Palette.orange)
-                                        .frame(width: 8, height: 8)
+                                    // boc #457: the bare 8pt unlabelled dot is gone — a shape
+                                    // whose only channel was hue, next to text that already
+                                    // says the same thing.
+                                    // #350 was: Color.green / Color.orange — route through Theme.Palette.
+                                    // #456 (audit) was: `hasPrefix("Up") ? Theme.Palette.green`
+                                    // — the LAST podman-"Up"→green rule left in the app.
+                                    // #457 was: Circle().fill(…).frame(width: 8, height: 8)
+                                    Image(systemName: Self.scanGlyph(container.status))
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Palette.textTertiary)
+                                    // eoc #457
                                     Text(container.status.shortLabel)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -2227,7 +2160,8 @@ struct ServersView: View {
         // #456 was: display[host.id] = .base(.stopped) — the scan had ALREADY
         // told us whether the container is Up; seeding "stopped" for a running
         // one was a present-tense claim we held evidence against.
-        let base: HostBase = container.status.shortLabel.hasPrefix("Up") ? .running : .stopped
+        // #457 was: `container.status.shortLabel.hasPrefix("Up")`
+        let base: HostBase = Self.isUp(container.status) ? .running : .stopped
         display[host.id] = .base(base)
         // #456: the scan IS a fresh SSH observation — both clocks.
         lastProbe[host.id]   = Date()
@@ -2295,14 +2229,15 @@ struct CarrierRecoverRequest: Identifiable {
 
 // #340: both appearance variants.
 #if DEBUG
-#Preview("Manage VPS — Dark") {
+// #457 was: the previews passed `logsRouter: LogsRouter()`.
+#Preview("Servers — Dark") {
     ServersView(serverStore: ServerHostStore(), connections: ConnectionStore(),
-                logsRouter: LogsRouter(), botStore: BotStore(), tunnel: TunnelManager())
+                botStore: BotStore(), tunnel: TunnelManager())
         .preferredColorScheme(.dark)
 }
-#Preview("Manage VPS — Light") {
+#Preview("Servers — Light") {
     ServersView(serverStore: ServerHostStore(), connections: ConnectionStore(),
-                logsRouter: LogsRouter(), botStore: BotStore(), tunnel: TunnelManager())
+                botStore: BotStore(), tunnel: TunnelManager())
         .preferredColorScheme(.light)
 }
 #endif

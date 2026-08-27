@@ -2,13 +2,16 @@ import SwiftUI
 
 // MARK: - SettingsView
 //
-// Fourth tab. Surfaces values that used to be hardcoded:
+// #457: the THIRD and last tab, ordered by consequence. Surfaces values that
+// used to be hardcoded, plus the two sections the deleted Config tab held:
+//   - Tunnel: proxy vs VPN + auto-failover (FIRST — it changes what the word
+//     "Connected" means, so it outranks everything below it)
 //   - SOCKS5 listener port (with a "check port" button that probes binding)
 //   - DNS server passed to the Go runtime
 //   - vp8channel codec tuning (FPS + batch size)
 //   - Connection start timeout
-//   - Debug logging toggle
-//   - Logs view font size
+//   - Diagnostics and logs (pushes LogsView(subject: .all)) + log level
+//   - Logs buffer sizes, appearance, bots, reset
 //
 // Reads/writes go through SettingsStore.shared, which mirrors UserDefaults.
 // SwiftUI rebinds on @Published changes automatically.
@@ -22,8 +25,12 @@ struct SettingsView: View {
     // `tunnel.boundPort` — the port the session actually bound — so a live
     // port edit in Settings can't mislabel the check either.
     @ObservedObject var tunnel: TunnelManager
-    /// #420: bot registry (shared with Manage VPS). Managed in `BotsSettingsView`.
+    /// #420: bot registry (shared with Servers). Managed in `BotsSettingsView`.
     @ObservedObject var botStore: BotStore
+    /// #457: the two stores the pushed `LogsView(subject: .all)` needs — the
+    /// per-server container buffers and the host picker's "primary" star.
+    @ObservedObject var serverStore: ServerHostStore
+    @ObservedObject var connections: ConnectionStore
 
     @State private var portCheck: PortAvailability.PortState?
     @State private var socksPassInput: String = ""
@@ -66,7 +73,9 @@ struct SettingsView: View {
                 // DNS (submenu) → vp8channel → Connection → Diagnostics →
                 // Logs → Appearance LAST → version footer; max one short
                 // footer per section.
+                // #457: Tunnel leads — the most consequential setting first.
                 Form {
+                    tunnelSection
                     socksSection
                     dnsRowSection
                     transportSection
@@ -82,6 +91,11 @@ struct SettingsView: View {
                 // mid-gray ground (Theme.Palette.bg) never showed on this tab.
                 .scrollContentBackground(.hidden)
                 .background(Theme.Palette.bg)
+                // #457 (was ConfigView's `.task`): side-effect free — only reads
+                // existing VPN preferences (a past save proves the entitlement),
+                // never pops the system consent alert. Drives the VPN chip's
+                // enabled state in `tunnelSection`.
+                .task { await tunnel.vpn.probeCapability() }
                 .onDisappear { socksPassLoaded = false }
                 // #455: reset-to-defaults confirm (unsticks a wedged state
                 // without reinstalling; connections and servers are kept).
@@ -112,6 +126,18 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: Tunnel (#457 — absorbed from the deleted Config tab)
+
+    /// #457: the Config tab's two live sections, now FIRST in Settings. Both
+    /// bodies live in ConfigView.swift so this file doesn't grow (SwiftUI
+    /// type-checker budget) — see `TunnelSettingsModeSection` /
+    /// `TunnelSettingsReliabilitySection`.
+    @ViewBuilder
+    private var tunnelSection: some View {
+        TunnelSettingsModeSection(tunnel: tunnel)
+        TunnelSettingsReliabilitySection()
     }
 
     // MARK: SOCKS
@@ -349,6 +375,14 @@ struct SettingsView: View {
     // footers — one "Logs" section, one short footer.
     private var logsSection: some View {
         Section {
+            // #457: Logs stopped being a tab. This is its unscoped entrance —
+            // every OTHER way in is a push from the thing the log explains
+            // (a connection attempt, a provisioning run, one server's container).
+            NavigationLink {
+                LogsView(subject: .all, serverStore: serverStore, connections: connections)
+            } label: {
+                Text(L10n.settingsOpenLogsRow.localized())
+            }
             numericField(L10n.logBufferLabel.localized(), value: $settings.logBufferSize,
                          presets: [Preset(value: 500,  label: "500"),
                                    Preset(value: 1000, label: "1k"),
@@ -361,7 +395,9 @@ struct SettingsView: View {
             OlcButton(L10n.clearAllLogsAction.localized(), systemImage: "trash",
                       role: .danger, fillWidth: true) {
                 LogStore.shared.clearAll()
-                Haptics.success()   // #455: the clear is instant and off-screen (Logs tab), so confirm it fired
+                // #455: the clear is instant and its effect is off-screen (the
+                // log reader is a pushed destination since #457), so confirm it fired.
+                Haptics.success()
             }
         } header: {
             Text(L10n.sectionLogs.localized())
@@ -778,9 +814,13 @@ struct BotEditorView: View {
 // #340: both appearance variants.
 #if DEBUG
 #Preview("Settings — Dark") {
-    SettingsView(tunnel: TunnelManager(), botStore: BotStore()).preferredColorScheme(.dark)
+    SettingsView(tunnel: TunnelManager(), botStore: BotStore(),
+                 serverStore: ServerHostStore(), connections: ConnectionStore())
+        .preferredColorScheme(.dark)
 }
 #Preview("Settings — Light") {
-    SettingsView(tunnel: TunnelManager(), botStore: BotStore()).preferredColorScheme(.light)
+    SettingsView(tunnel: TunnelManager(), botStore: BotStore(),
+                 serverStore: ServerHostStore(), connections: ConnectionStore())
+        .preferredColorScheme(.light)
 }
 #endif

@@ -28,24 +28,22 @@ enum L10nTable {
         .done:              "Done",
         .error:             "Error",
         .edit:              "Edit",
-        .okPrompt:          "Done",
+        .okPrompt:          "Result",   // #457 was: "Done" — this titles failures too
 
         // Tabs
         .tabConnections:    "Connections",
-        .tabServers:        "Manage VPS",
-        .tabLogs:           "Logs",
+        // #457 was: "Manage VPS" — the app called one place three names ("Manage
+        // VPS" here, "VPS list" as the screen title, "the Servers tab" inside
+        // `healthActionOnServersTab_fmt`), so a suggested fix pointed at a tab
+        // that did not exist under that name. One noun: server.
+        .tabServers:        "Servers",
         .tabSettings:       "Settings",
-        .tabConfig:         "Config",
-        .configComingSoonTitle: "Coming soon",
-        .configComingSoonHint:  "Routing options — direct/tunnel modes and per-app rules — will live here.",
         .autoDetectedContainer_fmt: "Auto-detected existing container: %@",
 
         // Tunnel mode (#vpn)
         .tunnelModeProxy:           "Proxy",
         .tunnelModeVPN:             "VPN",
         .configModeSectionHeader:   "Tunnel mode",
-        .configProxyExplainer:      "Proxy — a local SOCKS5 server inside the app. Only apps that can use a SOCKS proxy go through the tunnel; everything else stays direct.",
-        .configVPNExplainer:        "VPN — a system-wide tunnel via a Network Extension: all of the device's traffic goes through the connection. Requires a build signed with a paid Apple Developer team.",
         .configVPNUnavailableFooter: "VPN mode is unavailable on this install:",
         .vpnVideochannelUnsupported: "The videochannel transport is not supported in VPN mode. Switch the connection to another transport, or use proxy mode.",
         .vpnDisconnected:           "VPN tunnel disconnected",
@@ -65,7 +63,6 @@ enum L10nTable {
         .healthLatencyLabel:         "Latency",
         .healthThroughputLabel:      "Speed",
         .healthLatencyMs_fmt:        "%d ms",
-        .healthMeasuring:            "measuring…",
         .healthLocationUnknown:      "Location unknown",
         .healthRefresh:              "Refresh",
         // #455: premium redesign editorial additions
@@ -104,7 +101,7 @@ enum L10nTable {
         // ConnectionsView
         .emptyNoConnections:         "No connections yet",
         // #303 was: "Tap + to add a connection manually. If you have a VPS, go to the Servers tab to install and link automatically."
-        .emptyNoConnectionsHint:     "Tap + to add a connection manually. If you have a VPS, go to the Servers tab to install and link automatically — or, if olcrtc is already running there, use \"Recover connection\".",
+        .emptyNoConnectionsHint:     "A connection is one route out — one protocol on one of your servers.",
         .actionConnect:              "Connect",
         .actionRetry:                "Retry",
         .shareAction:                "Share",
@@ -112,7 +109,6 @@ enum L10nTable {
         .shareConnectionTitle:       "Share connection",
         .shareConnectionExplanation: "Share this URI to let others connect through your server. It contains the carrier, room ID, and encryption key — your server SSH credentials are not included.",
         .shareConnectionURIHeader:   "Connection URI",
-        .primaryRoleMain:            "primary",
         .copiedURI_fmt:              "📋 URI copied: %@",
         // #135: full-access (co-admin) share
         .shareFullAccessTitle:       "Share full access (SSH)",
@@ -165,9 +161,11 @@ enum L10nTable {
         .seiParamsHint:              "Tuning for the SEI channel. Sent only when the transport is seichannel; stored either way.",
 
         // ServersView
-        .serversTitle:               "VPS list",
+        // #457 was: "VPS list" — the screen title disagreed with its own tab and
+        // with the copy that points at it. Same noun everywhere.
+        .serversTitle:               "Servers",
         .emptyNoServers:             "No servers",
-        .emptyNoServersHint:         "Add a VPS to install olcrtc from here",
+        .emptyNoServersHint:         "Add a server over SSH and the app installs one container per protocol. Each protocol becomes a connection you can use or share.",
         .newServerTitle:             "New server",
         .editServerTitle:            "Edit",
         .sshAccessHeader:            "SSH access",
@@ -183,7 +181,7 @@ enum L10nTable {
         .actionUpdate:               "Update binary (fetch pinned build + rebuild)",
         .actionReboot:               "Reboot",
         .actionChangeRoomTransport:  "Change room / transport",
-        .actionContainerLogs:        "Container logs",   // #339 was: "Download container logs"
+        .actionContainerLogs:        "Container logs",
         .actionDone:                 "Done",
         .actionRemoveFromList:       "Remove host from list",
         .removeHostConfirmTitle:     "Remove %@?",
@@ -209,7 +207,7 @@ enum L10nTable {
         .rotateKeyConfirmBody:       "The deployed server.yaml could not be read, so the existing connection cannot be recovered. This generates a new encryption key on the server, repairs its config, restarts it, and adds the resulting connection here. Warning: all other devices using this server will lose access until they import the new connection.",
         .rotateKeyConfirmAction:     "Generate new key",
         .provisioningRotatingKey:    "Generating new server key…",
-        .rotateKeyResultSuccess:     "New encryption key active",
+        .rotateKeyResultSuccess:     "New key active. Any link you shared before has stopped working.",
         .rotateKeyResultAdded_fmt:   "New key generated — %@/%@ connection added",
         .rotateKeyFailedNoURI:       "Key rotation finished but the server did not print a URI — check the provisioning log.",
 
@@ -226,17 +224,17 @@ enum L10nTable {
         .readinessContainerRunning_fmt:  "Running: %@",
 
         // VPS status card (#258/#261)
-        .vpsTitleUnknown:         "Status unknown",
+        .vpsTitleUnknown:         "Not checked",
         .vpsTitleReady:           "Ready to install",
         .vpsTitlePodmanReady:     "Podman ready",
         .vpsTitleStopped:         "Stopped",
         .vpsTitleRunning:         "Running",
-        .vpsSubUnknown:           "Tap Check to probe",
+        .vpsSubUnknown:           "No test has been run on this server.",
         .vpsSubNoPodman:          "Full setup ~5–7 min",
         .vpsSubNoImage:           "First install pulls image (~300 MB)",
         .vpsSubImageReady:        "Image cached — fast reinstall",
         .vpsSubStopped:           "Container present, not running",
-        .vpsSubRunning:           "Server process up — not a connection test",
+        .vpsSubRunning:           "The container is running. Nothing has gone through it yet.",
         .vpsVerbChecking:         "Checking",
         .vpsVerbInstalling:       "Installing",
         .vpsVerbStarting:         "Starting",
@@ -259,8 +257,9 @@ enum L10nTable {
         .logsTitle:                  "Logs",
         .logsSearchPlaceholder:      "Search",
         .emptyLogsGeneric:           "Empty",
-        // #316 was: "…Connections or Servers tab" — the VPS tab is named "Manage VPS".
-        .emptyLogsGenericHint:       "Run an operation in the Connections or Manage VPS tab",
+        // #316 was: `emptyLogsGenericHint`, "Run an operation in the Connections
+        // or Manage VPS tab" — deleted in #457 with the Logs tab itself; a
+        // pushed log names its own subject and never points at a tab.
         .noSearchResults:            "Nothing found",
         .noSearchResultsHint_fmt:    "No matches for «%@».",
         .categoryConnection:         "Connection",
@@ -285,7 +284,7 @@ enum L10nTable {
         // #296: Container tab always-present load button
         // #338 was: logsDownloadFromServer ("Download logs from server")
         .logsCheckServer:            "Check server",
-        .logsContainerEmptyHint:     "Logs need to be loaded from the server.",
+        .logsContainerEmptyHint:     "Nothing loaded yet. Tap Fetch to pull the newest lines from this server.",
         // #316: single-stack Logs tab — segmented-control short labels + line count
         .logsSegConnection:          "Conn",
         .logsSegDiagnostics:         "Diag",
@@ -357,13 +356,13 @@ enum L10nTable {
         .languageLabel:              "Language",
         .themeLabel:                 "Theme",
 
-        // #340/#299: appearance scheme picker (System / Light / Dark / Gray)
+        // #340/#299: appearance scheme picker. #457 was: this comment still
+        // listed a fourth "Gray" scheme, deleted in #456.
         .appearanceLabel:            "Appearance",
         .appearanceSystem:           "System",
         .appearanceLight:            "Light",
         .appearanceDark:             "Dark",
         // #342: fixed-footprint hero footer
-        .heroDisconnectedHint_fmt:   "Flip the switch to connect via %@.",
 
         // InstallOptionsView
         .installTitle:               "Install olcrtc",
@@ -453,7 +452,7 @@ enum L10nTable {
         .installFailedNoURI_fmt:     "Script finished without URI. Last lines:\n%@",
         .installTimeout25min:        "Install timed out (25 minutes)",
         .installResultSuccess_fmt:   "olcrtc server installed (%@/%@)",
-        .uninstallResultSuccess:     "Server cleaned up",
+        .uninstallResultSuccess:     "Container removed. Connections through it no longer work.",
         .updateResultSuccess:        "Binary updated",
         .provisioningStarting:       "Starting server…",
         .startResultSuccess:         "Server started",
@@ -706,7 +705,7 @@ enum L10nTable {
         // without a probe behind it; "Working" is granted only by an
         // end-to-end result that is still inside the freshness window.
         .healthNeverChecked:          "Not checked yet",
-        .healthNeverCheckedHint:      "Tap Verify to push a real request through this node.",
+        .healthNeverCheckedHint:      "Tap Verify to push a real request through this connection.",
         .healthChecking:              "Checking…",
         .healthCheckingHint:          "Joining the room and loading a test page",
         .healthVerified:              "Working",
@@ -766,7 +765,6 @@ enum L10nTable {
         .healthActionVerify:          "Verify",
         .healthVerifyAllAction:       "Verify all",
         .healthShowReasonAction:      "What's wrong?",
-        .healthWhyTitle:              "What's wrong",
         .healthLatencyNotMeasured:    "not measured",
         .healthSweepSkipped_fmt:      "%d more not checked — tap Verify all",
 
@@ -779,18 +777,73 @@ enum L10nTable {
         .vpsHeadlineNotCheckedHint:      "Checking the server…",
         .vpsHeadlineStopped:             "Server stopped",
         .vpsHeadlineStoppedHint:         "The container exists but isn't running — tap Start server",
-        .vpsProcessCaption_fmt:          "Server process: %@ · checked %@ ago",
-        .vpsProcessCaptionNever_fmt:     "Server process: %@ · not checked",
 
         // #456: misc UI copy
         .shareConnectionOnlyBadge:    "Connection link — no server access",
         .shareConnectionOnlySub:      "The link below lets someone connect through your server. It carries no SSH login, and it cannot manage, reconfigure, or wipe the VPS.",
-        .heroSelectedNotLive_fmt:     "Selected: %@ — reconnect to switch",
         .roomIDLastUsed_fmt:          "Use last room: %@",
         .installExistingFoundTitle_fmt: "This VPS already runs %@",
         .installExistingFoundBody:    "Reinstalling deletes it and every other olcrtc container on this server, along with their rooms and keys.",
         .installUseExistingAction:    "Use the existing one",
         .installReinstallAction:      "Reinstall anyway",
+
+        // MARK: #457 Tunnel-mode picker (the Config tab is gone; the picker
+        // lives on the Connect screen now). Three questions, plainly answered —
+        // the choice changes what the word "Connected" means.
+        .tunnelModeLockedNote:       "You can't switch while a connection is live. Disconnect first.",
+        .tunnelCompareScope:         "What goes through it",
+        .tunnelCompareScopeProxy:    "Only apps you point at 127.0.0.1",
+        .tunnelCompareScopeVPN:      "Everything on this device",
+        .tunnelCompareNeeds:         "What it needs",
+        .tunnelCompareNeedsProxy:    "Nothing — it just runs",
+        .tunnelCompareNeedsVPN:      "A VPN profile iOS asks you to approve",
+        .tunnelCompareRuns:          "Where it runs",
+        .tunnelCompareRunsProxy:     "Inside this app, while it's open",
+        .tunnelCompareRunsVPN:       "In the background, app closed",
+
+        // #457: Logs is a detail view of the thing it explains, so its title
+        // names that subject instead of saying "Logs" four times over.
+        .settingsOpenLogsRow:        "Diagnostics and logs",
+        .logsSubjectConnection:      "Connection log",
+        .logsSubjectProvisioning:    "Server operations log",
+        .logsSubjectContainer_fmt:   "Server log · %@",
+        .logsEmptySubjectHint:       "Nothing has been recorded here yet.",
+
+        // #457: the Connect hero. The evidence line never claims more than was
+        // measured — "connected" and "checked" are two different facts.
+        .actionDisconnect:           "Disconnect",
+        .heroSubjectNone:            "No connection yet",
+        .heroLastUsedLabel:          "Last used",
+        .heroPickAConnection:        "Pick a connection below.",
+        .heroEvidenceStarting_fmt:   "starting… %d s",
+        .heroEvidenceUnverified:     "connected · no data checked through it yet",
+        .heroEvidenceNoNetwork:      "holding the session until the network returns",
+        .heroScopeProxy_fmt:         "Proxy · only apps you point at 127.0.0.1:%@",
+        .heroScopeVPN:               "VPN · everything on this device",
+
+        // #457: connection rows.
+        .connectRowLive:             "Live",
+        .connectRowTapHint:          "Connects through this connection",
+        .connectRowRemove:           "Remove connection",
+        .connectGroupFailing_fmt:    "%d of %d not working",
+
+        // #457: a suggested action that lives on another screen says where.
+        .healthActionOnServersTab_fmt: "%@ — on the Servers tab",
+        .healthActionInSettings_fmt:   "%@ — in Settings",
+        .healthNeverMeasured:        "never measured",
+
+        // #457: the server card. The process caption states what was READ from
+        // the server, with its age — it is never a claim about a connection.
+        .vpsProtocolsFailing_fmt:    "%d of %d protocols are not working",
+        .vpsProcessRunning:          "Server process is running",
+        .vpsProcessStopped:          "Server process is stopped",
+        .vpsProcessNothingInstalled: "Nothing is installed on this server",
+        .vpsProcessNotSetUp:         "This server can't run olcrtc yet",
+        .vpsProcessUnread:           "Nothing has been read from this server yet",
+        .vpsProcessAge_fmt:          "%@ · read %@ ago",
+        .protocolStoppedNote:        "Not running on the server",
+        .vpsScanBeforeInstall:       "Looking for an existing install…",
+        .vpsScanFailed_fmt:          "Couldn't look at what's on this server. %@",
     ]
 
     // MARK: Russian
@@ -804,24 +857,21 @@ enum L10nTable {
         .done:              "Готово",
         .error:             "Ошибка",
         .edit:              "Изменить",
-        .okPrompt:          "Готово",
+        .okPrompt:          "Результат",   // #457 was: «Готово» — этим же заголовком показывались ошибки
 
         // Tabs
         .tabConnections:    "Подключения",
-        .tabServers:        "Управление VPS",
-        .tabLogs:           "Логи",
+        // #457 was: «Управление VPS» — см. английскую таблицу: одно место
+        // называлось тремя именами, и подсказка «на вкладке «Серверы»»
+        // указывала на вкладку с другим названием.
+        .tabServers:        "Серверы",
         .tabSettings:       "Настройки",
-        .tabConfig:         "Конфиг",
-        .configComingSoonTitle: "Скоро",
-        .configComingSoonHint:  "Здесь появятся настройки маршрутизации — режимы «напрямую/через туннель» и правила по приложениям.",
         .autoDetectedContainer_fmt: "Обнаружен существующий контейнер: %@",
 
         // Tunnel mode (#vpn)
         .tunnelModeProxy:           "Прокси",
         .tunnelModeVPN:             "VPN",
         .configModeSectionHeader:   "Режим туннеля",
-        .configProxyExplainer:      "Прокси — локальный SOCKS5-сервер внутри приложения. Через туннель идут только приложения, умеющие работать с SOCKS-прокси; остальной трафик идёт напрямую.",
-        .configVPNExplainer:        "VPN — системный туннель через Network Extension: весь трафик устройства идёт через подключение. Требуется сборка, подписанная платной командой Apple Developer.",
         .configVPNUnavailableFooter: "Режим VPN недоступен в этой установке:",
         .vpnVideochannelUnsupported: "Транспорт videochannel не поддерживается в режиме VPN. Переключите подключение на другой транспорт или используйте режим прокси.",
         .vpnDisconnected:           "VPN-туннель отключён",
@@ -841,7 +891,6 @@ enum L10nTable {
         .healthLatencyLabel:         "Задержка",
         .healthThroughputLabel:      "Скорость",
         .healthLatencyMs_fmt:        "%d мс",
-        .healthMeasuring:            "измерение…",
         .healthLocationUnknown:      "Локация неизвестна",
         .healthRefresh:              "Обновить",
         // #455: premium redesign editorial additions
@@ -880,7 +929,7 @@ enum L10nTable {
         // ConnectionsView
         .emptyNoConnections:         "Нет подключений",
         // #303 was: "Нажми + чтобы добавить подключение вручную. Если есть VPS — перейди во вкладку Управление VPS для автоматической установки."
-        .emptyNoConnectionsHint:     "Нажми + чтобы добавить подключение вручную. Если есть VPS — перейди во вкладку Управление VPS для автоматической установки. Если olcrtc уже запущен на сервере, используй «Восстановить подключение».",
+        .emptyNoConnectionsHint:     "Подключение — это один маршрут наружу: один протокол на одном из твоих серверов.",
         .actionConnect:              "Подключить",
         .actionRetry:                "Повторить",
         .shareAction:                "Поделиться",
@@ -900,7 +949,6 @@ enum L10nTable {
         .fullAccessImportBody_fmt:   "Эта ссылка даёт полный SSH-доступ к серверу «%@» — его адрес, логин и пароль будут сохранены на этом устройстве. Импортируйте только доверенные ссылки.",
         .fullAccessImportAddAction:  "Добавить полный доступ",
         .fullAccessImportInvalid:    "Недействительная ссылка полного доступа.",
-        .primaryRoleMain:            "основной",
         .copiedURI_fmt:              "📋 URI скопирован: %@",
 
         // AddConnectionView
@@ -938,9 +986,11 @@ enum L10nTable {
         .seiParamsHint:              "Настройки SEI-канала. Отправляются только при транспорте seichannel, но сохраняются в любом случае.",
 
         // ServersView
-        .serversTitle:               "Список VPS",
+        // #457 was: «Список VPS» — заголовок экрана расходился с названием
+        // вкладки и с текстом, который на него ссылается.
+        .serversTitle:               "Серверы",
         .emptyNoServers:             "Нет серверов",
-        .emptyNoServersHint:         "Добавь VPS чтобы установить olcrtc прямо отсюда",
+        .emptyNoServersHint:         "Добавь сервер по SSH — приложение поставит по контейнеру на каждый протокол. Каждый протокол станет подключением, которым можно пользоваться и делиться.",
         .newServerTitle:             "Новый сервер",
         .editServerTitle:            "Изменить",
         .sshAccessHeader:            "Доступ по SSH",
@@ -954,7 +1004,7 @@ enum L10nTable {
         .actionUpdate:               "Обновить бинарник (закреплённая сборка + пересборка)",
         .actionReboot:               "Reboot",
         .actionChangeRoomTransport:  "Сменить комнату / транспорт",
-        .actionContainerLogs:        "Логи контейнера",   // #339 was: "Скачать логи контейнера"
+        .actionContainerLogs:        "Логи контейнера",
         .actionDone:                 "Готово",
         .actionRemoveFromList:       "Удалить из списка",
         .removeHostConfirmTitle:     "Удалить %@?",
@@ -980,7 +1030,7 @@ enum L10nTable {
         .rotateKeyConfirmBody:       "Развёрнутый server.yaml не удалось прочитать, поэтому восстановить существующее подключение нельзя. Будет создан новый ключ шифрования на сервере, конфигурация восстановлена, сервер перезапущен, а полученное подключение добавлено здесь. Внимание: все другие устройства, использующие этот сервер, потеряют доступ, пока не импортируют новое подключение.",
         .rotateKeyConfirmAction:     "Создать новый ключ",
         .provisioningRotatingKey:    "Создание нового ключа сервера…",
-        .rotateKeyResultSuccess:     "Новый ключ шифрования активен",
+        .rotateKeyResultSuccess:     "Новый ключ активен. Все ссылки, которыми ты делился раньше, перестали работать.",
         .rotateKeyResultAdded_fmt:   "Новый ключ создан — подключение %@/%@ добавлено",
         .rotateKeyFailedNoURI:       "Ротация ключа завершилась, но сервер не вывел URI — проверь журнал provisioning.",
 
@@ -997,17 +1047,17 @@ enum L10nTable {
         .readinessContainerRunning_fmt:  "Работает: %@",
 
         // VPS status card (#258/#261)
-        .vpsTitleUnknown:         "Статус неизвестен",
+        .vpsTitleUnknown:         "Не проверено",
         .vpsTitleReady:           "Готов к установке",
         .vpsTitlePodmanReady:     "Podman готов",
         .vpsTitleStopped:         "Остановлен",
         .vpsTitleRunning:         "Работает",
-        .vpsSubUnknown:           "Нажмите «Проверить»",
+        .vpsSubUnknown:           "Проверка ещё не запускалась.",
         .vpsSubNoPodman:          "Полная установка ~5–7 мин",
         .vpsSubNoImage:           "Первая установка тянет образ (~300 МБ)",
         .vpsSubImageReady:        "Образ в кэше — быстрая переустановка",
         .vpsSubStopped:           "Контейнер есть, не запущен",
-        .vpsSubRunning:           "Серверный процесс запущен — это не проверка подключения",
+        .vpsSubRunning:           "Контейнер запущен. Через него пока ничего не проходило.",
         .vpsVerbChecking:         "Проверка",
         .vpsVerbInstalling:       "Установка",
         .vpsVerbStarting:         "Запуск",
@@ -1030,8 +1080,9 @@ enum L10nTable {
         .logsTitle:                  "Логи",
         .logsSearchPlaceholder:      "Поиск",
         .emptyLogsGeneric:           "Пусто",
-        // #316 was: "…во вкладке Connections или VPS" — вкладка называется "Управление VPS".
-        .emptyLogsGenericHint:       "Запусти операцию во вкладке Connections или Управление VPS",
+        // #316 was: `emptyLogsGenericHint` — «Запусти операцию во вкладке …»;
+        // удалено в #457 вместе с вкладкой логов: экран лога называет свой
+        // предмет сам и не отсылает к вкладкам.
         .noSearchResults:            "Ничего не найдено",
         .noSearchResultsHint_fmt:    "По запросу «%@» совпадений нет.",
         .categoryConnection:         "Подключение",
@@ -1056,7 +1107,7 @@ enum L10nTable {
         // #296: Container tab always-present load button
         // #338 was: logsDownloadFromServer ("Загрузить логи с сервера")
         .logsCheckServer:            "Проверить сервер",
-        .logsContainerEmptyHint:     "Логи нужно загрузить с сервера.",
+        .logsContainerEmptyHint:     "Пока ничего не загружено. Нажми «Загрузить», чтобы получить свежие строки с этого сервера.",
         // #316: single-stack Logs tab — короткие подписи сегментов + счётчик строк
         .logsSegConnection:          "Подкл",
         .logsSegDiagnostics:         "Диаг",
@@ -1092,7 +1143,7 @@ enum L10nTable {
         .sectionIPSources:           "Источники проверки IP",
         .ipSourcesFooter:            "Сервисы, опрашиваемые при проверке IP. Варианты из ru-зоны остаются доступны, когда публичные резолверы заблокированы. Если ничего не выбрано, используются значения по умолчанию.",
         .sectionSpeedProvider:       "Провайдер спидтеста",
-        .speedProviderFooter:        "Сервер, против которого идёт тест скорости. Смените, если Cloudflare медленный или заблокирован в вашей сети.",
+        .speedProviderFooter:        "Сервер, против которого идёт тест скорости. Смени, если Cloudflare медленный или заблокирован в твоей сети.",
         .speedAllFailed:             "Все измерения не удались",
         .speedDatachannelHint:       "Подсказка: видео-транспорты (vp8channel/sei/video) жертвуют скоростью ради вида видеозвонка. Для большей скорости смените транспорт сервера на datachannel там, где это позволяет сеть.",
         .settingsPortLabel:          "Порт",
@@ -1135,7 +1186,6 @@ enum L10nTable {
         .appearanceLight:            "Светлое",
         .appearanceDark:             "Тёмное",
         // #342: подсказка в подвале hero-карточки
-        .heroDisconnectedHint_fmt:   "Переведи переключатель, чтобы подключиться через %@.",
 
         // InstallOptionsView
         .installTitle:               "Установка olcrtc",
@@ -1194,7 +1244,7 @@ enum L10nTable {
         .validateKeyNonHex:          "Ключ содержит не-hex символы",
         .validateRoomIDEmpty:        "Room ID не может быть пустым",
         .errorPortBusy_fmt:          "Порт %d занят — освободите его или смените порт в Настройках",
-        .errorSecretsLocked:         "Разблокируйте устройство и снова откройте приложение, чтобы загрузить сохранённый ключ.",
+        .errorSecretsLocked:         "Разблокируй устройство и снова открой приложение, чтобы загрузить сохранённый ключ.",
         .errorRuntimeStillStopping:  "Предыдущая сессия ещё завершается — попробуйте снова через несколько секунд.",
 
         // OlcrtcURI errors
@@ -1225,7 +1275,7 @@ enum L10nTable {
         .installFailedNoURI_fmt:     "Скрипт завершился без URI. Последние строки:\n%@",
         .installTimeout25min:        "Таймаут установки (25 минут)",
         .installResultSuccess_fmt:   "Сервер olcrtc установлен (%@/%@)",
-        .uninstallResultSuccess:     "Сервер очищен",
+        .uninstallResultSuccess:     "Контейнер удалён. Подключения через него больше не работают.",
         .updateResultSuccess:        "Бинарник обновлён",
         .provisioningStarting:       "Запускаем сервер…",
         .startResultSuccess:         "Сервер запущен",
@@ -1262,7 +1312,7 @@ enum L10nTable {
         // ServersView alerts
         .alertPasswordMissingShort:  "Пароль не найден",
         .alertKeyMissingShort:       "SSH-ключ не найден",
-        .shareFullAccessKeyHostUnavailable: "Полный доступ для этого сервера не передаётся: он использует SSH-ключ, и ссылка содержала бы ваш приватный ключ. Поделитесь URI подключения или переведите сервер на пароль.",
+        .shareFullAccessKeyHostUnavailable: "Полный доступ для этого сервера не передаётся: он использует SSH-ключ, и ссылка содержала бы твой приватный ключ. Поделись URI подключения или переведи сервер на пароль.",
 
         // AddServerHostView
         .nameSettingLabel:           "Название",
@@ -1429,7 +1479,7 @@ enum L10nTable {
         .botStatusInstalledIdle:     "Установлен, не запущен",
         .botStatusNone:              "На этом сервере нет бота",
         .botNoBotsTitle:             "Ботов пока нет",
-        .botNoBotsHint:              "Добавьте бота в «Настройки → Боты», затем установите его здесь.",
+        .botNoBotsHint:              "Добавь бота в «Настройки → Боты», затем установи его здесь.",
         .botMissingTokenError:       "У этого бота ещё нет токена — добавьте его в «Настройки → Боты».",
         .botUnknownFound_fmt:        "Найден бот «%@», которого нет в настройках.",
         .botRemoveConfirmTitle:      "Удалить бота с этого сервера?",
@@ -1478,7 +1528,7 @@ enum L10nTable {
         // успех без реальной проверки; «Работает» даёт только сквозной
         // результат, который ещё не устарел.
         .healthNeverChecked:          "Ещё не проверено",
-        .healthNeverCheckedHint:      "Нажмите «Проверить», чтобы пропустить настоящий запрос через этот узел.",
+        .healthNeverCheckedHint:      "Нажми «Проверить», чтобы пропустить настоящий запрос через это подключение.",
         .healthChecking:              "Проверяем…",
         .healthCheckingHint:          "Заходим в комнату и загружаем тестовую страницу",
         .healthVerified:              "Работает",
@@ -1504,25 +1554,25 @@ enum L10nTable {
         .ageDays_fmt:                 "%d д",
 
         // #456: причины сбоя — что случилось И что делать дальше.
-        .healthReasonKeyMismatch:      "Ключ сервера изменился, и сохранённый у вас ключ больше не подходит. Нажмите «Восстановить подключение», чтобы считать новый.",
+        .healthReasonKeyMismatch:      "Ключ сервера изменился, и сохранённый у тебя ключ больше не подходит. Нажми «Восстановить подключение», чтобы считать новый.",
         .healthReasonKeyMismatchShort: "Ключ не подходит",
         .healthReasonNoPeer:           "В комнате никто не ответил. Возможно, сервер остановлен, использует другую комнату, или его ключ после переустановки больше не совпадает.",
         .healthReasonNoPeerShort:      "Нет ответа в комнате",
-        .healthReasonRoomInvalid:      "Идентификатор комнаты не подходит для этого сервиса. Проверьте его в «Сменить комнату / транспорт».",
+        .healthReasonRoomInvalid:      "Идентификатор комнаты не подходит для этого сервиса. Проверь его в «Сменить комнату / транспорт».",
         .healthReasonRoomInvalidShort: "ID комнаты отклонён",
         .healthReasonCarrierRejected:  "Сервис видеосвязи отклонил подключение. Возможно, комнаты больше нет или неверен токен аккаунта.",
         .healthReasonCarrierRejectedShort: "Сервис отказал",
         .healthReasonNetworkDown:      "У устройства нет интернета, поэтому о сервере это ничего не говорит.",
         .healthReasonNetworkDownShort: "Нет интернета",
-        .healthReasonHostUnreachable:  "VPS не ответил. Возможно, он выключен, перезагружается или заблокирован вашей сетью.",
+        .healthReasonHostUnreachable:  "VPS не ответил. Возможно, он выключен, перезагружается или заблокирован твоей сетью.",
         .healthReasonHostUnreachableShort: "VPS не ответил",
         .healthReasonSSHAuth:          "SSH-вход отклонён. Сохранённый для этого VPS пароль или ключ не подходит.",
         .healthReasonSSHAuthShort:     "SSH-вход отклонён",
-        .healthReasonPortBusy:         "Локальный порт SOCKS занят другим приложением. Освободите его или выберите другой порт в настройках.",
+        .healthReasonPortBusy:         "Локальный порт SOCKS занят другим приложением. Освободи его или выбери другой порт в настройках.",
         .healthReasonPortBusyShort:    "Локальный порт занят",
-        .healthReasonVPNActive:        "Пока включён системный VPN, другие узлы проверить нельзя. Отключите его и проверьте снова.",
+        .healthReasonVPNActive:        "Пока включён системный VPN, другие узлы проверить нельзя. Отключи его и проверь снова.",
         .healthReasonVPNActiveShort:   "Системный VPN включён",
-        .healthReasonContainerStopped: "Контейнер сервера не запущен. Запустите его и проверьте снова.",
+        .healthReasonContainerStopped: "Контейнер сервера не запущен. Запусти его и проверь снова.",
         .healthReasonContainerStoppedShort: "Сервер остановлен",
         .healthReasonTimedOut:         "Проверка не уложилась во время — данные так и не пришли.",
         .healthReasonTimedOutShort:    "Истекло время",
@@ -1538,9 +1588,8 @@ enum L10nTable {
         .healthActionVerify:          "Проверить",
         .healthVerifyAllAction:       "Проверить все",
         .healthShowReasonAction:      "Что не так?",
-        .healthWhyTitle:              "Что не так",
         .healthLatencyNotMeasured:    "не измерено",
-        .healthSweepSkipped_fmt:      "Ещё %d не проверено — нажмите «Проверить все»",
+        .healthSweepSkipped_fmt:      "Ещё %d не проверено — нажми «Проверить все»",
 
         // #456: заголовки карточки VPS. «Не удалось проверить» — это не «остановлен».
         .vpsHeadlineOpFailed:            "Последнее действие не удалось",
@@ -1550,18 +1599,73 @@ enum L10nTable {
         .vpsHeadlineNotChecked:          "Ещё не проверено",
         .vpsHeadlineNotCheckedHint:      "Проверяем сервер…",
         .vpsHeadlineStopped:             "Сервер остановлен",
-        .vpsHeadlineStoppedHint:         "Контейнер есть, но не запущен — нажмите «Запустить сервер»",
-        .vpsProcessCaption_fmt:          "Процесс сервера: %@ · проверено %@ назад",
-        .vpsProcessCaptionNever_fmt:     "Процесс сервера: %@ · не проверялось",
+        .vpsHeadlineStoppedHint:         "Контейнер есть, но не запущен — нажми «Запустить сервер»",
 
         // #456: прочие строки интерфейса
         .shareConnectionOnlyBadge:    "Ссылка подключения — без доступа к серверу",
-        .shareConnectionOnlySub:      "По ссылке ниже можно подключаться через ваш сервер. SSH-доступа она не даёт, управлять VPS, перенастраивать или стирать его по ней нельзя.",
-        .heroSelectedNotLive_fmt:     "Выбрано: %@ — переподключитесь, чтобы сменить",
+        .shareConnectionOnlySub:      "По ссылке ниже можно подключаться через твой сервер. SSH-доступа она не даёт, управлять VPS, перенастраивать или стирать его по ней нельзя.",
         .roomIDLastUsed_fmt:          "Использовать прошлую комнату: %@",
         .installExistingFoundTitle_fmt: "На этом VPS уже работает %@",
         .installExistingFoundBody:    "Переустановка удалит его и все остальные контейнеры olcrtc на этом сервере — вместе с их комнатами и ключами.",
         .installUseExistingAction:    "Использовать существующий",
         .installReinstallAction:      "Всё равно переустановить",
+
+        // MARK: #457 Выбор режима туннеля (вкладка «Конфиг» удалена — выбор
+        // переехал на экран подключения). От него зависит, что вообще означает
+        // слово «Подключено».
+        .tunnelModeLockedNote:       "Пока подключение работает, режим не переключить. Сначала отключись.",
+        .tunnelCompareScope:         "Что идёт через него",
+        .tunnelCompareScopeProxy:    "Только приложения, которые ты направишь на 127.0.0.1",
+        .tunnelCompareScopeVPN:      "Весь трафик этого устройства",
+        .tunnelCompareNeeds:         "Что для этого нужно",
+        .tunnelCompareNeedsProxy:    "Ничего — просто работает",
+        .tunnelCompareNeedsVPN:      "Профиль VPN — iOS попросит его подтвердить",
+        .tunnelCompareRuns:          "Где работает",
+        .tunnelCompareRunsProxy:     "Внутри приложения, пока оно открыто",
+        .tunnelCompareRunsVPN:       "В фоне, приложение можно закрыть",
+
+        // #457: лог — это подробности того, что его породило, поэтому в
+        // заголовке стоит сам предмет, а не слово «Логи».
+        .settingsOpenLogsRow:        "Диагностика и логи",
+        .logsSubjectConnection:      "Лог подключения",
+        .logsSubjectProvisioning:    "Лог операций с сервером",
+        .logsSubjectContainer_fmt:   "Лог сервера · %@",
+        .logsEmptySubjectHint:       "Здесь пока ничего не записано.",
+
+        // #457: главный экран. «Подключено» и «проверено» — разные факты, и
+        // строка доказательства не обещает больше, чем измерено.
+        .actionDisconnect:           "Отключить",
+        .heroSubjectNone:            "Пока нет подключений",
+        .heroLastUsedLabel:          "Последнее",
+        .heroPickAConnection:        "Выбери подключение ниже.",
+        .heroEvidenceStarting_fmt:   "запуск… %d с",
+        .heroEvidenceUnverified:     "подключено · данные через него ещё не проверяли",
+        .heroEvidenceNoNetwork:      "держим сессию, пока не вернётся сеть",
+        .heroScopeProxy_fmt:         "Прокси · только приложения, которые смотрят на 127.0.0.1:%@",
+        .heroScopeVPN:               "VPN · весь трафик устройства",
+
+        // #457: строки подключений.
+        .connectRowLive:             "Активно",
+        .connectRowTapHint:          "Подключиться через это подключение",
+        .connectRowRemove:           "Удалить подключение",
+        .connectGroupFailing_fmt:    "%d из %d не работает",
+
+        // #457: если действие выполняется на другом экране — сказать, на каком.
+        .healthActionOnServersTab_fmt: "%@ — на вкладке «Серверы»",
+        .healthActionInSettings_fmt:   "%@ — в настройках",
+        .healthNeverMeasured:        "не измерялось",
+
+        // #457: карточка сервера. Подпись про процесс говорит только о том, что
+        // считано с сервера, и всегда с возрастом — это не проверка подключения.
+        .vpsProtocolsFailing_fmt:    "Не работает протоколов: %d из %d",
+        .vpsProcessRunning:          "Серверный процесс запущен",
+        .vpsProcessStopped:          "Серверный процесс остановлен",
+        .vpsProcessNothingInstalled: "На этом сервере ничего не установлено",
+        .vpsProcessNotSetUp:         "Этот сервер пока не может запускать olcrtc",
+        .vpsProcessUnread:           "С этого сервера пока ничего не считано",
+        .vpsProcessAge_fmt:          "%@ · считано %@ назад",
+        .protocolStoppedNote:        "На сервере не запущен",
+        .vpsScanBeforeInstall:       "Ищем уже установленное…",
+        .vpsScanFailed_fmt:          "Не удалось посмотреть, что на сервере. %@",
     ]
 }

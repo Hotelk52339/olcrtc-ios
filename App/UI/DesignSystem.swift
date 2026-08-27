@@ -11,16 +11,19 @@ import UIKit  // #455: UINotification/UIImpactFeedbackGenerator back the Haptics
 // MARK: - Shared
 
 /// Press feedback shared by every tappable design-system surface: a 0.96 scale
-/// dip plus a light Taptic tap the instant the finger lands (#455), so every
-/// button in the app feels physical to press.
+/// dip (#455), so every button in the app feels physical to press.
+///
+/// #457 was: the dip PLUS a `Haptics.tap()` on press-down for every button in
+/// the app. When every tap buzzes, the buzz stops being feedback and becomes
+/// texture — "for feedback to be useful, it must be obvious what caused it"
+/// (WWDC19 810). Haptics now belong to the handful of call sites that mark an
+/// OUTCOME: connect/disconnect committed, a verified success, a destructive
+/// confirmation. Those sites own their own `Haptics.*` call.
 struct OlcPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-            .onChange(of: configuration.isPressed) { _, pressed in
-                if pressed { Haptics.tap() }   // #455: tap on press-down, not on release
-            }
     }
 }
 
@@ -119,17 +122,26 @@ struct OlcButton: View {
                     .controlSize(.small)
                     .tint(foreground)
             } else if let systemImage {
+                // #457 was: .system(size: compact ? 13 : 17) — a FIXED point size,
+                // so the app's own font-size slider grew the label around a glyph
+                // that stayed put and the button looked broken at large sizes.
+                // Dynamic-Type-backed styles scale with the label.
                 Image(systemName: systemImage)
-                    .font(.system(size: compact ? 13 : 17, weight: .semibold))
+                    .font(compact ? Theme.Typography.caption.weight(.semibold)
+                                  : Theme.Typography.bodyStrong)
             }
             if let title { Text(title) }
         }
-        .font(compact ? Font.caption.weight(.semibold) : Theme.Typography.button)
+        // #457 was: `compact` shipped a NON-rounded `Font.caption` beside the
+        // normal variant's rounded `Typography.button` — one component, two
+        // typefaces. Both variants now sit on the shared scale.
+        .font(compact ? Theme.Typography.caption.weight(.semibold) : Theme.Typography.button)
         .foregroundStyle(foreground)
         .modifier(Chrome(isIconOnly: title == nil, fillWidth: fillWidth,
                          height: compact ? 32 : Theme.Metrics.controlHeight,
-                         hPad: compact ? 12 : 16,
-                         background: background))
+                         hPad: compact ? 12 : Theme.Metrics.s4,
+                         background: background,
+                         border: border))
     }
 
     /// Sizing + fill + corner radius. Icon-only buttons are a height×height
@@ -140,7 +152,11 @@ struct OlcButton: View {
         let fillWidth: Bool
         let height: CGFloat
         let hPad: CGFloat
-        let background: AnyShapeStyle   // #455: lets .primary carry the aurora gradient
+        let background: AnyShapeStyle   // #455: lets .primary carry its own fill style
+        /// #457: hairline so a `Palette.fill` plate has an EDGE. In Light the
+        /// secondary/ghost fill is a 6% wash on a white card — without a border
+        /// the layer that tells the owner what is tappable simply vanishes.
+        let border: Color?
         func body(content: Content) -> some View {
             // (audit, HIG typography) was: fixed `.frame(width:height:)` /
             // `.frame(height:)` — clipped labels at large Dynamic Type sizes.
@@ -159,16 +175,24 @@ struct OlcButton: View {
             }
             .background(background)
             .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous))
+            .overlay {
+                if let border {
+                    RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous)
+                        .strokeBorder(border, lineWidth: 1)
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous))
         }
     }
 
-    // #455: .primary now carries the aurora gradient (the app's signature),
-    // the others keep their flat token fills. AnyShapeStyle so one property can
-    // return either a gradient or a solid.
+    // #457 was: `.primary` carried `Theme.Palette.auroraGradient`. Two reasons
+    // it had to go: white on the gradient's cyan end measures ~1.7:1 (the app's
+    // most important button was its least legible), and the aurora is now the
+    // VERDICT mark — it may only appear where traffic has been verified. A CTA
+    // is an invitation, not evidence. `.primary` is a solid `accentFill`.
     private var background: AnyShapeStyle {
         switch role {
-        case .primary:   return AnyShapeStyle(Theme.Palette.auroraGradient)
+        case .primary:   return AnyShapeStyle(Theme.Palette.accentFill)
         case .secondary: return AnyShapeStyle(Theme.Palette.fill)
         case .danger:    return AnyShapeStyle(Theme.Palette.redWeak)
         case .ghost:     return AnyShapeStyle(Color.clear)
@@ -176,32 +200,49 @@ struct OlcButton: View {
     }
     private var foreground: Color {
         switch role {
-        case .primary:           return .white
+        case .primary:           return Theme.Palette.onAccent
         case .secondary, .ghost: return Theme.Palette.accent
         case .danger:            return Theme.Palette.red
         }
+    }
+    /// #457: only the FILLED-but-neutral role needs an edge. `.primary` and
+    /// `.danger` carry their own colour; `.ghost` is deliberately edgeless.
+    private var border: Color? {
+        role == .secondary ? Theme.Palette.fillBorder : nil
     }
 }
 
 // MARK: - 2. OlcCard
 //
-// Rounded container: card fill, card radius, 16pt padding, optional hairline
-// (#299: `cardBorderWidth` is 0, so the stroke overlay is a no-op — kept as a
-// hook in case a future scheme wants a bordered card).
-
+// Rounded container: opaque card fill, card radius, 16pt padding, a 1pt
+// hairline (#457: `cardBorderWidth` is 1 now, so the edge is actually drawn).
+//
+// boc #457
+// #457 was: a `glass: Bool` parameter whose true branch swapped the fill for
+// `.ultraThinMaterial` and the hairline for `signalCyan.opacity(0.14)`. Deleted
+// entirely — parameter, branch and hairline:
+//  • HIG Materials: "Don't use Liquid Glass in the content layer… can result in
+//    unnecessary complexity and a confusing visual hierarchy"; WWDC25 219:
+//    "always avoid glass on glass". The one call site was the hero card, sitting
+//    under a translucent tab bar — glass on glass, which is why the screen read
+//    as mush.
+//  • In Light the material resolved to a near-white a shade off the solid cards
+//    beneath it, so the most important card on the home screen read as a colour
+//    mistake.
+//  • The cyan hairline was a second claim on "this is the live one" competing
+//    with the aurora, which is now the only verdict mark.
+// Content cards use `Theme.Palette.card`. `.ultraThinMaterial` is permitted
+// behind the tab bar or a pinned/floating bar — never on a card.
 struct OlcCard<Content: View>: View {
     private let padding: CGFloat
     private let elevation: Theme.Elevation   // #455: soft depth off the ground
-    private let glass: Bool                   // #455: translucent material (hero/floating layer)
     private let content: () -> Content
 
     init(padding: CGFloat = Theme.Metrics.cardPadding,
          elevation: Theme.Elevation = .card,   // #455: default cards lift a little
-         glass: Bool = false,
          @ViewBuilder content: @escaping () -> Content) {
         self.padding = padding
         self.elevation = elevation
-        self.glass = glass
         self.content = content
     }
 
@@ -213,22 +254,16 @@ struct OlcCard<Content: View>: View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(padding)
-            // #455: glass cards float above content on `.ultraThinMaterial` (the
-            // Liquid-Glass approximation on Xcode 16 / iOS 15+); solid cards keep
-            // the opaque card fill. Both clip content to the rounded shape.
-            .background(glass ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Theme.Palette.card),
-                        in: shape)
+            .background(Theme.Palette.card, in: shape)
             .clipShape(shape)
             .overlay {
-                // #455: glass gets a faint cyan hairline so its edge catches the
-                // light; solid cards keep the (currently 0-width) scheme border.
-                shape.strokeBorder(glass ? Theme.Palette.signalCyan.opacity(0.14)
-                                         : Theme.Palette.cardBorder,
-                                   lineWidth: glass ? 1 : Theme.Metrics.cardBorderWidth)
+                shape.strokeBorder(Theme.Palette.cardBorder,
+                                   lineWidth: Theme.Metrics.cardBorderWidth)
             }
             .olcShadow(elevation)   // #455: depth is applied last, around the clipped shape
     }
 }
+// eoc #457
 
 // MARK: - 3. OlcSectionHeader
 //
@@ -282,32 +317,70 @@ enum OlcStatusTone: Hashable {
         }
     }
     var pulses: Bool { self == .progress }
+
+    /// #457: the SHAPE channel. Five states used to differ by hue alone — a bare
+    /// 9pt `Circle().fill(tone.color)` — which fails WCAG 2.2 SC 1.4.1 (Level A)
+    /// and Apple's "Differentiate Without Color Alone" criterion outright, and
+    /// fails the owner in practice the moment the screen is squinted at. Each
+    /// tone now owns a silhouette that survives a grayscale screenshot: a circle
+    /// for the neutral/positive states, a triangle for a warning, an OCTAGON for
+    /// a failure. Colour is the third channel; the glyph and the word carry it.
+    var symbol: String {
+        switch self {
+        case .unknown:  return "questionmark.circle"
+        case .progress: return "arrow.triangle.2.circlepath"
+        case .ok:       return "checkmark.circle.fill"
+        case .warn:     return "exclamationmark.triangle.fill"
+        case .error:    return "xmark.octagon.fill"
+        }
+    }
 }
 
-/// A 9pt status dot; `.progress` emits a fading expanding ring.
+/// The status glyph; `.progress` emits a fading expanding ring.
+///
+/// #457 was: a 9pt `Circle().fill(tone.color)` — one shape for five states, so
+/// the dot carried meaning in colour and nothing else. It draws `tone.symbol`
+/// now. The NAME and the pulse are deliberately unchanged so every existing
+/// call site keeps working.
 struct OlcStatusDot: View {
     let tone: OlcStatusTone
     @State private var animate = false
+    /// #457: the app had ZERO `accessibilityReduceMotion` reads. This ring is a
+    /// `.repeatForever`, so it is exactly the animation HIG Accessibility asks
+    /// apps to drop; the glyph alone still says "in progress".
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Circle()
-            .fill(tone.color)
-            .frame(width: 9, height: 9)
-            .overlay {
-                if tone.pulses {
-                    Circle()
-                        .stroke(tone.color, lineWidth: 2)
-                        .scaleEffect(animate ? 2.4 : 1)
-                        .opacity(animate ? 0 : 0.6)
-                }
-            }
+        Image(systemName: tone.symbol)
+            // #457: Dynamic-Type-backed, never `.system(size:)` — the app's own
+            // font-size slider has to move the glyph with the words beside it.
+            // Sized to `label`, the step `OlcStatusPill` draws its title at, so
+            // glyph and word share a line.
+            .font(Theme.Typography.label.weight(.bold))
+            .foregroundStyle(tone.color)
+            .overlay { pulseRing }
             .onAppear(perform: restart)
             .onChange(of: tone) { _, _ in restart() }
+            // #457: every call site pairs this glyph with the WORD it stands for
+            // (OlcStatusPill's title, the protocol row's health chip), so to
+            // VoiceOver it is decoration — announcing the raw symbol name would
+            // be noise, and announcing the word twice would be worse.
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var pulseRing: some View {
+        if tone.pulses && !reduceMotion {
+            Circle()
+                .stroke(tone.color, lineWidth: 2)
+                .scaleEffect(animate ? 2.4 : 1)
+                .opacity(animate ? 0 : 0.6)
+        }
     }
 
     private func restart() {
         animate = false
-        guard tone.pulses else { return }
+        guard tone.pulses, !reduceMotion else { return }
         withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
             animate = true
         }
@@ -468,7 +541,7 @@ struct OlcOverflowMenu: View {
             }
         } label: {
             Image(systemName: systemImage)
-                .font(.title3)
+                .font(Theme.Typography.title)   // #457: on the shared scale, not a raw `.title3`
                 .foregroundStyle(Theme.Palette.textSecondary)
                 // #370 was: .frame(width: 32, height: 32) was the hit region —
                 // below Apple's 44pt minimum. The glyph keeps its size; the
@@ -509,7 +582,10 @@ struct OlcSegmented<Value: Hashable>: View {
             ForEach(options) { opt in
                 let active = opt.value == selection
                 Button {
-                    if opt.value != selection { Haptics.tap() }   // #455
+                    // #457 was: `if opt.value != selection { Haptics.tap() }` —
+                    // picking a segment is a low-stakes, high-frequency act; it
+                    // was one of the fifteen buzzes that made the buzz mean
+                    // nothing. The 0.15s cross-fade below is the feedback.
                     withAnimation(.easeOut(duration: 0.15)) { selection = opt.value }
                 } label: {
                     Text(opt.label)
@@ -527,7 +603,12 @@ struct OlcSegmented<Value: Hashable>: View {
                         .background {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill(active ? Theme.Palette.segActive : Color.clear)
-                                .shadow(color: active ? .black.opacity(0.3) : .clear, radius: 1, y: 1)
+                                // #457 was: a hardcoded `.black.opacity(0.3)`
+                                // authored for the dark #48484A fill. On the
+                                // white light-mode segment it is a smudge; on
+                                // the dark ground it is invisible. Tokenised.
+                                .shadow(color: active ? Theme.Palette.segActiveShadow : .clear,
+                                        radius: 1, y: 1)
                         }
                         .contentShape(Rectangle())
                 }
@@ -537,8 +618,14 @@ struct OlcSegmented<Value: Hashable>: View {
             }
         }
         .padding(3)
-        .background(Theme.Palette.fill,
-                    in: RoundedRectangle(cornerRadius: Theme.Metrics.segmentedRadius, style: .continuous))
+        .background(Theme.Palette.fill, in: track)
+        // #457: the track is a `fill` plate — in Light it needs an edge or the
+        // control reads as loose text on the card.
+        .overlay { track.strokeBorder(Theme.Palette.fillBorder, lineWidth: 1) }
+    }
+
+    private var track: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Theme.Metrics.segmentedRadius, style: .continuous)
     }
 }
 
@@ -565,7 +652,10 @@ struct OlcChipPicker<Value: Hashable>: View {
         FlowLayout(spacing: 8, lineSpacing: 8) {
             ForEach(options) { opt in
                 let active = opt.value == selection
-                Button { if opt.value != selection { Haptics.tap() }; selection = opt.value } label: {   // #455
+                // #457 was: `if opt.value != selection { Haptics.tap() }` — and
+                // because the chip also used `OlcPressStyle`, every chip buzzed
+                // TWICE. Selection is shown, not felt.
+                Button { selection = opt.value } label: {
                     Text(opt.label)
                         .font(Theme.Typography.chip)
                         .foregroundStyle(chipForeground(active: active, disabled: opt.disabled))
@@ -597,11 +687,14 @@ struct OlcChipPicker<Value: Hashable>: View {
     /// (audit) disabled = tertiary text; the *selected* chip keeps its normal
     /// styling even when disabled (the warning outline carries the signal).
     private func chipForeground(active: Bool, disabled: Bool) -> Color {
-        if active { return .white }
+        if active { return Theme.Palette.onAccent }
         return disabled ? Theme.Palette.textTertiary : Theme.Palette.textSecondary
     }
+    // #457 was: the selected chip filled with `Palette.accent` (system blue,
+    // ~3.65:1 under white text) — below 4.5:1 for its own label. `accentFill`
+    // is the same family and clears it in both appearances.
     private func chipFill(active: Bool, disabled: Bool) -> Color {
-        if active { return Theme.Palette.accent }
+        if active { return Theme.Palette.accentFill }
         return disabled ? Theme.Palette.fill.opacity(0.5) : Theme.Palette.fill
     }
 }
@@ -670,34 +763,49 @@ struct OlcIconButton: View {
         Button(action: action) {
             glyph
                 .foregroundStyle(tint)
-                .frame(width: Theme.Metrics.controlHeight,
-                       height: Theme.Metrics.controlHeight)
+                .frame(minWidth: Theme.Metrics.controlHeight,
+                       minHeight: Theme.Metrics.controlHeight)
                 .background(Theme.Palette.fill)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous))
+                .clipShape(plate)
+                // #457: an edge, so the plate survives Light (see OlcButton).
+                .overlay { plate.strokeBorder(Theme.Palette.fillBorder, lineWidth: 1) }
+                .contentShape(plate)
         }
         .buttonStyle(OlcPressStyle())
         .opacity(isEnabled ? 1 : 0.35)
     }
 
+    private var plate: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous)
+    }
+
     @ViewBuilder
     private var glyph: some View {
         if let assetImage {
+            // #457 was: a fixed 23×23 asset frame beside a fixed 17pt symbol —
+            // neither moved with the app's font-size slider. `.scaledToFit()`
+            // inside a Dynamic-Type square keeps the asset and the SF Symbol the
+            // same size at every setting.
             Image(assetImage)
                 .resizable()
                 .renderingMode(.template)
                 .scaledToFit()
-                .frame(width: 23, height: 23)
+                .frame(width: assetSide, height: assetSide)
         } else if let systemImage {
+            // #457 was: .system(size: 17, weight: .semibold) — a fixed point size.
             Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .semibold))
+                .font(Theme.Typography.bodyStrong)
         }
     }
+
+    /// #457: the asset glyph tracks Dynamic Type through `@ScaledMetric`, which
+    /// is the only way a raster asset can follow the text-size setting.
+    @ScaledMetric(relativeTo: .body) private var assetSide: CGFloat = 21
 }
 
 // MARK: - OlcMiniStat (#341)
 //
-// One-line compact metric for dense strips: caption2 uppercase label + a
+// One-line compact metric for dense strips: an uppercase caption label + a
 // footnote (≈13pt) monospaced value, side by side. The Manage VPS card uses
 // these where the two-deck OlcMetric row used to be.
 
@@ -712,15 +820,19 @@ struct OlcMiniStat: View {
         // values got longer (ServersView.shortRAM is the paired data-side fix).
         // First-text-baseline alignment + a gentle scale floor on the value.
         HStack(alignment: .firstTextBaseline, spacing: 4) {
+            // #457 was: `.caption2` on `textTertiary` — a 30%-opacity 11pt label
+            // that all but disappeared on a white card. Step 5 of the scale, on
+            // `textSecondary`.
             Text(label)
-                .font(.caption2.weight(.semibold))
+                .font(Theme.Typography.captionStrong)
                 .textCase(.uppercase)
                 .tracking(0.4)
-                .foregroundStyle(Theme.Palette.textTertiary)
+                .foregroundStyle(Theme.Palette.textSecondary)
+            // #457 was: + .minimumScaleFactor(0.85) — shrinking a measured value
+            // rather than letting it size honestly.
             Text(value)
                 .font(.system(.footnote, design: .monospaced).weight(.semibold))
                 .foregroundStyle(tone ?? Theme.Palette.textPrimary)
-                .minimumScaleFactor(0.85)
         }
         .lineLimit(1)
         // #369: the label + value were two separate Text nodes, so VoiceOver
@@ -734,7 +846,7 @@ struct OlcMiniStat: View {
 // MARK: - OlcProgressBar (#338)
 //
 // The ONE determinate progress bar: a 4pt amber capsule on the standard fill,
-// shared by the Manage VPS card's operation progress and the Logs tab's
+// shared by the server card's operation progress and the log reader's
 // container fetch — one monotonic-phase visual contract in both places.
 
 struct OlcProgressBar: View {
@@ -778,17 +890,19 @@ struct OlcMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
+                // #457 was: `textTertiary` — see OlcMiniStat; a metric's label
+                // is what makes its number mean anything.
                 Text(label)
                     .tracking(0.4)
                     .font(Theme.Typography.metricLabel)
                     .textCase(.uppercase)
-                    .foregroundStyle(Theme.Palette.textTertiary)
+                    .foregroundStyle(Theme.Palette.textSecondary)
                 // #405: the unit keeps its own case ("Mbps", not "MBPS") next to
                 // the uppercased label.
                 if unitInLabel, let unit {
                     Text(unit)
-                        .font(.caption2)
-                        .foregroundStyle(Theme.Palette.textTertiary)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Palette.textSecondary)
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -798,7 +912,7 @@ struct OlcMetric: View {
                     .lineLimit(1)   // #405: never wrap the number
                 if !unitInLabel, let unit {
                     Text(unit)
-                        .font(.caption2)
+                        .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.Palette.textSecondary)
                 }
             }
@@ -825,19 +939,27 @@ struct OlcEmptyState: View {
     var ctaSystemImage: String? = "plus"
     var action: (() -> Void)? = nil
 
+    /// #457: the badge grows with the text-size setting instead of clipping.
+    @ScaledMetric(relativeTo: .largeTitle) private var badgeSide: CGFloat = 56
+
     var body: some View {
         VStack(spacing: 14) {
+            // #457 was: .system(size: 26) inside a fixed 56×56 frame — a glyph
+            // that ignored the font-size slider. Dynamic Type + @ScaledMetric.
             Image(systemName: systemImage)
-                .font(.system(size: 26))
+                .font(.system(.largeTitle, design: .rounded))
                 .foregroundStyle(Theme.Palette.textSecondary)
-                .frame(width: 56, height: 56)
+                .frame(width: badgeSide, height: badgeSide)
                 .background(Theme.Palette.fill, in: Circle())
             VStack(spacing: 6) {
+                // #457: on the shared scale — step 2 for the subject, step 3
+                // for the sentence that says what the section is FOR.
                 Text(title)
-                    .font(.headline)
+                    .font(Theme.Typography.title)
                     .foregroundStyle(Theme.Palette.textPrimary)
+                    .multilineTextAlignment(.center)
                 Text(hint)
-                    .font(.subheadline)
+                    .font(Theme.Typography.body)
                     .foregroundStyle(Theme.Palette.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -962,23 +1084,53 @@ private extension View {
 #Preview("OlcSectionHeader") {
     VStack(spacing: 18) {
         OlcSectionHeader("Connections")
-        OlcSectionHeader("Manage VPS") {
+        OlcSectionHeader("Servers") {
             OlcButton(systemImage: "plus", role: .ghost) {}
         }
     }
     .olcPreview()
 }
 
+// boc #457
+// #457 was: this preview shipped `OlcStatusPill(tone: .error, title: "Error",
+// subtitle: "ssh: handshake failed")` — the app's canonical antipattern as the
+// HOUSE EXAMPLE: a generic "Error" title over raw SSH library text, explaining
+// the problem from the code's point of view. Every pill here now models the
+// contract instead: a title that names WHAT happened, a subtitle that says why
+// (and, where there is one, what to do), and an age.
 #Preview("OlcStatusPill") {
     VStack(alignment: .leading, spacing: 16) {
-        OlcStatusPill(tone: .ok,       title: "Connected",      subtitle: "socks5 · 127.0.0.1:8808")
-        OlcStatusPill(tone: .progress, title: "Connecting…",    subtitle: "starting transport")
-        OlcStatusPill(tone: .warn,     title: "Stopped",        subtitle: "container exists, not running")
-        OlcStatusPill(tone: .error,    title: "Error",          subtitle: "ssh: handshake failed")
-        OlcStatusPill(tone: .unknown,  title: "Status unknown", subtitle: "tap to check")
+        OlcStatusPill(tone: .ok,       title: "Working",
+                      subtitle: "Verified 2m ago · 128 ms")
+        OlcStatusPill(tone: .progress, title: "Checking…",
+                      subtitle: "Step 3 of 4 — sending a test request")
+        OlcStatusPill(tone: .warn,     title: "Connects, but unproven",
+                      subtitle: "The tunnel came up 30s ago, but no data has gone through it yet.")
+        OlcStatusPill(tone: .error,    title: "This server's key no longer matches",
+                      subtitle: "The server was reinstalled and generated a new key. Use Recover connection.")
+        OlcStatusPill(tone: .unknown,  title: "Not checked",
+                      subtitle: "No test has been run on this connection.")
     }
     .olcPreview()
 }
+
+/// #457: the grayscale test for the semantic inversion. Five tones, five
+/// silhouettes — if two of these are indistinguishable with Color Filters →
+/// Grayscale on, `OlcStatusTone.symbol` is wrong.
+#Preview("OlcStatusDot — glyph vocabulary") {
+    VStack(alignment: .leading, spacing: 14) {
+        ForEach([OlcStatusTone.unknown, .progress, .ok, .warn, .error], id: \.self) { tone in
+            HStack(spacing: 8) {
+                OlcStatusDot(tone: tone)
+                Text(tone.symbol)
+                    .font(Theme.Typography.mono)
+                    .foregroundStyle(Theme.Palette.textSecondary)
+            }
+        }
+    }
+    .olcPreview()
+}
+// eoc #457
 
 #Preview("OlcOverflowMenu") {
     OlcOverflowMenu(items: [
@@ -1087,7 +1239,7 @@ private extension View {
 #Preview("OlcEmptyState") {
     OlcEmptyState(systemImage: "network",
                   title: "No connections yet",
-                  hint: "Add a connection by URI or QR code, or install olcrtc on a VPS from the Manage VPS tab.",
+                  hint: "A connection is one route out — one protocol on one of your servers.",
                   ctaTitle: "Add connection") {}
         .olcPreview()
 }
