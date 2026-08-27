@@ -18,7 +18,11 @@ enum SSHAuthMethod: String, Codable, Sendable {
     case privateKey
 }
 
-struct ServerHost: Identifiable, Codable, Equatable {
+// #457: + Hashable so a host can drive `.navigationDestination(item:)` (the
+// pushed container-log screen). Every stored property is already Hashable
+// (UUID / String / Int / SSHAuthMethod / [UUID]?), so the conformance is
+// synthesized and matches the existing synthesized `Equatable` exactly.
+struct ServerHost: Identifiable, Codable, Equatable, Hashable {
     var id       = UUID()
     var label    : String
     var host     : String           // IP or DNS name
