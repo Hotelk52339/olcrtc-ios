@@ -178,6 +178,17 @@ struct ServersView: View {
                 guard case .running(let msg) = status else { return }
                 advancePhase(note: msg)
             }
+        }
+    }
+
+    // #457 (audit fix): ServersView.coreStack carried 21 chained modifiers in a
+    // single expression and CI failed with "unable to type-check this expression
+    // in reasonable time" — the third time this file has hit that budget. The
+    // chain is split by KIND: the List and its lifecycle stay in coreStack, the
+    // presentation modifiers live in these wrappers. Same view, same order.
+    @ViewBuilder
+    private func hostSheets(_ content: some View) -> some View {
+        content
             .sheet(isPresented: $showAdd) {
                 // #295: pass every existing label so the sheet can reject a
                 // duplicate (case-insensitive / sanitised-prefix) name.
@@ -249,6 +260,11 @@ struct ServersView: View {
             .sheet(item: $shareFullAccess) { req in
                 ShareConnectionView(conn: req.conn, fullAccess: req.payload)
             }
+    }
+
+    @ViewBuilder
+    private func hostConfirmations(_ content: some View) -> some View {
+        content
             .alert(L10n.okPrompt.localized(), isPresented: Binding(
                 get: { alertText != nil },
                 set: { if !$0 { alertText = nil } }
@@ -365,7 +381,6 @@ struct ServersView: View {
             } message: { _ in
                 Text(L10n.rotateKeyConfirmBody.localized())
             }
-        }
     }
 
     var body: some View {
@@ -373,7 +388,8 @@ struct ServersView: View {
         // confirms) are split off the main chain — with them inline the Swift
         // type-checker timed out on ServersView.body ("unable to type-check
         // this expression in reasonable time").
-        carrierModals(coreStack)
+        // #457: three wrappers instead of one 21-modifier expression.
+        carrierModals(hostConfirmations(hostSheets(coreStack)))
     }
 
     @ViewBuilder
