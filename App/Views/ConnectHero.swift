@@ -25,13 +25,25 @@ import SwiftUI
 // POSITION (the big card at the top, the one with the button in it) rather than
 // by a badge nobody can find. Two consequences land here:
 //   • the mono `olcrtc · telemost · vp8channel` line is GONE. `olcrtc` is on
-//     every connection and carries no bits; the carrier/transport is stated
-//     once, in Diagnostics → "This session" → Protocol.
+//     every connection and carries no bits, and the raw ids are the engineering
+//     form the connection log wants. (#461 note: the carrier and the transport
+//     themselves came BACK to this card as `identityBlock`, in their display
+//     labels — so the "stated once, in Diagnostics" this bullet used to claim is
+//     no longer true. Diagnostics → "This session" → Protocol now restates the
+//     same two facts one card down; that duplication is open, not intended.)
 //   • the card grew an OVERFLOW MENU, because the subject no longer has a row
 //     to carry Share / Copy URI / QR / Edit / Remove.
 // #459: the connected evidence line names the EXIT (flag + city, CC) — the one
 // connected-state fact the owner asked about and the only one that is not a
 // number. Every number now lives in Diagnostics, so no figure is printed twice.
+//
+// #461: THE SUBJECT IS NAMED BY WHAT IT HIDES INSIDE, NOT BY WHOSE MACHINE IT
+// IS. `identityBlock` replaces `subjectLine`: the carrier is the `answerSupport`
+// headline ("Yandex Telemost"), the transport and the host label share the quiet
+// line under it ("VP8 · zaza"). One VPS here runs several protocol containers,
+// so the server label is the SAME on every connection and the carrier is the
+// only thing that distinguishes them — see `ConnectionNaming`, the one rule the
+// hero, the switcher rows and the Servers card all read.
 //
 // #457 was: `ConnectionsView.heroCard` — `OlcCard(elevation: .glow, glass: true)`
 // + `OlcStatusPill` + a `Toggle` + `heroServerLine` + `heroFooter`. The glass and
@@ -88,7 +100,7 @@ struct ConnectHero: View {
             // keeps is the design system's own row step.
             VStack(alignment: .leading, spacing: Theme.Metrics.s3) {
                 headlineRow
-                subjectLine
+                identityBlock   // #461 was: subjectLine
                 // #457: the HUMAN headline first, the machine detail under it —
                 // never the other way round (Microsoft's error spec: explain the
                 // problem from the user's point of view, not the code's).
@@ -161,26 +173,48 @@ struct ConnectHero: View {
 
     // MARK: 2. The subject
 
-    // boc #459
-    // #459 was: a three-line `VStack` — "Last used" on its own row, the name,
-    // then `subject.subtitle` ("olcrtc · telemost · vp8channel"). Three lines to
-    // say one thing, and the third repeated what every row in the list below
-    // also said. The label now shares the name's baseline, and the mono line is
-    // deleted: the carrier/transport is stated once, in Diagnostics.
+    // boc #461
+    // #461: THE IDENTITY INVERSION — the owner's complaint 1, verbatim: "why
+    // the hell should I look at the fact that ZAZA is connected? Let it say
+    // Yandex Telemost, and under it which protocol it goes through."
+    //
+    // #461 was: `subjectLine` — an `HStack` printing `subject.displayName`,
+    // i.e. "zaza · Telemost", the label they typed for their VPS with the
+    // carrier suffix `ServersView.recordName` appends. One VPS here runs
+    // SEVERAL protocol containers, so the machine is the same on every
+    // connection and the SERVICE is what differs. Mullvad renders
+    // "Netherlands, Amsterdam" over "nl-ams-wg-001" in exactly this shape —
+    // `.title3` semibold identity over `.body` machine detail, `spacing: 2`.
+    //
+    // Three lines, in descending order of what the user came for:
+    //   0. "LAST USED", only when idle and only when there IS a subject.
+    //   1. THE SERVICE — "Yandex Telemost".
+    //   2. HOW · WHOSE — "VP8 · zaza". One `Text` built by CONCATENATION, not
+    //      interpolation, so the two halves carry different weights and tones
+    //      without a second view (and so the pair truncates as one line).
     @ViewBuilder
-    private var subjectLine: some View {
+    private var identityBlock: some View {
         if let subject = subject {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
                 if !state.isConnected {
                     Text(L10n.heroLastUsedLabel.localized().uppercased())
                         .font(Theme.Typography.caption)
                         .tracking(0.4)
                         .foregroundStyle(Theme.Palette.textTertiary)
                 }
-                Text(subject.displayName)
+                Text(ConnectionNaming.service(subject.details))
                     .font(Theme.Typography.answerSupport)
                     .foregroundStyle(Theme.Palette.textPrimary)
-                    .lineLimit(1)
+                    // #461 (audit) was: `.lineLimit(1)`. This is the string the
+                    // owner asked to see, at the title3 step; «Яндекс Телемост»
+                    // clears the card width at the default text size and stops
+                    // clearing it a couple of Dynamic Type steps up, where a
+                    // one-line clamp would ellipsise the service name itself.
+                    // Two lines, breaking on the space between the two words —
+                    // the same rule `ProtocolRowView.labels` adopted for the
+                    // same string.
+                    .lineLimit(2)
+                carriedByLine(subject)
             }
         } else {
             Text(L10n.heroSubjectNone.localized())
@@ -188,7 +222,26 @@ struct ConnectHero: View {
                 .foregroundStyle(Theme.Palette.textSecondary)
         }
     }
-    // eoc #459
+
+    /// #461: "VP8 · zaza" — the transport carries the weight, the host label is
+    /// the quiet half, exactly as Windscribe's `LocationNameView` gives city and
+    /// datacenter nickname the same size and lets weight do the ranking.
+    /// The three pieces are bound to locals so this stays three trivial
+    /// expressions rather than one nine-term concatenation — the SwiftUI
+    /// type-checker has failed this repo's CI three times on exactly that shape.
+    private func carriedByLine(_ subject: ConnectionRecord) -> some View {
+        let transport = Text(ConnectionNaming.transport(subject.details))
+            .font(Theme.Typography.bodyStrong)
+            .foregroundStyle(Theme.Palette.textSecondary)
+        let separator = Text(verbatim: " · ")
+            .font(Theme.Typography.body)
+            .foregroundStyle(Theme.Palette.textTertiary)
+        let host = Text(ConnectionNaming.host(subject))
+            .font(Theme.Typography.body)
+            .foregroundStyle(Theme.Palette.textTertiary)
+        return (transport + separator + host).lineLimit(1)
+    }
+    // eoc #461
 
     // MARK: 3. One line of dated evidence
 
@@ -213,11 +266,16 @@ struct ConnectHero: View {
         }
     }
 
-    /// #459: while a session is up, the WHERE outranks the verdict sentence —
-    /// it is the one connected-state fact the numbers in Diagnostics cannot
-    /// state, and printing it here means no figure appears on this screen twice.
+    /// #459: while a session is up, the WHERE outranks the verdict sentence.
     /// Green still needs `.verified`: the place is where traffic came out, not
     /// proof that it did.
+    ///
+    /// #461 (audit) was: "…the one connected-state fact the numbers in
+    /// Diagnostics cannot state, and printing it here means no figure appears on
+    /// this screen twice." Both halves are false — `DiagnosticsFacts.exitRow`
+    /// prints the SAME flag + "Moscow, RU" (with the IP and an age beside it),
+    /// so the place is on this screen twice. It is below the fold since #461, which is
+    /// why it is tolerable, not why it is fine.
     ///
     /// #457 (audit fix) was, and still is, the fallback: anything that is not
     /// `.verified` used to print "no data checked through it yet" — which called
@@ -226,26 +284,21 @@ struct ConnectHero: View {
     /// subtitle already does); only the two states that genuinely have no
     /// end-to-end reading fall back to that line.
     ///
-    /// #460 (findings 3 / 22): the owner asked, in as many words, where the
-    /// country and the IP even come from. A place name printed with no
-    /// provenance is exactly as unaccountable as a number printed with no date,
-    /// and this is the most prominent place the app prints one — so the method
-    /// is named directly under it. The detail (which service, and that the city
-    /// comes from the same answer) belongs one card down, in Diagnostics → Exit;
-    /// here it is one caption line saying that this is a lookup of the tunnel's
-    /// own exit address, made through the tunnel.
+    /// boc #461
+    /// #461 was: a `VStack` holding the place line AND `heroExitSourceNote` —
+    /// two caption lines of #460 provenance ("where your traffic comes out —
+    /// from a location lookup of the exit IP, made through the tunnel") on the
+    /// app's most valuable card. `diagExitNote` states the same fact one card
+    /// down, attached to the exit value it describes. ONE FACT, ONE PLACE: the
+    /// note stays where the value is, and the hero gets ~34 pt of its first
+    /// screenful back for the identity block above.
+    /// eoc #461
     @ViewBuilder
     private var connectedEvidence: some View {
         if let place = exitPlace {
-            VStack(alignment: .leading, spacing: 2) {
-                evidenceText(exitFlag.map { "\($0) \(place)" } ?? place,
-                             tone: health.isVerified ? Theme.Palette.green
-                                                     : Theme.Palette.textSecondary)
-                Text(L10n.heroExitSourceNote.localized())
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            evidenceText(exitFlag.map { "\($0) \(place)" } ?? place,
+                         tone: health.isVerified ? Theme.Palette.green
+                                                 : Theme.Palette.textSecondary)
         } else {
             evidenceText(heroEvidenceHasReading ? health.subtitle
                                                 : L10n.heroEvidenceUnverified.localized(),

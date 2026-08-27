@@ -148,7 +148,11 @@ struct ServersView: View {
     // Same view, same order, no expression over 8 modifiers.
     private var coreStack: some View {
         NavigationStack {
-            listChrome(hostDestinations(hostList))
+            // #461: a FOURTH wrapper (`listBars`) rather than three more
+            // modifiers on `listChrome` — this file has hit the type-checker's
+            // budget three times and `listChrome` already carries eight.
+            // #461 was: listChrome(hostDestinations(hostList))
+            listBars(listChrome(hostDestinations(hostList)))
         }
     }
 
@@ -237,6 +241,36 @@ struct ServersView: View {
             }
     }
     // eoc #459
+
+    // boc #461: the other half of "why is *checked 4 min ago* down at the bottom
+    // there, where you can barely see it?" — the last card was ending UNDER THE
+    // TAB BAR.
+    //
+    // A tab bar uses its transparent SCROLL-EDGE appearance while the scroll
+    // view is at the bottom — which is exactly where the user is when they read
+    // the last card on this list — so the content does not disappear behind the
+    // bar, it shows THROUGH it. Forcing the bar to draw its background is the
+    // fix; visibility only, no style argument, so it keeps the SYSTEM material
+    // it would otherwise show and this tab's bars still look like every other
+    // tab's. The navigation bar gets the same treatment for the same reason at
+    // the other end, and for parity with ConnectionsView.
+    //
+    // The bottom content margin braces that belt: the last card gets the same
+    // breathing room above the tab bar that a section gets from its neighbour,
+    // instead of ending flush against it.
+    //
+    // This is #460's ConnectionsView fix (`ConnectionsView.listBars`), whose own
+    // note asks for it here in as many words. NOTE for the tab that still wants
+    // it: LogsView (`.scrollContentBackground(.hidden)`, line ~149) has neither
+    // `toolbarBackground` call nor the margin; SettingsView has both
+    // `toolbarBackground`s and no margin.
+    private func listBars(_ content: some View) -> some View {
+        content
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(.visible, for: .tabBar)
+            .contentMargins(.bottom, Theme.Metrics.s6, for: .scrollContent)
+    }
+    // eoc #461
 
     /// #459: the one fact worth the space under the last card — how old the
     /// oldest server reading on screen is. No instruction and no "pull to
@@ -909,33 +943,42 @@ struct ServersView: View {
             row:             { rowView(host, row: $0) })
     }
 
-    // boc #459: the two verbs the owner reaches for constantly, lifted out of a
+    // boc #459: the verbs the owner reaches for constantly, lifted out of a
     // thirteen-item ⋯ menu and onto the card.
     //
-    // TWO, not three, because the third slot has no honest occupant: Start/Stop
-    // is already the primary button, "Add protocol" belongs in the PROTOCOLS
-    // header where its context is, and Update is periodic rather than frequent
-    // (it lives on the Manage screen). Two full-width-ish buttons read as a
-    // pair; three read as a toolbar.
-    //
     // Gated on `hasContainer`: before anything is installed the card's whole
-    // offer is its primary CTA, and Check / Logs would be reading an empty
-    // server. That gate is also what stops the row from ever duplicating the
-    // primary button — `primary == .check` happens only on `HostBase.unknown`,
-    // which is not `hasContainer`, so the row is absent exactly then.
+    // offer is its primary CTA, and Logs would be reading an empty server. That
+    // gate is also what stops the row from ever duplicating the primary
+    // button — `primary == .check` happens only on `HostBase.unknown`, which is
+    // not `hasContainer`, so the row is absent exactly then.
+    //
+    // boc #461: ONE verb, not two. **Check server** did nothing that the
+    // pull-to-refresh gesture on this list does not already do: per host,
+    // `silentProbe` runs the same `doPing` + the same readiness probe, writes
+    // the same stats, the same base and the same `lastProbeOK` stamp — and the
+    // pull additionally does it for EVERY host and then forces
+    // `health.verifyAll`. Two controls, one job; the owner's word for the pair
+    // was "illogical". The ONE thing the button did that the pull did not — the
+    // #302 container auto-detect/adopt — is now `adoptOrphanContainer`, which
+    // BOTH paths call, so deleting the button costs nothing.
+    // #461 was: this array led with
+    //     ServerQuickAction(title: L10n.vpsCheckServer.localized(),
+    //                       systemImage: "antenna.radiowaves.left.and.right") {
+    //         Task { await checkServer(host) }
+    //     },
+    // `checkServer` itself STAYS: `ServerPrimaryAction.check` is still the only
+    // CTA a never-checked host (`HostBase.unknown`) gets, and such a host has no
+    // container, so it never has a quick-action row to reach it from either.
     private func quickActions(_ host: ServerHost) -> [ServerQuickAction] {
         guard hasContainer(host) else { return [] }
         return [
-            ServerQuickAction(title: L10n.vpsCheckServer.localized(),
-                              systemImage: "antenna.radiowaves.left.and.right") {
-                Task { await checkServer(host) }
-            },
             ServerQuickAction(title: L10n.actionContainerLogs.localized(),
                               systemImage: "arrow.down.doc") {
                 logsForHost = host
             }
         ]
     }
+    // eoc #461
 
     /// #459: resolves one host into `ServerAdvancedView`'s inputs. Every row
     /// keeps the exact state it always set, so each destructive verb still ends
@@ -983,6 +1026,21 @@ struct ServersView: View {
 
     /// #457: one protocol row, resolved. The view is dumb; the resolution from a
     /// container to a saved connection stays here, where the stores are.
+    ///
+    /// #461: the row's identity is the SERVICE the traffic hides inside
+    /// ("Yandex Telemost"), and under it HOW it is carried ("VP8") — the same
+    /// inversion the Connect tab now makes with `ConnectionNaming.service(_:)` /
+    /// `.transport(_:)` — which lives at the foot of App/Views/ConnectionRowView.swift
+    /// until the next `xcodegen generate` pass can give it a file of its own; its
+    /// own partition note there says so. Those two resolve a
+    /// `ConnectionDetails`; a row here is a CONTAINER, which may have no saved
+    /// record at all (`connectionRecord` returns nil for one), so it composes
+    /// the same strings from the same and only source of them,
+    /// `CarrierTransportMatrix` — which is what makes the two screens name one
+    /// connection identically instead of merely similarly.
+    /// The row carries NO host label, deliberately: the card IS the host (its
+    /// header holds the label and the address), so `ConnectionNaming.host` has
+    /// no venue here.
     private func rowView(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> ProtocolRowView {
         ProtocolRowView(
             title:             CarrierTransportMatrix.carrierLabel(row.provider),
@@ -1175,7 +1233,10 @@ struct ServersView: View {
     // sat below Stop and above Update with nothing to tell them apart.
     //
     // Where the other eight went, and why NOTHING was removed from the app:
-    //   Check server, Container logs → visible buttons (`quickActions`)
+    //   Container logs               → a visible button (`quickActions`)
+    //                                  (#461 was: "Check server, Container logs"
+    //                                  — Check server duplicated pull-to-refresh
+    //                                  and is gone; see `quickActions`)
     //   Start / Stop / Install       → the card's primary button ALREADY offered
     //                                  exactly these, keyed off the same base;
     //                                  they were a literal duplicate
@@ -1339,7 +1400,10 @@ struct ServersView: View {
     /// TCP-22 verdict `doPing` just recorded — a network or SSH error must never
     /// be rendered as "stopped", nor as a fresh reading (requirements 2 and 3).
     /// Status-silent (`probeReadiness`, not `checkReadiness`), so it neither
-    /// locks the card's buttons nor paints a progress bar.
+    /// locks the card's buttons nor paints a progress bar — with ONE exception
+    /// since #461: on a host with no container on record, `adoptOrphanContainer`
+    /// runs `scanContainers`, which does publish `provisioner.status`, so the
+    /// cards lock for that one SSH call. Every other host stays silent.
     private func silentProbe(_ host: ServerHost) async {
         guard let secret = secret(for: host) else { return }
         await doPing(host)                       // refreshes pingLatencies + lastPing
@@ -1347,9 +1411,15 @@ struct ServersView: View {
             let (rstate, stats) = try await provisioner.probeReadiness(
                 on: host, secret: secret, containerName: host.lastContainerName)
             if let stats { vpsStats[host.id] = stats }
+            // #461: the pull adopts an orphaned container too — see
+            // `adoptOrphanContainer`. This is what makes the deleted **Check
+            // server** button a strict duplicate of one host's share of this
+            // pass rather than a loss. Resolved BEFORE the display write, so
+            // the base the card ends up showing is the adopted one.
+            let base = await adoptOrphanContainer(host, secret: secret, base: HostBase(rstate))
             // Never clobber an op that started while we were awaiting the probe.
             if !(display[host.id]?.isRunning ?? false) {
-                display[host.id] = .base(HostBase(rstate))
+                display[host.id] = .base(base)
             }
             lastProbeOK[host.id] = Date()       // #456 (audit): a REAL container reading
         } catch {
@@ -1372,6 +1442,40 @@ struct ServersView: View {
         // clock is `lastProbeOK`, written only where a reading actually came back.
         lastProbe[host.id] = Date()
     }
+
+    // boc #461: the #302 auto-detect/adopt, extracted so BOTH read paths run it.
+    //
+    // #302: a readiness probe on a host with no *known* container reports
+    // "image cached, ready for reinstall" even when an `olcrtc-server-*`
+    // container already exists (just stopped) — and Install, the CTA that base
+    // offers, force-removes every olcrtc container on the machine. Adopting the
+    // container we can already see is what stops a re-added VPS from being
+    // wiped by one tap.
+    //
+    // #461 was: this block sat inline in `checkServer`, so it ran ONLY when the
+    // (now deleted) **Check server** button or the `.unknown` primary CTA was
+    // pressed. Pull-to-refresh reads the same server through `silentProbe` and
+    // left the orphan unadopted. One function, two callers — which is what let
+    // the button go without taking the behaviour with it.
+    //
+    // Cheap by construction: both guards fail on every host that already has a
+    // container on record, so the extra SSH round-trip only happens on a host
+    // the app knows nothing about. `scanContainers` is the one call in this path
+    // that touches `provisioner.status`, so on exactly that host the cards lock
+    // for its duration — the honest cost of an SSH call, and it clears itself.
+    private func adoptOrphanContainer(_ host: ServerHost, secret: SSHSecret,
+                                      base: HostBase) async -> HostBase {
+        guard host.lastContainerName == nil, !base.hasContainer,
+              let found = try? await provisioner.scanContainers(on: host, secret: secret).first
+        else { return base }
+        var updated = host
+        updated.lastContainerName = found.name
+        serverStore.update(updated, password: nil)
+        LogStore.shared.log(.provisioning, L10n.autoDetectedContainer_fmt.formatted(found.name))
+        if case .running = found.status { return .running }
+        return .stopped
+    }
+    // eoc #461
 
     // MARK: #456 — ops must prove themselves
     //
@@ -1423,21 +1527,12 @@ struct ServersView: View {
             // Both clocks: `checkReadiness` RETURNED, so this is a real reading.
             lastProbe[host.id]   = Date()
             lastProbeOK[host.id] = Date()   // #456 (audit)
-            var base = HostBase(rstate)
-            // #302: a check on a host with no *known* container reports "image
-            // cached, ready for reinstall" even when an olcrtc container already
-            // exists (just stopped) — the user only saw it after manually tapping
-            // "Look for olcrtc containers". Fold that scan into the check so an
-            // existing container is auto-detected + adopted without the extra step.
-            if host.lastContainerName == nil, !base.hasContainer,
-               let found = try? await provisioner.scanContainers(on: host, secret: secret).first {
-                var updated = host
-                updated.lastContainerName = found.name
-                serverStore.update(updated, password: nil)
-                LogStore.shared.log(.provisioning, L10n.autoDetectedContainer_fmt.formatted(found.name))
-                if case .running = found.status { base = .running } else { base = .stopped }
-            }
-            return base
+            // #461 was: the #302 auto-detect/adopt block, inline here. Same
+            // code, same guards, now shared with `silentProbe` so a pull adopts
+            // an orphaned container too. Kept on THIS path as well: `.unknown`
+            // offers Check server as its only CTA, and a re-added VPS is exactly
+            // the host that must not be offered Install instead.
+            return await adoptOrphanContainer(host, secret: secret, base: HostBase(rstate))
         }
         await refreshCarriers(host.id)   // #452
     }

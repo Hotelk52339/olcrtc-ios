@@ -95,17 +95,43 @@ struct ConnectionRowView: View {
 
     // MARK: The subject — name, kind, and nothing else
 
+    // boc #461
+    /// #461: THE IDENTITY INVERSION. The two lines swapped roles.
+    ///
+    /// #461 was: line 1 = `record.displayName` ("zaza · Telemost" — the label
+    /// the user typed for their VPS, with the carrier suffix `ServersView
+    /// .recordName` appends), line 2 = the carrier·transport in a MONOSPACED
+    /// caption. The owner's verdict on the same inversion in the hero: "why the
+    /// hell should I look at the fact that zaza is connected?"
+    ///
+    /// One VPS here hosts SEVERAL protocol containers, so the question a row
+    /// answers is WHICH SERVICE the traffic hides inside — not whose machine it
+    /// is, which is the same machine on every row. Mullvad renders
+    /// "Netherlands, Amsterdam" over "nl-ams-wg-001"; IVPN renders "Amsterdam
+    /// (nl-ams-01), NL"; Windscribe renders a bold city over a regular
+    /// datacenter nickname. Identity first, machine last, in all of them.
+    ///
+    /// The host label drops the monospaced face with the demotion: a server
+    /// label is a NAME, not a measurement, and mono is this app's mark for
+    /// measured data (ages, milliseconds, ports).
     private var infoColumn: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(record.displayName)
+            Text(ConnectionNaming.protocolLine(record.details))
                 .font(.system(.body, design: .rounded).weight(.semibold))
                 .foregroundStyle(Theme.Palette.textPrimary)
-                .lineLimit(1)
-            // #459 was: `record.subtitle` — "olcrtc · jitsi · datachannel". The
-            // protocol word is on every row and the raw ids are the engineering
-            // form the connection log wants, not the one a person reads.
-            Text(detailLine)
-                .font(.system(.caption, design: .monospaced))
+                // #461 (audit) was: `.lineLimit(1)`, carried over from the line
+                // that used to live here. That line was `record.displayName`
+                // ("zaza · Telemost", ~15 characters); this one is
+                // "Yandex Telemost · DataChannel" — 29 characters at the body
+                // step, in a labels column left with ~150 pt once the evidence
+                // chip and the fixed 44 pt menu have taken theirs. At one line
+                // the TRANSPORT is what gets cut, i.e. exactly the half the
+                // owner asked to be shown. Two lines, for the same reason and
+                // with the same guarantee as `ProtocolRowView.labels`: the
+                // break falls on the space around " · ", never inside a word.
+                .lineLimit(2)
+            Text(ConnectionNaming.host(record))
+                .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.Palette.textSecondary)
                 .lineLimit(1)
             metaLine
@@ -113,22 +139,14 @@ struct ConnectionRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
+    // eoc #461
 
-    /// #459: the row's HUMAN second line — localized carrier + transport, no
-    /// protocol word: "Jitsi · DataChannel". `ConnectionDetails.subtitle` is left
-    /// alone because it is the ENGINEERING form ("olcrtc · jitsi · datachannel")
-    /// that `ConnectionStore` writes to the connection log, and logs want raw ids.
-    ///
-    /// The design spec put this on the model as `ConnectionRecord.displayDetail`.
-    /// App/Models/ConnectionRecord.swift is outside this change's partition and
-    /// the property was not added there, so the derivation lives here; move it
-    /// onto the model — and delete this — the next time that file is touched.
-    private var detailLine: String {
-        switch record.details {
-        case .olcrtc(let p):
-            return "\(CarrierTransportMatrix.carrierLabel(p.carrier)) · \(CarrierTransportMatrix.transportLabel(p.transport))"
-        }
-    }
+    // boc #461
+    // #461 was: `detailLine` — this row's private carrier·transport helper, with
+    // a TODO to "move it onto the model the next time that file is touched".
+    // `ConnectionNaming` below IS that move: the hero, this row and the Servers
+    // card read one rule, so the three can no longer drift.
+    // eoc #461
 
     /// #363: per-node subscription metadata (`##ip` / `##comment`), both
     /// server-supplied free text — rendered defensively, with no styling derived
@@ -205,3 +223,112 @@ struct ConnectionRowView: View {
 // row's hand-rolled verdict line. The row draws `OlcHealthChip` now, and the
 // chip owns the mapping, so the duplicate is deleted rather than kept in sync.
 // eoc #459
+
+// MARK: - ConnectionNaming (#461)
+//
+// #461: ONE composition rule for "what does this connection call itself", read
+// by the hero, by the switcher rows and by the Servers tab's protocol rows, so
+// the same connection reads identically wherever it appears.
+//
+// PARTITION NOTE: the design calls for this in its own file,
+// `App/Models/ConnectionNaming.swift`. This change may not create files, so it
+// lives here as a top-level `enum` of pure statics — the same shape and the
+// same precedent as `ConnectActionSite` at the bottom of ConnectHero.swift.
+// Move it to App/Models on the next `xcodegen generate` pass; nothing in it
+// depends on SwiftUI or on this row.
+//
+// WHY IT EXISTS. Our product is Amnezia's shape — ONE VPS running SEVERAL
+// protocol containers — with Mullvad's identity question: which service am I
+// hiding inside? We inherited Amnezia's "server name first" while our identity
+// is the carrier. `ServersView.recordName` writes "zaza · Telemost" into
+// `ConnectionRecord.name`, and every venue printed that verbatim.
+//
+// NOTHING HERE REWRITES STORED DATA. `ConnectionRecord.name`,
+// `ConnectionDetails.subtitle` (the engineering form the connection log wants)
+// and `ServersView.recordName` are untouched: the name links a record to its
+// host and is what the user typed. This decides only what views SHOW, at render
+// time.
+//
+// The separator is " · " (U+0020 U+00B7 U+0020) everywhere. Never a comma,
+// never an em dash, never a slash.
+
+enum ConnectionNaming {
+
+    /// #461: the SERVICE the traffic hides inside — the identity.
+    /// "Yandex Telemost" / "Jitsi" / "WB Stream".
+    static func service(_ details: ConnectionDetails) -> String {
+        switch details {
+        case .olcrtc(let p): return service(from: p.carrier)
+        }
+    }
+
+    /// The same rule from a raw carrier id, for callers that hold one without a
+    /// `ConnectionDetails` (the Servers tab's protocol rows).
+    static func service(from carrier: String) -> String {
+        CarrierTransportMatrix.carrierLabel(carrier)
+    }
+
+    /// #461: HOW it is carried — "VP8" / "DataChannel".
+    static func transport(_ details: ConnectionDetails) -> String {
+        switch details {
+        case .olcrtc(let p): return CarrierTransportMatrix.transportLabel(p.transport)
+        }
+    }
+
+    /// #461: both, for one-line venues — "Jitsi · DataChannel".
+    static func protocolLine(_ details: ConnectionDetails) -> String {
+        "\(service(details)) · \(transport(details))"
+    }
+
+    /// #461: WHOSE machine — the user's own label for the VPS, with the carrier
+    /// suffix `ServersView.recordName` appended removed, because the carrier is
+    /// now the headline above it and no line should say it twice.
+    /// "zaza · Telemost" → "zaza".
+    ///
+    /// Reads `displayName`, not `name`: `displayName` already substitutes
+    /// `details.fallbackName` for a blank name, so this can never return "".
+    static func host(_ record: ConnectionRecord) -> String {
+        switch record.details {
+        case .olcrtc(let p):
+            return stripCarrierSuffix(name: record.displayName, carrier: p.carrier)
+        }
+    }
+
+    /// The pure, testable core of `host`. Conservative by construction: it
+    /// strips ONLY when the trailing segment really is this record's carrier,
+    /// and returns the name untouched in every other case — a user who named
+    /// their server "prod · Frankfurt" keeps both halves.
+    ///
+    /// 1. trim the name;
+    /// 2. find the LAST " · "; no separator ⇒ return the trimmed name;
+    /// 3. an empty prefix ⇒ return the trimmed name (never return "");
+    /// 4. compare the tail, normalised (lowercased, letters and digits only, so
+    ///    "WB Stream" ≡ "wbstream"), against the raw carrier id AND its current
+    ///    localized label; strip on a match, otherwise leave the name alone.
+    static func stripCarrierSuffix(name: String, carrier: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sep = trimmed.range(of: " · ", options: .backwards) else { return trimmed }
+        let prefix = String(trimmed[trimmed.startIndex..<sep.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prefix.isEmpty else { return trimmed }
+        let tail = normalizeForMatch(String(trimmed[sep.upperBound...]))
+        guard !tail.isEmpty else { return trimmed }
+        let candidates = [normalizeForMatch(carrier),
+                          normalizeForMatch(CarrierTransportMatrix.carrierLabel(carrier))]
+        if candidates.contains(tail) { return prefix }
+        // #461: the migration allowance. Names are stamped with the label that
+        // was current WHEN THE RECORD WAS CREATED, and `carrierTelemost` changes
+        // value in this same change ("Telemost" → "Yandex Telemost", «Телемост»
+        // → «Яндекс Телемост»). A stored «zaza · Телемост» must still strip. The
+        // 5-character floor keeps a short user word from matching by accident.
+        if tail.count >= 5, candidates.contains(where: { $0.hasSuffix(tail) }) { return prefix }
+        return trimmed
+    }
+
+    /// Case- and punctuation-insensitive comparison key. Deliberately keeps
+    /// non-Latin letters ("Телемост" → "телемост") — the labels are localized.
+    private static func normalizeForMatch(_ text: String) -> String {
+        let kept: String = text.lowercased().filter { $0.isLetter || $0.isNumber }
+        return kept
+    }
+}

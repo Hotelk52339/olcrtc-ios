@@ -11,22 +11,25 @@ import SwiftUI
 //
 // Reading order on the card is the order of the questions the owner asks:
 //   1 which server is this        → header
-//   2 what is true right now      → verdict (headline + progress + failures)
+//   2 what is true right now      → verdict (headline + how old it is + failures)
 //   3 what runs on it, does it work → PROTOCOLS (the content, above the numbers)
-//   4 how is the machine doing    → metrics, demoted, with the age of the reading
-//   5 what do I do next           → two frequent verbs + ONE full-width action
+//   4 how is the machine doing    → metrics, demoted (#461 was: + the read stamp)
+//   5 what do I do next           → one frequent verb + ONE full-width action
 //   6 what else can I do to it    → "Manage server ›", a push (#459)
 //
 // boc #459: the card grows into the empty half of the Servers screen instead of
 // something new being invented to fill it — 20pt between blocks, roomier
-// protocol rows, and the four affordances the owner reached for most often
-// (Check server, Container logs, the primary verb, and the way to everything
-// else) visible on the card rather than buried in a 13-item ⋯ menu.
+// protocol rows, and the affordances the owner reached for most often (Container
+// logs, the primary verb, and the way to everything else) visible on the card
+// rather than buried in a 13-item ⋯ menu.
+// #461 was: "the four affordances", Check server among them — it duplicated
+// pull-to-refresh, so it is gone (ServersView.quickActions).
 // What LEFT the card in the same pass:
 //   • the process caption ("Server process is running · read 2m ago") — it
 //     restated the status pill and each protocol row already says whether its
 //     own container is up. Only its AGE was load-bearing, so the age survives
-//     as the read stamp on the metrics block, and nothing else does.
+//     as the read stamp — on the metrics block then, under the status pill
+//     since #461, and nothing else of it does.
 //   • the sweep note ("N more not checked — tap Verify all") — a footnote
 //     advertising a button that pull-to-refresh replaces. Every skipped
 //     protocol still says "not checked" in its own chip, which is the same
@@ -90,11 +93,12 @@ struct ServerCardMetrics {
     let uptime: String
 }
 
-/// #459: one visible quick action. Two of these sit above the primary button —
-/// the verbs the owner reaches for constantly (Check server, Container logs),
-/// which used to cost a ⋯ tap plus a scan of thirteen items. Value-driven and
-/// explicitly typed, like every other input on this card, so the row costs the
-/// type-checker nothing.
+/// #459: one visible quick action. It sits above the primary button — the verb
+/// the owner reaches for constantly (Container logs), which used to cost a ⋯ tap
+/// plus a scan of thirteen items. Value-driven and explicitly typed, like every
+/// other input on this card, so the row costs the type-checker nothing.
+/// #461 was: TWO of them, Check server first. `quickRow` still renders however
+/// many it is handed, and only compacts them when there is more than one.
 struct ServerQuickAction: Identifiable {
     let id = UUID()
     let title: String
@@ -112,10 +116,13 @@ struct ServerCardView: View {
     let headline: HostHeadline
     /// Progress-bar fraction while an op runs; nil leaves the slot empty.
     let progress: Double?
-    /// #459: how old the machine numbers beside it are ("read 2 min ago"), or
-    /// the honest "nothing has been read yet". The ONLY survivor of the deleted
+    /// #459: how old everything this card claims is ("read 2 min ago"), or the
+    /// honest "nothing has been read yet". The ONLY survivor of the deleted
     /// process caption: an age the user can see is the age of the reading.
     /// #459 was: `processCaption` — "Server process is running · read 2m ago".
+    /// #461: rendered by `readStamp`, under the status pill — one probe produced
+    /// the pill, the protocol rows and the numbers, so it dates all three from
+    /// the top instead of the bottom edge of the card.
     let readCaption: String
     /// Protocols on this server that a probe found BROKEN or data-less.
     let failingCount: Int
@@ -129,8 +136,8 @@ struct ServerCardView: View {
     let actionsDisabled: Bool
     let primary: ServerPrimaryAction
     /// #459: the frequent verbs, promoted out of the menu. Empty ⇒ the row is
-    /// not drawn at all (nothing is installed yet, so Logs / Check would read an
-    /// empty server and the card's whole offer is its primary CTA).
+    /// not drawn at all (nothing is installed yet, so Logs would read an empty
+    /// server and the card's whole offer is its primary CTA).
     let quickActions: [ServerQuickAction]
     /// The safe, occasional action set for this server (5 items). Everything
     /// rare or destructive lives behind `onManage` (#459).
@@ -190,14 +197,53 @@ struct ServerCardView: View {
     /// #459 was: a third line here, `Text(processCaption)` — "Server process is
     /// running · read 2m ago". The pill directly above it already answers "what
     /// is true right now", and each protocol row answers it per container, so
-    /// the sentence was the same claim written a third time. Its age moved to
-    /// the numbers it actually dates (see `metricsBlock`).
+    /// the sentence was the same claim written a third time.
+    /// #461: its AGE comes back to this block — see `readStamp`.
     private var verdict: some View {
         VStack(alignment: .leading, spacing: 8) {
             statusRegion
+            readStamp
             failureBanner
         }
     }
+
+    // boc #461: "why is *checked 4 min ago* down at the bottom there, where you
+    // can barely see it?" — two defects in one line, and this is the first.
+    //
+    // WRONG PLACE. The stamp dated the four machine numbers, so #459 pinned it
+    // to their top-right corner: a right-aligned tertiary caption ~65% down a
+    // ~560pt card, which on the LAST card also ends up under the tab bar (that
+    // half is fixed on the list side — `ServersView.listBars`). But the card's
+    // CLAIM is the status pill, and how old a claim is belongs beside the claim:
+    // IVPN puts exactly this freshness caption directly above the name it
+    // qualifies, never at the bottom. The numbers below come from the very same
+    // reading, so nothing down there is left undated.
+    //
+    // WRONG WEIGHT. `textTertiary` is the palette's lowest-contrast step, and
+    // "you can barely see it" is the other half of the complaint.
+    // `textSecondary` is the step for a supporting fact meant to be readable.
+    //
+    // LEADING-aligned, matching the pill above it — a trailing caption under a
+    // leading pill floats against nothing.
+    //
+    // It does NOT dim with `isBusy` the way the metrics below it do: an op in
+    // flight has not replaced the last real reading yet, so its age is still the
+    // truth, and the block it now lives in is the one the card never dims.
+    //
+    // #461 was: the first child of `metricsBlock`, with
+    // `.multilineTextAlignment(.trailing)` + `.frame(maxWidth: .infinity,
+    // alignment: .trailing)` + `Theme.Palette.textTertiary`.
+    private var readStamp: some View {
+        Text(readCaption)
+            // No `lineLimit` and no `minimumScaleFactor`, for the reason the
+            // metrics grid below has neither: the Russian never-read stamp is a
+            // whole sentence, and a stamp that truncates is a stamp that lies
+            // about how old the reading is (#459).
+            .font(Theme.Typography.caption)
+            .foregroundStyle(Theme.Palette.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    // eoc #461
 
     /// #341/#335: fixed footprint — the pill always occupies the same slot and
     /// the bar below only fades its opacity, so starting an op never reflows the
@@ -269,26 +315,15 @@ struct ServerCardView: View {
     // value (a cell costs the wider of the two) in two columns, and folds to one
     // column at accessibility text sizes. Nothing shrinks — scaling text down
     // makes the reading unreadable, which defeats the point of showing it.
-    /// #459: the numbers, with the age of the reading pinned to their top-right
-    /// corner. Nothing else moved — `ServerMetricsGrid` (#458) is what makes the
-    /// values structurally un-truncatable and must not be regressed.
-    /// #459 was: `metricsStrip` — the grid alone; its age was a sentence three
-    /// blocks up, attached to a claim about the process rather than to these.
+    /// #459: `ServerMetricsGrid` (#458) is what makes these values structurally
+    /// un-truncatable and must not be regressed.
+    /// #461 was: the grid with `readCaption` pinned above it, trailing-aligned.
+    /// The stamp moved up to `readStamp`, under the claim it dates; these
+    /// numbers come from the same reading, so they are still dated — one block
+    /// further away, by the line that now qualifies the whole card.
     private var metricsBlock: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.s2) {
-            // No `lineLimit` and no `minimumScaleFactor`, for the same reason
-            // the grid below has neither: the Russian never-read stamp is a
-            // whole sentence, and a stamp that truncates is a stamp that lies
-            // about how old the numbers are (#459).
-            Text(readCaption)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(Theme.Palette.textTertiary)
-                .multilineTextAlignment(.trailing)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            ServerMetricsGrid(metrics: metrics)
-        }
-        .opacity(isBusy ? 0.45 : 1)
+        ServerMetricsGrid(metrics: metrics)
+            .opacity(isBusy ? 0.45 : 1)
     }
 
     // MARK: 5 — what do I do next (two frequent verbs + the one primary action)
@@ -303,17 +338,25 @@ struct ServerCardView: View {
         }
     }
 
-    /// #459: the two verbs that were reached for constantly through the ⋯ menu.
+    /// #459: the verbs that were reached for constantly through the ⋯ menu.
     /// They can never duplicate the primary button: `primary == .check` happens
     /// only on `HostBase.unknown`, and a host nothing has read carries no
     /// container, so ServersView hands us an empty array exactly then.
+    /// #461: `compact` only while there are SEVERAL of them. With **Check
+    /// server** deleted the row holds ONE button, and a 32pt runt above a 44pt
+    /// primary reads as a gap where something used to be. At the full
+    /// `Theme.Metrics.controlHeight` the card ends on two stacked, equal,
+    /// full-width buttons — Mullvad's `ButtonPanel { locationButton;
+    /// actionButton }` at `VStack(spacing: 16)` — which reads finished.
+    /// #461 was: `compact: true`, unconditionally.
     @ViewBuilder
     private var quickRow: some View {
         if !quickActions.isEmpty {
             HStack(spacing: Theme.Metrics.s2) {
                 ForEach(quickActions) { item in
                     OlcButton(item.title, systemImage: item.systemImage,
-                              role: .secondary, fillWidth: true, compact: true,
+                              role: .secondary, fillWidth: true,
+                              compact: quickActions.count > 1,
                               action: item.action)
                         .frame(maxWidth: .infinity)
                 }

@@ -25,17 +25,19 @@ import SwiftUI
 //   A. "This session" — what is true about the tunnel that is up RIGHT NOW.
 //      Mounted only while connected. Protocol (the ONE place this screen states
 //      the carrier/transport), exit, live response time.
-//   B. "Checks" — the three things the user can RUN: IP check, speed test,
-//      carrier endpoints. Always present, because they are the only entry points
-//      to `IPChecker.checkAll`, `SpeedTest.run` and the #328 exclusions.
+//   B. "Checks" — the two things the user can RUN: IP check and speed test.
+//      Always present, because they are the only entry points to
+//      `IPChecker.checkAll` and `SpeedTest.run`. #461 was: a third row for the
+//      #328 carrier exclusions, now an item in the connected record's menu.
 //
-// #460: block A's third fact is no longer called "latency", is no longer tinted
-// red, and now states where its number comes from — because the screen was
-// printing TWO numbers under that one word, taken by two different methods, and
-// painting the larger, less comparable one in the alarm colour. The full
-// reasoning is on `responseRow`; the short version is that this card times a
-// whole request INCLUDING opening the connection, while the per-connection
-// checks time a round-trip on a connection that is already open.
+// #461: block A's third fact is called "Latency" again, because there is only
+// one latency in the app now. #460 had renamed it "Response time" and added a
+// paragraph explaining why it read ~8x the per-connection chips: this card timed
+// a whole request INCLUDING opening the connection, the chips timed a round-trip
+// on a connection already open. `LatencyProbe` (SpeedTest.swift) collapses the
+// two methods into one, and `publishLiveLatency` makes the live node's chip
+// print this card's own sample. The explanation is deleted with the discrepancy
+// it explained. Full reasoning on `responseRow`.
 //
 // #460: every fact in block A now also says WHERE IT COMES FROM, not just when
 // it was taken. Dating a claim answers "is this still true?"; sourcing it
@@ -79,18 +81,19 @@ struct DiagnosticsCard: View {
     let maskIPs: Bool
     /// Block A exists only while a session is up; block B always does.
     let isConnected: Bool
-    let carrierParams: OlcrtcConnection?
+    // #461 was: also `carrierParams: OlcrtcConnection?` and
+    // `onCarrierEndpoints: (OlcrtcConnection) -> Void`, for the tools block's
+    // third row. That row is an action on a CONNECTION and moved into the
+    // connected record's overflow menu (`ConnectionsView.carrierEndpointsItem`);
+    // dropping the inputs is what makes it a move rather than a duplication.
     let onSpeedTest: () -> Void
-    let onCarrierEndpoints: (OlcrtcConnection) -> Void
 
     var body: some View {
         OlcCard(padding: 0) {
             VStack(spacing: 0) {
                 sessionBlock
                 DiagnosticsTools(ipCheck: ipCheck, speed: speed, mode: mode,
-                                 maskIPs: maskIPs, carrierParams: carrierParams,
-                                 onSpeedTest: onSpeedTest,
-                                 onCarrierEndpoints: onCarrierEndpoints)
+                                 maskIPs: maskIPs, onSpeedTest: onSpeedTest)
             }
             .padding(.horizontal, Theme.Metrics.cardPadding)
         }
@@ -111,8 +114,8 @@ struct DiagnosticsCard: View {
 // MARK: - DiagnosticsFacts — block A, "This session" (#454, moved here #459)
 //
 // The former HealthCard, minus its own title and its refresh glyph. Its dating
-// machinery moves verbatim: the 8 s probe loop (#460: its reading is a
-// RESPONSE TIME, not a latency — see `responseRow`), `latencyAt` / `probing`, and
+// machinery moves verbatim: the 8 s probe loop (#461: its reading IS the app's
+// one latency again — see `responseRow`), `latencyAt` / `probing`, and
 // `exitAt` (tracked here because `ExitGeo` carries no timestamp and the refresh
 // is also fired from ConnectionsView on the connect transition).
 
@@ -123,9 +126,10 @@ private struct DiagnosticsFacts: View {
     let mode: RouteMode
     let maskIPs: Bool
 
-    /// The live response time, refreshed by the ping loop below. nil = no
-    /// measurement. #460: NOT a latency — one whole request including connection
-    /// setup; see `responseRow` for why that distinction is load-bearing.
+    /// The live latency, refreshed by the loop below. nil = no measurement.
+    /// #461 was documented here as "NOT a latency — one whole request including
+    /// connection setup". It excludes connection setup now (`LatencyProbe`), so
+    /// it is the same quantity the node chips carry; see `responseRow`.
     @State private var latencyMs: Double?
     /// #457: when the last latency measurement COMPLETED (success or failure).
     /// nil ⇒ none has completed for this record yet.
@@ -141,7 +145,7 @@ private struct DiagnosticsFacts: View {
             DiagnosticsSubheader(title: L10n.diagSessionHeader.localized())
             protocolRow
             exitRow
-            responseRow    // #460 was: latencyRow
+            responseRow    // #460 was: latencyRow; #461: called "Latency" again
         }
         // Live response time: measure now, then every ~8 s. Keyed on the live record so
         // a failover (record swap, #453) restarts the loop against the new
@@ -165,22 +169,87 @@ private struct DiagnosticsFacts: View {
         // one's after a #453 failover swap.
         latencyMs = nil
         latencyAt = nil
+        // #461: captured once. The task is keyed on `record?.id`, so a failover
+        // swap restarts the loop and this can never publish under the wrong node.
+        let liveID = record?.id
         while !Task.isCancelled {
+            // boc #461
+            // #461: stand aside while a USER speed test is running. `SpeedTest
+            // .run` reserves 180 s of keep-alive suppression up front precisely
+            // because extra connections mid-test add congestion; this loop was
+            // the one prober that ignored that. Probing a saturated tunnel
+            // measures the transfer, not the route — and now that this figure
+            // and the per-node chips are the same measurement, that bad sample
+            // would be published as the node's health. The previous reading
+            // keeps its stamp and `DiagnosticsAge` goes on ageing it, so the
+            // pause is visible and honest rather than silent.
+            // `MainActor.run` rather than a bare `await speed.isTesting`: this
+            // closure's isolation is whatever `.task` gives it, and an explicit
+            // hop reads the same either way. `SpeedTest` is `@MainActor`, hence
+            // implicitly Sendable, so nothing is captured unsafely.
+            if await MainActor.run(body: { speed.isTesting }) {
+                try? await Task.sleep(for: .seconds(2))
+                continue
+            }
+            // eoc #461
             probing = true
             let ms = await speed.quickPing(via: mode)
             if Task.isCancelled { return }
             latencyMs = ms
             latencyAt = Date()
             probing = false
+            await publishLiveLatency(ms, for: liveID)
             try? await Task.sleep(for: .seconds(8))
         }
     }
 
+    // boc #461
+    /// #461: THE LIVE NODE'S CHIP PRINTS THIS CARD'S OWN SAMPLE — the half of
+    /// the owner's complaint 2 that an explanation could never fix.
+    ///
+    /// `HealthCoordinator.noteLiveVerified` is called from two places in
+    /// `TunnelManager` (the verify-tunnel success and every keep-alive tick)
+    /// with `rttMs: nil`, so the live node's chip carried an rtt from some
+    /// EARLIER probe — a different tunnel, a different moment — or none at all.
+    /// Publishing this loop's reading means the Diagnostics row and every
+    /// `OlcHealthChip` for the connected node render THE SAME INTEGER, taken by
+    /// THE SAME sample, at most 8 s apart in age. Side benefit: `.verified`
+    /// stops expiring mid-session, so the hero's aurora verdict ring no longer
+    /// goes out while the tunnel is plainly working.
+    ///
+    /// `.tunnel` ONLY. In VPN mode the whole device is routed, `mode` is
+    /// `.direct`, and the reading is not attributable to this node's own SOCKS
+    /// listener — `HealthCoordinator` refuses to probe under a live system VPN
+    /// for the same reason. A failed sample publishes nothing: one missed HEAD
+    /// is not evidence that a node is broken, and the keep-alive / wedge
+    /// machinery owns that judgement.
+    ///
+    /// DESIGN NOTE: the spec asked for a non-persisting sibling
+    /// (`HealthCoordinator.noteLiveLatency`) so an 8 s cadence would not write
+    /// UserDefaults ~450x an hour. App/Services/HealthCoordinator.swift is
+    /// outside this change's partition, so this calls the existing writer, whose
+    /// stored shape (`.working`, `source: "live"`) is identical. The cost is
+    /// bounded in practice — the loop only runs while a session is UP and this
+    /// card is ON SCREEN — but swap the call the moment that sibling exists.
+    private func publishLiveLatency(_ ms: Double?, for recordID: UUID?) async {
+        guard let ms, let recordID, mode == .tunnel else { return }
+        let rtt = Int(ms.rounded())
+        await MainActor.run {
+            HealthCoordinator.shared.noteLiveVerified(recordID: recordID, rttMs: rtt)
+        }
+    }
+    // eoc #461
+
     // MARK: Rows
 
-    /// #459: the ONE place this screen states the live node's carrier/transport.
-    /// The hero dropped its mono `olcrtc · … · …` line and the rows never say it
-    /// for a node that is not in the list, so this is not a repeat of anything.
+    /// #461 (audit): NO LONGER THE ONE PLACE. #459's claim here — "the ONE place
+    /// this screen states the live node's carrier/transport, so this is not a
+    /// repeat of anything" — held only while the hero printed neither. #461 made
+    /// the carrier the hero's headline and the transport the line under it
+    /// (`ConnectHero.identityBlock`), so this row now says "Yandex Telemost ·
+    /// DataChannel" about the same connection the top of the same screen already
+    /// names. Deleting the row is the fix; it is left standing here because that
+    /// is a structural change, and this comment is the record that it is owed.
     @ViewBuilder
     private var protocolRow: some View {
         DiagnosticsRow(label: L10n.healthProtocolLabel.localized()) {
@@ -245,48 +314,40 @@ private struct DiagnosticsFacts: View {
         }
     }
 
-    // boc #460
-    /// #460 (findings 2 and 15): THE TWO CONTRADICTORY LATENCIES.
+    // boc #461
+    /// #461: THE TWO CONTRADICTORY LATENCIES, closed at the source.
     ///
-    /// On one screen, at one moment, this row read `LATENCY 1109 ms` in RED
-    /// while a connection row for the same server read `133 ms`. Both were
-    /// labelled "latency". They are not the same measurement and never could be:
+    /// #460 was: on one screen, at one moment, this row read `LATENCY 1109 ms`
+    /// in RED while a connection row for the same server read `133 ms`. Both
+    /// were labelled "latency" and neither was wrong — they were different
+    /// measurements. #460's answer was to rename this one "Response time", drop
+    /// the threshold tint, and add `diagResponseNote`: a ~250-character
+    /// paragraph reconciling the two numbers. The owner's answer to that: "the
+    /// diagnostics ping is 947 ms again, while somewhere else it is different."
+    /// An explanation is not a fix, and a paragraph explaining why two numbers
+    /// disagree is the app admitting it prints two numbers.
     ///
-    ///   • THIS row — `SpeedTest.quickPing(via:)` every 8 s: ONE HEAD request to
-    ///     the speed-test provider's ping endpoint on a BRAND-NEW `URLSession`,
-    ///     so every sample pays a fresh SOCKS connect and a fresh TLS handshake
-    ///     through the live carrier tunnel. One sample, no warm-up, no averaging.
-    ///     Most of the number is connection setup.
-    ///   • THE ROW CHIPS — `NodeHealth.rttMs`, from the Go core's `Runtime.Ping`
-    ///     (`mobile/ping.go`): a SEPARATE isolated probe tunnel, a warm-up GET,
-    ///     then three GETs over one kept-alive connection, of which it returns
-    ///     the BEST. Connection setup is excluded by construction.
+    /// #461 makes them ONE. `SpeedTest.quickPing` now delegates to
+    /// `LatencyProbe.measure(via:)`, which reproduces the Go core's own method
+    /// — a warm-up request that pays the SOCKS connect and the TLS handshake,
+    /// then samples over the SAME kept-alive session, best returned — so this
+    /// figure and the chips' figure are comparable BY CONSTRUCTION. For the
+    /// live node they are not merely comparable: `publishLiveLatency` above
+    /// makes them the same integer.
     ///
-    /// So this figure is several times the chips' figure BY DESIGN — and it was
-    /// the one painted red, because it was tinted with ping thresholds
-    /// (<150 green / <400 amber / else red) that were calibrated for a
-    /// round-trip, not for a cold fetch. The app's most alarming number was its
-    /// least comparable one.
+    /// So the row is called what it measures again ("Latency"), and the
+    /// paragraph is gone: there is nothing left to reconcile.
     ///
-    /// The fix keeps the measurement — it is the only continuously updating,
-    /// user-meaningful live reading, and its success is what marks tunnel
-    /// activity for the keep-alive loop — but stops it pretending to be latency:
-    ///   1. it is named for what it times (a response, setup included);
-    ///   2. the note says so, and says why the per-connection checks always read
-    ///      lower, so the two numbers are reconciled where they are compared.
-    ///      The note names the OTHER MEASUREMENT, not a place on the screen: the
-    ///      live node is the hero's subject and ConnectionsView deliberately
-    ///      keeps it out of the list, so "the connections below" would have
-    ///      pointed away from the chip a reader is comparing against;
-    ///   3. NO threshold tint. An uncalibrated number does not get to raise an
-    ///      alarm; measured = primary, unmeasured = tertiary, never red.
+    /// NO THRESHOLD TINT, still. The honesty layer's chip beside this number
+    /// already carries the verdict colour, and two colour systems on one number
+    /// is exactly how #460 went wrong. Two tones — measured = `textPrimary`,
+    /// unmeasured = `textTertiary` — and never red.
     ///
-    /// #460 was: `latencyRow` — `DiagnosticsRow(label: healthLatencyLabel)` with
-    /// `latencyTone` (green/orange/red by ms) on the value.
+    /// `latencyMs` / `latencyAt` / `probing` keep their names: they were always
+    /// accurate, and #460 renamed the LABEL away from them. This puts it back.
     @ViewBuilder
     private var responseRow: some View {
-        DiagnosticsRow(label: L10n.diagResponseLabel.localized(),
-                       note: L10n.diagResponseNote.localized()) {
+        DiagnosticsRow(label: L10n.diagResponseLabel.localized()) {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(responseValue)
                     .font(Theme.Typography.metricValue)
@@ -296,6 +357,7 @@ private struct DiagnosticsFacts: View {
             }
         }
     }
+    // eoc #461
 
     // MARK: Values
 
@@ -308,14 +370,13 @@ private struct DiagnosticsFacts: View {
         return L10n.healthLatencyNotMeasured.localized()
     }
 
-    /// #460: two tones, and neither is an alarm — see `responseRow`. A measured
+    /// #460/#461: two tones, and neither is an alarm — see `responseRow`. A measured
     /// figure reads as data; the absence of one reads as tertiary, which is what
     /// "we have no value here" looks like everywhere else in this card.
     /// #460 was: `latencyTone` — green under 150 ms, orange under 400, red above.
     private var responseTone: Color {
         latencyMs == nil ? Theme.Palette.textTertiary : Theme.Palette.textPrimary
     }
-    // eoc #460
 
     /// "City, CC" from whatever geo fields are present ("location unknown" when
     /// neither is). The flag glyph is rendered separately, next to this.
@@ -327,7 +388,8 @@ private struct DiagnosticsFacts: View {
 
 // MARK: - DiagnosticsTools — block B, "Checks" (#258, moved here #459)
 //
-// The three manual probes. #459 was: they lived in `ConnectDiagnosticsCard`
+// The manual probes — two of them since #461 moved the carrier-endpoints tool
+// into the connected record's overflow menu. #459 was: they lived in `ConnectDiagnosticsCard`
 // inside ConnectionsView.swift, under a card of their own, with a `PING ms`
 // metric that measured the same thing block A measures — less often, and with no
 // timestamp at all (`SpeedResult` carries none). The ping metric is deleted; DL
@@ -338,9 +400,7 @@ private struct DiagnosticsTools: View {
     @ObservedObject var speed: SpeedTest
     let mode: RouteMode
     let maskIPs: Bool
-    let carrierParams: OlcrtcConnection?
-    let onSpeedTest: () -> Void
-    let onCarrierEndpoints: (OlcrtcConnection) -> Void
+    let onSpeedTest: () -> Void   // #461 was: also carrierParams / onCarrierEndpoints
 
     /// #264: when the IP check last finished.
     @State private var ipCheckTime: Date?
@@ -353,9 +413,7 @@ private struct DiagnosticsTools: View {
             DiagnosticsSubheader(title: L10n.diagToolsHeader.localized())
             ipRow
             Divider().overlay(Theme.Palette.separator)
-            speedRow
-            Divider().overlay(Theme.Palette.separator)
-            carrierRow
+            speedRow   // #461 was: + a Divider and `carrierRow` below it
         }
         // #457: `SpeedResult` is not Equatable and carries no date; the falling
         // edge of `isTesting` is the moment a run we can attribute completed.
@@ -418,40 +476,18 @@ private struct DiagnosticsTools: View {
     }
     // eoc #459
 
-    // boc #460
-    /// #460 (finding 23): this row was written for someone who already knew what
-    /// it was — "Carrier endpoints" over "Endpoints to route DIRECT in your proxy
-    /// app", sitting on the app's main screen with nothing to say WHEN a person
-    /// would ever want it. It now leads with the only question that selects its
-    /// audience (are you running a second proxy app?) and states the failure it
-    /// prevents, so everyone else can skip it in one line.
-    ///
-    /// #460 was: title `carrierEndpointsTitle`, hints `carrierEndpointsReadyHint`
-    /// / `carrierEndpointsConnectHint`, action `carrierEndpointsCheckAction`
-    /// ("Check" — which read as "check the endpoints' health", which it is not).
-    private var carrierRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.carrierEndpointsRowTitle.localized())
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(carrierParams != nil
-                     ? L10n.carrierEndpointsRowHint.localized()
-                     : L10n.carrierEndpointsRowConnectHint.localized())
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            OlcButton(L10n.carrierEndpointsShowAction.localized(), role: .secondary) {
-                if let params = carrierParams { onCarrierEndpoints(params) }
-            }
-            .disabled(carrierParams == nil)
-        }
-        .padding(.vertical, Theme.Metrics.s3)
-    }
-    // eoc #460
+    // boc #461
+    // #461 was: `carrierRow` — the "Using another proxy app?" tool. A title, a
+    // two-line audience-selecting hint (`carrierEndpointsRowHint` /
+    // `carrierEndpointsRowConnectHint`) and a "Show" button, ~90 pt, mounted
+    // permanently on the app's main screen and disabled whenever nothing was
+    // connected. Every one of the four clients read for this change pushes its
+    // technical tools below the fold or behind a disclosure; this one goes one
+    // better and becomes an item in the connected record's overflow menu, which
+    // is on screen at all times (`ConnectionsView.carrierEndpointsItem`).
+    // `carrierEndpointsRowTitle` survives as that item's title; the two hints
+    // and `carrierEndpointsShowAction` lose their last use.
+    // eoc #461
 
     private func value(_ v: Double?, _ format: String) -> String {
         if speed.isTesting { return "…" }
