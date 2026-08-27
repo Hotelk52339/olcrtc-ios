@@ -1,45 +1,110 @@
 import SwiftUI
 
-// #316: single-stack Logs tab. #294's per-source rework made LogsView a
+// #316: single-stack Logs screen. #294's per-source rework made LogsView a
 // `TabView` nested inside MainTabView's `TabView`, which rendered a second
 // tab strip at the bottom, and every tab stacked its own NavigationStack +
 // title + description header + file caption before the first log line.
-// Now: ONE NavigationStack ("Logs" large title), ONE `.searchable`, ONE
-// trailing overflow menu; the category switch is an `OlcSegmented` under the
-// search field; a single header row (file name + line count) sits directly
-// on top of the log body. Per-line rendering (#276 severity tints, #277
-// newest-first dated stamps) and the per-server container buffers/fetch
-// (#295/#296/#297) are unchanged.
+// Now: ONE `.searchable`, ONE trailing overflow menu; a single header row
+// (file name + line count) sits directly on top of the log body. Per-line
+// rendering (#276 severity tints, #277 newest-first dated stamps) and the
+// per-server container buffers/fetch (#295/#296/#297) are unchanged.
+//
+// #457: Logs is no longer a TAB — it is a pushed destination that always knows
+// what it is about (`LogSubject`), so its own NavigationStack is gone (it would
+// nest inside the pusher's) and the 4-way category switch renders only for the
+// one unscoped entrance. Everything the old tab needed to be TOLD after the
+// fact — which category, which host, whether to auto-fetch — now arrives with
+// the push. See `LogSubject` for what that deleted.
 //
 // #316 was: `isActive` (passed from App.swift, unused since #294) — dropped
 // together with the per-tab `LogCategoryTabView` / `ContainerLogsTabView`
 // wrappers and the `LogTabHeader` (its description now feeds the empty-state
 // hint).
 
+// MARK: - LogSubject (#457)
+
+/// What a pushed Logs screen is ABOUT. Every entrance carries its own context,
+/// so the screen is never opened and then steered.
+///
+/// #457 was: `LogsRouter` + `LogsRouter.Request` + `LogsRouter.fetchingHostID`
+/// (App.swift), `MainTabView.onChange { selectedTab = 3 }`,
+/// `LogsView.consumeLogsRequest` and `ServersView.containerLogBusyStrip` — the
+/// app's only cross-tab back-channel, which existed purely to teleport the user
+/// to a tab and re-establish context the caller already held, then draw a busy
+/// indicator on a card that had just scrolled off-screen. A push carries all of
+/// it for free, and the busy state is now on THIS screen.
+enum LogSubject: Equatable {
+    /// One connect / reconnect attempt's `.connection` log.
+    case connection
+    /// A provisioning (SSH) run's `.provisioning` log.
+    case provisioning
+    /// One server's `podman logs` buffer — the host is pinned, no picker.
+    case container(ServerHost)
+    /// The unscoped entrance (Settings → "Diagnostics and logs"): every
+    /// category, with the switch.
+    case all
+
+    /// The category the screen opens on.
+    var category: LogCategory {
+        switch self {
+        case .connection:   return .connection
+        case .provisioning: return .provisioning
+        case .container:    return .containerLogs
+        case .all:          return .connection
+        }
+    }
+
+    /// The server a `.container` subject is pinned to; nil for every other case.
+    var host: ServerHost? {
+        if case .container(let host) = self { return host }
+        return nil
+    }
+
+    /// Only the unscoped entrance offers the 4-way category switch — for every
+    /// other subject the control has nothing left to decide.
+    var showsCategoryPicker: Bool { self == .all }
+
+    /// The subject sentence, used as the screen title: whose log this is and
+    /// what produced it.
+    var title: String {
+        switch self {
+        case .connection:       return L10n.logsSubjectConnection.localized()
+        case .provisioning:     return L10n.logsSubjectProvisioning.localized()
+        case .container(let h): return L10n.logsSubjectContainer_fmt.formatted(h.label)
+        case .all:              return L10n.logsTitle.localized()
+        }
+    }
+}
+
+// MARK: - LogsView
+
 struct LogsView: View {
+    /// #457: what this screen is about — fixed by whoever pushed it.
+    private let subject: LogSubject
     @ObservedObject private var serverStore: ServerHostStore
     /// #338: needed to spot the primary connection's host (ordered first,
-    /// starred) in the container source card.
+    /// starred) in the container source card's picker.
     @ObservedObject private var connections: ConnectionStore
-    /// #339: Manage VPS "Container logs" lands here — select Container + that
-    /// host, optionally auto-start the fetch, then clear the request.
-    @ObservedObject private var router: LogsRouter
     // #332 was: @ObservedObject private var store = LogStore.shared — every
     // store publish re-evaluated this whole body (toolbar export string +
     // filtered/attributed log text) even while another tab was selected.
     // The store is now read directly; the body refreshes off the coalesced
-    // `revision` via `logRefreshTick`, gated on tab visibility below.
+    // `revision` via `logRefreshTick`, gated on visibility below.
     private let store = LogStore.shared
-    /// #332: bumped from `store.$revision` (≤4/s) while the tab is visible —
-    /// the only log-driven invalidation this view has left.
+    /// #332: bumped from `store.$revision` (≤4/s) while the screen is on
+    /// screen — the only log-driven invalidation this view has left.
     @State private var logRefreshTick = 0
-    /// #332: Logs is a persistent TabView child; without this gate a hidden
-    /// Logs tab would still rebuild on every revision bump.
-    @State private var isTabVisible = false
+    /// #332: skip the tick while the screen is not visible; catch up once in
+    /// `onAppear`.
+    // #457 was: `isTabVisible` — Logs is a pushed destination now, not a tab.
+    @State private var isOnScreen = false
     @StateObject private var provisioner = Provisioner()
 
-    @State private var selection: LogCategory = .connection
+    /// #457: seeded from the subject; only the `.all` subject can change it.
+    @State private var selection: LogCategory
     @State private var searchText = ""
+    /// #457: seeded from a `.container` subject; only the `.all` subject shows
+    /// the picker that changes it.
     @State private var selectedHostID: UUID?
     // #338 was: fetching: Bool — now the monotonic fetch phase (nil = idle),
     // mirroring the HostDisplay forward-only pattern; drives text + k/n + bar.
@@ -50,147 +115,141 @@ struct LogsView: View {
     /// scan-first fallback) → the podman command → Receiving output….
     private static let fetchPhaseCount = 3
 
-    init(serverStore: ServerHostStore, connections: ConnectionStore, router: LogsRouter) {
+    // #457 was: init(serverStore:connections:router:) — the router carried the
+    // category + host + autofetch AFTER the tab switch. `subject` carries them
+    // before the screen exists.
+    init(subject: LogSubject,
+         serverStore: ServerHostStore,
+         connections: ConnectionStore) {
+        self.subject = subject
         _serverStore = ObservedObject(wrappedValue: serverStore)
         _connections = ObservedObject(wrappedValue: connections)
-        _router      = ObservedObject(wrappedValue: router)
+        _selection      = State(initialValue: subject.category)
+        _selectedHostID = State(initialValue: subject.host?.id)
     }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
             // #332: reading the tick ties this body to the coalesced refresh
             // (the store itself is no longer observed).
             let _ = logRefreshTick
-            VStack(spacing: 0) {
-                // #316: category switch — short labels so four segments never
-                // wrap; the full category names go to VoiceOver.
-                OlcSegmented(selection: $selection,
-                             options: LogCategory.allCases.map { ($0, $0.segmentTitle, $0.title) })
-                    .padding(.horizontal)
-                    .padding(.top, 4)
-                    .padding(.bottom, 10)
-
-                // #338 was: serverPicker (nav-area menu) + downloadBar (bare
-                // right-aligned text button) — replaced by the source card.
-                if selection == .containerLogs {
-                    containerSourceCard
-                }
-
-                fileHeaderRow
-
-                LogBodyView(
-                    entries: currentEntries,
-                    searchText: searchText,
-                    emptySystemImage: selection.systemImage,
-                    emptyTitle: L10n.emptyLogsGeneric.localized(),
-                    emptyHint: emptyHint,
-                    // #338: container empty state gets a primary "Fetch from {host}" CTA.
-                    ctaTitle: containerCTAHost.map { L10n.logsFetchFromHost_fmt.formatted($0.label) },
-                    ctaSystemImage: "arrow.down.doc",
-                    ctaAction: containerCTAHost.map { host in
-                        { Task { await primaryAction(host) } }
-                    }
-                )
+            if subject.showsCategoryPicker {
+                categoryPicker
             }
-            // (audit #299) paint the ground from the token: without this the
-            // tab keeps the system background, so the Gray scheme's mid-gray
-            // ground (Theme.Palette.bg) never showed here. (This view doesn't
-            // observe SettingsStore, so the `.id(appearanceMode)` rebuild in
-            // App.swift is what repaints it on a Dark↔Gray switch.)
-            .scrollContentBackground(.hidden)
-            .background(Theme.Palette.bg)
-            .navigationTitle(L10n.logsTitle.localized())
-            .searchable(text: $searchText,
-                        placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: L10n.logsSearchPlaceholder.localized())
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    // #353 was: `let plain = LogRendering.plain(currentEntries.reversed())`
-                    // built the entire export string on every toolbar refresh,
-                    // even though it's only needed when the user opens Share or
-                    // taps Copy. Both now build it on demand.
-                    // #432: Share now hands iOS a real FILE (named + self-describing
-                    // header) instead of a bare String, plus "Export all logs"
-                    // bundles every category + per-server container buffer into one
-                    // file. Copy prepends the same header so pasted text is just as
-                    // identifiable. The menu stays enabled whenever ANY log has
-                    // content, so "Export all" works even from an empty tab.
-                    OlcOverflowMenu(items: [
-                        .shareFileLazy(L10n.logsShareThisAction.localized(), systemImage: "square.and.arrow.up") {
-                            LogExport.exportCurrent(title: currentLogTitle, label: currentLogLabel,
-                                                    displayFileName: currentFileName, entries: currentEntries)
-                        },
-                        .shareFileLazy(L10n.logsExportAllAction.localized(), systemImage: "square.and.arrow.up.on.square") {
-                            LogExport.exportAll(sections: allLogSections)
-                        },
-                        .action(L10n.copyAllAction.localized(), systemImage: "doc.on.doc") {
-                            UIPasteboard.general.string = LogExport.rendered(
-                                title: currentLogTitle, displayFileName: currentFileName, entries: currentEntries)
-                        },
-                        .divider,
-                        .action(L10n.clearCategoryAction.localized(), systemImage: "trash", role: .destructive) {
-                            clearCurrent()
-                        },
-                    ])
-                    .disabled(!hasAnyLogs)
-                }
+            // #338 was: serverPicker (nav-area menu) + downloadBar (bare
+            // right-aligned text button) — replaced by the source card.
+            if selection == .containerLogs {
+                containerSourceCard
             }
-            // #332: visibility-gated refresh — hidden tabs skip the tick and
-            // catch up once in onAppear. `$revision` is already coalesced in
-            // LogStore (≤4 bumps/s), so a teardown log storm costs the UI at
-            // most four body re-evaluations per second, and zero when hidden.
-            .onReceive(store.$revision) { _ in
-                if isTabVisible { logRefreshTick &+= 1 }
+            fileHeaderRow
+            logBody
+        }
+        // (audit #299) paint the ground from the token: without this the screen
+        // keeps the system background and the Palette ground never shows.
+        .scrollContentBackground(.hidden)
+        .background(Theme.Palette.bg)
+        // #457 was: .navigationTitle(L10n.logsTitle) inside this view's own
+        // NavigationStack. The title is the SUBJECT now, and it is inline —
+        // large-title space belongs to answers, not to a screen name.
+        .navigationTitle(subject.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: L10n.logsSearchPlaceholder.localized())
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { exportMenu }
+        }
+        // #332: visibility-gated refresh. `$revision` is already coalesced in
+        // LogStore (≤4 bumps/s), so a teardown log storm costs the UI at most
+        // four body re-evaluations per second, and zero while off screen.
+        .onReceive(store.$revision) { _ in
+            if isOnScreen { logRefreshTick &+= 1 }
+        }
+        .onDisappear { isOnScreen = false }  // #332
+        .onAppear {
+            isOnScreen = true       // #332
+            logRefreshTick &+= 1    // #332: render lines logged while hidden
+        }
+        // #338: advance the fetch phase forward-only from the provisioner's
+        // real progress signals — the podman command starting (SSHRunner
+        // step) and the output-received marker; the scan-first fallback's
+        // own steps deliberately stay in phase 1 ("Connecting…").
+        .onChange(of: provisioner.status) { _, status in
+            guard fetchPhase != nil, case .running(let msg) = status else { return }
+            if msg.hasPrefix("podman logs") {
+                fetchPhase = max(fetchPhase ?? 0, 1)
+            } else if msg == L10n.logsPhaseReceiving.localized() {
+                fetchPhase = max(fetchPhase ?? 0, 2)
             }
-            .onDisappear { isTabVisible = false }  // #332
-            // #339: consume a Manage VPS → Logs route. onChange covers the
-            // already-mounted view; onAppear covers a LogsView first created
-            // by the tab switch itself (request set before it existed).
-            .onChange(of: router.request) { _, req in
-                consumeLogsRequest(req)
-            }
-            .onAppear {
-                isTabVisible = true     // #332
-                logRefreshTick &+= 1    // #332: render lines logged while hidden
-                consumeLogsRequest(router.request)
-            }
-            // #338: advance the fetch phase forward-only from the provisioner's
-            // real progress signals — the podman command starting (SSHRunner
-            // step) and the output-received marker; the scan-first fallback's
-            // own steps deliberately stay in phase 1 ("Connecting…").
-            .onChange(of: provisioner.status) { _, status in
-                guard fetchPhase != nil, case .running(let msg) = status else { return }
-                if msg.hasPrefix("podman logs") {
-                    fetchPhase = max(fetchPhase ?? 0, 1)
-                } else if msg == L10n.logsPhaseReceiving.localized() {
-                    fetchPhase = max(fetchPhase ?? 0, 2)
-                }
-            }
-            // #297: surface scan/download failures instead of a silent no-op
-            // that looked like the button had frozen.
-            .alert(L10n.okPrompt.localized(), isPresented: Binding(
-                get: { alertText != nil },
-                set: { if !$0 { alertText = nil } }
-            )) {
-                Button(L10n.ok.localized()) { alertText = nil }
-            } message: {
-                Text(alertText ?? "")
-            }
+        }
+        // #297: surface scan/download failures instead of a silent no-op
+        // that looked like the button had frozen.
+        .alert(L10n.okPrompt.localized(), isPresented: Binding(
+            get: { alertText != nil },
+            set: { if !$0 { alertText = nil } }
+        )) {
+            Button(L10n.ok.localized()) { alertText = nil }
+        } message: {
+            Text(alertText ?? "")
         }
     }
 
-    /// #339: apply a routed request — Container category + that host — and
-    /// kick off the fetch when asked (skipped if one is already running).
-    /// Idempotent: clears the request first, so the onChange/onAppear pair
-    /// can't double-consume.
-    private func consumeLogsRequest(_ req: LogsRouter.Request?) {
-        guard let req else { return }
-        router.request = nil
-        selection = .containerLogs
-        selectedHostID = req.hostID
-        guard req.autofetch, fetchPhase == nil,
-              let host = serverStore.hosts.first(where: { $0.id == req.hostID }) else { return }
-        Task { await primaryAction(host) }
+    // MARK: Chrome (#457 — extracted so `body` stays small)
+
+    /// #316: category switch — short labels so four segments never wrap; the
+    /// full category names go to VoiceOver. #457: `.all` only.
+    private var categoryPicker: some View {
+        OlcSegmented(selection: $selection,
+                     options: LogCategory.allCases.map { ($0, $0.segmentTitle, $0.title) })
+            .padding(.horizontal)
+            .padding(.top, 4)
+            .padding(.bottom, 10)
+    }
+
+    private var logBody: some View {
+        LogBodyView(
+            entries: currentEntries,
+            searchText: searchText,
+            emptySystemImage: selection.systemImage,
+            emptyTitle: L10n.emptyLogsGeneric.localized(),
+            emptyHint: emptyHint,
+            // #338: container empty state gets a primary "Fetch from {host}" CTA.
+            ctaTitle: containerCTAHost.map { L10n.logsFetchFromHost_fmt.formatted($0.label) },
+            ctaSystemImage: "arrow.down.doc",
+            ctaAction: containerCTAHost.map { host in
+                { Task { await primaryAction(host) } }
+            }
+        )
+    }
+
+    // #353 was: `let plain = LogRendering.plain(currentEntries.reversed())`
+    // built the entire export string on every toolbar refresh, even though
+    // it's only needed when the user opens Share or taps Copy. Both now
+    // build it on demand.
+    // #432: Share hands iOS a real FILE (named + self-describing header)
+    // instead of a bare String, plus "Export all logs" bundles every category
+    // + per-server container buffer into one file. Copy prepends the same
+    // header so pasted text is just as identifiable. The menu stays enabled
+    // whenever ANY log has content, so "Export all" works from an empty view.
+    private var exportMenu: some View {
+        OlcOverflowMenu(items: [
+            .shareFileLazy(L10n.logsShareThisAction.localized(), systemImage: "square.and.arrow.up") {
+                LogExport.exportCurrent(title: currentLogTitle, label: currentLogLabel,
+                                        displayFileName: currentFileName, entries: currentEntries)
+            },
+            .shareFileLazy(L10n.logsExportAllAction.localized(), systemImage: "square.and.arrow.up.on.square") {
+                LogExport.exportAll(sections: allLogSections)
+            },
+            .action(L10n.copyAllAction.localized(), systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = LogExport.rendered(
+                    title: currentLogTitle, displayFileName: currentFileName, entries: currentEntries)
+            },
+            .divider,
+            .action(L10n.clearCategoryAction.localized(), systemImage: "trash", role: .destructive) {
+                clearCurrent()
+            },
+        ])
+        .disabled(!hasAnyLogs)
     }
 
     // MARK: Current category plumbing (#316)
@@ -251,17 +310,22 @@ struct LogsView: View {
     }
 
     /// #432: any log with content — gates the whole export menu (so "Export all"
-    /// stays reachable from an empty tab).
+    /// stays reachable from an empty view).
     private var hasAnyLogs: Bool {
         store.entries.values.contains { !$0.isEmpty }
             || store.containerEntries.values.contains { !$0.isEmpty }
     }
 
     /// #316: LogTabHeader's per-category description moved into the empty state.
+    // #457 was: `+ L10n.emptyLogsGenericHint` — "Run an operation in the
+    // Connections or Manage VPS tab", which named two tabs (one of which the
+    // Russian table left untranslated, and one of which no longer exists) to a
+    // reader who is already looking at the one thing this screen is about.
     private var emptyHint: String {
-        selection == .containerLogs
-            ? L10n.logsContainerEmptyHint.localized()
-            : "\(selection.tabDescription). \(L10n.emptyLogsGenericHint.localized())"
+        if selection == .containerLogs {
+            return L10n.logsContainerEmptyHint.localized()
+        }
+        return "\(selection.tabDescription). \(L10n.logsEmptySubjectHint.localized())"
     }
 
     private func clearCurrent() {
@@ -286,17 +350,7 @@ struct LogsView: View {
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(Theme.Palette.textSecondary)
                 Spacer(minLength: 8)
-                // #367: live peer count for the selected container server, parsed
-                // from the server's "Current peers count:" log lines (PR #96).
-                if selection == .containerLogs,
-                   let host = selectedHost,
-                   let peers = store.peerCounts[host.logFilePrefix] {
-                    Text(L10n.logsPeerCount_fmt.formatted(peers))
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.Palette.textSecondary)
-                    Text("·").font(.caption2).foregroundStyle(Theme.Palette.textTertiary)
-                }
+                peerCountLabel
                 Text(L10n.logsLineCount_fmt.formatted(currentEntries.count))
                     .font(.caption2)
                     .monospacedDigit()
@@ -308,12 +362,33 @@ struct LogsView: View {
         }
     }
 
+    /// #367: live peer count for the selected container server, parsed from the
+    /// server's "Current peers count:" log lines (PR #96).
+    @ViewBuilder
+    private var peerCountLabel: some View {
+        if selection == .containerLogs,
+           let host = selectedHost,
+           let peers = store.peerCounts[host.logFilePrefix] {
+            Text(L10n.logsPeerCount_fmt.formatted(peers))
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(Theme.Palette.textSecondary)
+            Text("·")
+                .font(.caption2)
+                .foregroundStyle(Theme.Palette.textTertiary)
+        }
+    }
+
     // MARK: Container source (#295/#296 — unchanged behaviour, new home)
 
-    /// The host whose container log is shown: the explicit selection, falling
-    /// back to the last-fetched target (#278), falling back to the first
-    /// configured host.
+    /// The host whose container log is shown. #457: a `.container` subject pins
+    /// it (resolved through the store so a scan's `lastContainerName` update is
+    /// picked up); otherwise the explicit selection, falling back to the
+    /// last-fetched target (#278), falling back to the first configured host.
     private var selectedHost: ServerHost? {
+        if let pinned = subject.host {
+            return serverStore.hosts.first(where: { $0.id == pinned.id }) ?? pinned
+        }
         if let id = selectedHostID, let h = serverStore.hosts.first(where: { $0.id == id }) {
             return h
         }
@@ -349,37 +424,18 @@ struct LogsView: View {
 
     /// #338: source card (README §2) — host chips (≤3; Menu picker beyond) +
     /// one secondary Fetch button, with the monotonic phase progress while a
-    /// fetch runs. Replaces the #296 bare text button.
+    /// fetch runs. #457: a subject-pinned host drops the picker entirely.
     private var containerSourceCard: some View {
         OlcCard {
             VStack(alignment: .leading, spacing: 10) {
-                if serverStore.hosts.isEmpty {
+                if serverStore.hosts.isEmpty && subject.host == nil {
                     Text(L10n.logsContainerNoServers.localized())
                         .font(.subheadline)
                         .foregroundStyle(Theme.Palette.textSecondary)
                 } else {
-                    HStack(alignment: .center, spacing: 10) {
-                        hostPicker
-                        Spacer(minLength: 8)
-                        fetchButton
-                    }
+                    containerSourceControls
                     if let phase = fetchPhase {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(phaseText(phase))
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(Theme.Palette.textSecondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer(minLength: 8)
-                                Text("\(min(phase + 1, Self.fetchPhaseCount))/\(Self.fetchPhaseCount)")
-                                    .font(.caption2)
-                                    .monospacedDigit()
-                                    .foregroundStyle(Theme.Palette.textTertiary)
-                            }
-                            OlcProgressBar(fraction: Double(min(phase + 1, Self.fetchPhaseCount))
-                                                   / Double(Self.fetchPhaseCount))
-                        }
+                        fetchProgress(phase)
                     }
                 }
             }
@@ -387,6 +443,35 @@ struct LogsView: View {
         .padding(.horizontal)
         .padding(.bottom, 10)
         .animation(.easeInOut(duration: 0.2), value: fetchPhase != nil)
+    }
+
+    private var containerSourceControls: some View {
+        HStack(alignment: .center, spacing: 10) {
+            if subject.host == nil {
+                hostPicker
+            }
+            Spacer(minLength: 8)
+            fetchButton
+        }
+    }
+
+    private func fetchProgress(_ phase: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(phaseText(phase))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(Theme.Palette.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text("\(min(phase + 1, Self.fetchPhaseCount))/\(Self.fetchPhaseCount)")
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.Palette.textTertiary)
+            }
+            OlcProgressBar(fraction: Double(min(phase + 1, Self.fetchPhaseCount))
+                                   / Double(Self.fetchPhaseCount))
+        }
     }
 
     @ViewBuilder
@@ -436,7 +521,7 @@ struct LogsView: View {
     }
 
     /// #296: the button never blocks the UI — it kicks off a `Task` and
-    /// returns immediately; `fetching` drives the spinner. #297: every dead
+    /// returns immediately; `fetchPhase` drives the spinner. #297: every dead
     /// end now sets `alertText` instead of returning silently, so a tap
     /// always ends in either new log lines or a visible reason it didn't.
     private func primaryAction(_ host: ServerHost) async {
@@ -444,11 +529,10 @@ struct LogsView: View {
             alertText = L10n.alertPasswordMissingShort.localized(); return
         }
         // #338 was: fetching = true … defer { fetching = false }
+        // #457 was: also published `router.fetchingHostID` so a card on ANOTHER
+        // tab could draw a busy indicator. The fetch is on screen now.
         fetchPhase = 0
-        // #334: publish the in-flight host so the ServersView card can show a
-        // busy indicator while the fetch runs on this (Logs) tab.
-        router.fetchingHostID = host.id
-        defer { fetchPhase = nil; router.fetchingHostID = nil }
+        defer { fetchPhase = nil }
 
         var target = host
         if target.lastContainerName == nil {
@@ -595,16 +679,19 @@ struct LogBodyView: View {
 // bar and the #296/#297 fetch logic) — all folded into the single-stack
 // `LogsView` above; the fetch logic moved verbatim.
 
-// #340: both appearance variants.
+// #340: both appearance variants. #457: Logs is pushed now, so the previews
+// wrap it in the NavigationStack its pusher supplies.
 #if DEBUG
 #Preview("Logs — Dark") {
-    LogsView(serverStore: ServerHostStore(), connections: ConnectionStore(),
-             router: LogsRouter())
-        .preferredColorScheme(.dark)
+    NavigationStack {
+        LogsView(subject: .all, serverStore: ServerHostStore(), connections: ConnectionStore())
+    }
+    .preferredColorScheme(.dark)
 }
 #Preview("Logs — Light") {
-    LogsView(serverStore: ServerHostStore(), connections: ConnectionStore(),
-             router: LogsRouter())
-        .preferredColorScheme(.light)
+    NavigationStack {
+        LogsView(subject: .connection, serverStore: ServerHostStore(), connections: ConnectionStore())
+    }
+    .preferredColorScheme(.light)
 }
 #endif

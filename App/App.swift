@@ -2,12 +2,18 @@ import SwiftUI
 
 // MARK: - App entry
 //
-// Hosts the root TabView with five tabs:
-//   - Connections — server list, global toggle, status, IP/speed test triggers
-//   - VPS         — SSH-managed hosts: install / uninstall / reboot olcrtc
-//   - Config      — placeholder for routing/config options (#301)
-//   - Logs        — per-category log browser with copy-to-clipboard
-//   - Settings    — port, DNS, font size, vp8 tuning, debug toggle
+// #457: hosts the root TabView with THREE tabs:
+//   - Connect  — connection list, tunnel state, the one connect/disconnect action
+//   - Servers  — SSH-managed hosts: install / uninstall / reboot olcrtc
+//   - Settings — tunnel mode, SOCKS, DNS, appearance, diagnostics & logs
+//
+// #457 was: five tabs. Config held one 2-option picker plus one toggle while
+// nine sibling settings lived in Settings — it is now `SettingsView.tunnelSection`
+// (see ConfigView.swift). Logs needed a purpose-built pub/sub channel
+// (`LogsRouter` + `onChange { selectedTab = 3 }` + `fetchingHostID`) just to be
+// entered with the right context, which is the clearest possible proof it was a
+// sub-view — it is now pushed with a `LogSubject` (see LogsView.swift). HIG Tab
+// bars: "it's generally easier to navigate among fewer tabs."
 //
 // All @StateObject stores live on MainTabView so they survive tab switches
 // and the tunnel can keep running while the user navigates around.
@@ -27,26 +33,12 @@ struct OlcrtcApp: App {
     }
 }
 
-// MARK: - Logs routing (#339)
-//
-// Manage VPS's "Container logs" no longer presents a sheet — it routes to the
-// Logs tab (Container category, that host) and auto-starts the fetch there.
-// The router is the one piece of shared state: ServersView writes a request,
-// MainTabView (which owns the tab selection) switches to the Logs tab, and
-// LogsView consumes + clears the request.
-@MainActor
-final class LogsRouter: ObservableObject {
-    struct Request: Equatable {
-        let hostID: UUID
-        let autofetch: Bool
-    }
-    @Published var request: Request?
-    /// #334: the host whose container-log fetch is currently running (set by
-    /// LogsView for the duration of the fetch). ServersView observes it to show
-    /// a busy indicator on that host's card — the fetch itself lives on the
-    /// Logs tab (#339), so this is the only handle ServersView has on it.
-    @Published var fetchingHostID: UUID?
-}
+// #457 was: `final class LogsRouter: ObservableObject` (#339) with its
+// `Request { hostID, autofetch }` and `fetchingHostID` (#334) — the app's ONLY
+// cross-tab back-channel. It existed purely to teleport the user to the Logs
+// tab and re-establish context the caller already held, then draw a busy
+// indicator on a card that had just scrolled off-screen. A push carries its
+// subject for free: see `LogSubject` in LogsView.swift.
 
 struct MainTabView: View {
     // #412 was: `store`/`tunnel` had inline `= …` initializers and
@@ -58,8 +50,8 @@ struct MainTabView: View {
     @StateObject  private var ipCheck     = IPChecker()
     @StateObject  private var speed       = SpeedTest()
     @StateObject  private var serverStore : ServerHostStore   // #453: built in init() so the failover wiring can capture it
-    @StateObject  private var botStore    = BotStore()      // #417: bot registry (Manage VPS + Settings)
-    @StateObject  private var logsRouter  = LogsRouter()   // #339
+    @StateObject  private var botStore    = BotStore()      // #417: bot registry (Servers + Settings)
+    // #457 was: `@StateObject private var logsRouter = LogsRouter()` (#339).
     @StateObject  private var updateChecker = UpdateChecker()   // #360
     @ObservedObject private var settings  = SettingsStore.shared
 
@@ -74,7 +66,7 @@ struct MainTabView: View {
     /// not every time the user comes back to the Connections tab.
     @State private var didAutoConnect = false
 
-    /// Selected tab.
+    /// Selected tab — #457: 0 Connect, 1 Servers, 2 Settings.
     // #294 was: also drove the Logs-tab visibility gate (#289) for the
     // merged-stream rebuild. With per-source Logs tabs (#294) each tab only
     // rebuilds its own small category buffer, so that gate was retired —
@@ -124,9 +116,8 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        // #258 shell pass: every tab uses a large title + a single trailing slot
-        // (Connections / VPS: +, Logs: ⋯ overflow, Settings: none). Dark-only is
-        // enforced via Info.plist `UIUserInterfaceStyle=Dark` (project.yml).
+        // #457: three tabs — Connect / Servers / Settings. Everything else is a
+        // pushed destination, entered FROM its subject.
         TabView(selection: $selectedTab) {
             ConnectionsView(store: store, tunnel: tunnel,
                             ipCheck: ipCheck, speed: speed,
@@ -134,34 +125,26 @@ struct MainTabView: View {
                 .tabItem { Label(L10n.tabConnections.localized(), systemImage: "network") }
                 .tag(0)
 
-            // #339: + logsRouter, so "Container logs" can route to the Logs tab.
             // #452: + tunnel, so a protocol row on the host card can connect directly.
-            ServersView(serverStore: serverStore, connections: store, logsRouter: logsRouter, botStore: botStore, tunnel: tunnel)
+            // #457 was: + logsRouter — "Container logs" pushes
+            // LogsView(subject: .container(host)) now.
+            ServersView(serverStore: serverStore, connections: store,
+                        botStore: botStore, tunnel: tunnel)
                 .tabItem { Label(L10n.tabServers.localized(), systemImage: "server.rack") }
                 .tag(1)
-
-            // #301: Config placeholder between Manage VPS and Logs (tags shifted +1).
-            ConfigView(tunnel: tunnel)
-                .tabItem { Label(L10n.tabConfig.localized(), systemImage: "slider.horizontal.3") }
-                .tag(2)
-
-            // #316 was: LogsView(serverStore: serverStore, isActive: selectedTab == 3)
-            // — the isActive flag had been unused since #294; dropped with the
-            // single-stack Logs rework.
-            // #338: + connections, so the container source card can star the
-            // primary connection's host. #339: + router (Manage VPS → Logs).
-            LogsView(serverStore: serverStore, connections: store, router: logsRouter)
-                .tabItem { Label(L10n.tabLogs.localized(), systemImage: "doc.text") }
-                .tag(3)
 
             // #300: SettingsView needs live tunnel state to gate the
             // "in use by olcrtc tunnel" port-check result on an actual
             // connection, not just the configured port number (#313: the
             // gate compares against `tunnel.boundPort`, the port the live
             // session actually bound).
-            SettingsView(tunnel: tunnel, botStore: botStore)
+            // #457: + serverStore/connections, which the pushed
+            // LogsView(subject: .all) needs; the tunnel-mode picker and the
+            // failover toggle moved here from the deleted Config tab.
+            SettingsView(tunnel: tunnel, botStore: botStore,
+                         serverStore: serverStore, connections: store)
                 .tabItem { Label(L10n.tabSettings.localized(), systemImage: "gearshape") }
-                .tag(4)
+                .tag(2)
         }
         // #456 was: .id(settings.appearanceMode) — a full TabView rebuild that
         // reset nav stacks, scroll positions and in-progress sheet edits. It
@@ -188,12 +171,8 @@ struct MainTabView: View {
         // The Info.plist UIUserInterfaceStyle=Dark enforcement is gone — it
         // would have overridden this modifier.
         .preferredColorScheme(settings.appearanceMode.colorScheme)
-        // #339: a logs request switches to the Logs tab; LogsView consumes the
-        // request itself (category + host + autofetch) and clears it to nil —
-        // which must not switch tabs again, hence the nil check.
-        .onChange(of: logsRouter.request) { _, req in
-            if req != nil { selectedTab = 3 }
-        }
+        // #457 was: `.onChange(of: logsRouter.request) { if $1 != nil { selectedTab = 3 } }`
+        // (#339) — the forced tab hop. Logs is pushed with its subject now.
         // #375: on every return to the foreground, re-read Keychain secrets. If
         // the device was locked at launch the encryption key was unreadable and
         // left empty (which would later surface as the misleading "key length 0");

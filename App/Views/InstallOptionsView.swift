@@ -194,7 +194,12 @@ struct InstallOptionsView: View {
         } header: {
             Text(L10n.transportSectionHeader.localized())
         } footer: {
-            Text(transportFooter).font(.caption2)
+            // #457: the footer is empty for every transport but videochannel now
+            // that the compatibility sentence is gone — render nothing rather
+            // than an empty Text that still reserves footer space.
+            if !transportFooter.isEmpty {
+                Text(transportFooter).font(.caption2)
+            }
         }
     }
 
@@ -319,38 +324,68 @@ struct InstallOptionsView: View {
                isOn: binding.enabled)
         if draft(c).enabled {
             OlcChipPicker(selection: binding.transport, options: transportOptions(for: c))
-            // #455 (editorial): the extras used to offer a transport picker with
-            // NO compatibility hint, while the primary transport section shows
-            // one — the same "hint at the top but not at the bottom" gap. Mirror
-            // the primary's compat caption here so every protocol choice is
-            // explained the same way.
-            Text(extraCompat(c))
+            // #457 was: `Text(extraCompat(c))` — the ★/⚠/✗ compatibility caption.
+            // Deleted with the compatibility table: "working with X is uncertain"
+            // and "no compatibility data for X" are judgements the app has not
+            // measured, which is the same disease as an unearned green dot, in
+            // words. The only surviving use of the matrix here is the SILENT
+            // gate: `transportOptions(for:)` disables a `.fail` combo outright.
+            extraRoomFields(c, binding: binding)
+            extraJitsiFields(c, binding: binding)
+            extraWbTokenFields(c, binding: binding)
+        }
+    }
+
+    /// #452/#457: room entry for one extra protocol. Split out so `extraRows`
+    /// stays a flat, cheap ViewBuilder (this sheet feeds a Form that is already
+    /// several conditional sections deep).
+    @ViewBuilder
+    private func extraRoomFields(_ c: String, binding: Binding<ExtraDraft>) -> some View {
+        if CarrierTransportMatrix.requiresRoomID(carrier: c) {
+            TextField(L10n.fieldRoomID.localized(), text: binding.roomID)
+                .font(.system(.body, design: .monospaced))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            roomSuggestion(carrier: c, into: binding.roomID)   // #456
+        } else {
+            Label(L10n.roomIDAutoGenHint.localized(), systemImage: "wand.and.stars")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// #457: the extras' Jitsi field had NO caption while the primary's identical
+    /// field carries `jitsiServerFooter` ("shared public instance — point at your
+    /// own…"). Same field, same consequence, so: same sentence. A `Form` section
+    /// footer belongs to the whole section, and this one holds every extra, so
+    /// the caption rides directly under its own field.
+    @ViewBuilder
+    private func extraJitsiFields(_ c: String, binding: Binding<ExtraDraft>) -> some View {
+        if c == "jitsi" {
+            TextField(L10n.fieldJitsiURL.localized(), text: binding.jitsiBaseURL)
+                .font(.system(.body, design: .monospaced))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+            Text(L10n.jitsiServerFooter.localized())
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            if CarrierTransportMatrix.requiresRoomID(carrier: c) {
-                TextField(L10n.fieldRoomID.localized(), text: binding.roomID)
-                    .font(.system(.body, design: .monospaced))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                roomSuggestion(carrier: c, into: binding.roomID)   // #456
-            } else {
-                Label(L10n.roomIDAutoGenHint.localized(), systemImage: "wand.and.stars")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if c == "jitsi" {
-                TextField(L10n.fieldJitsiURL.localized(), text: binding.jitsiBaseURL)
-                    .font(.system(.body, design: .monospaced))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-            }
-            if c == "wbstream" {
-                SecureField(L10n.wbTokenFieldLabel.localized(), text: binding.wbToken)
-                    .font(.system(.body, design: .monospaced))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-            }
+        }
+    }
+
+    /// #457: same gap, same fix — the extras' wbstream token field is the one
+    /// place a missing token silently produces a dead datachannel protocol, and
+    /// it was the one place that did not say so. Reuses `wbTokenFooter`.
+    @ViewBuilder
+    private func extraWbTokenFields(_ c: String, binding: Binding<ExtraDraft>) -> some View {
+        if c == "wbstream" {
+            SecureField(L10n.wbTokenFieldLabel.localized(), text: binding.wbToken)
+                .font(.system(.body, design: .monospaced))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            Text(L10n.wbTokenFooter.localized())
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
     // eoc #452
@@ -406,25 +441,23 @@ struct InstallOptionsView: View {
 
     // MARK: Footer helpers
 
+    /// #457 was: a `compat` sentence built from the compatibility table
+    /// (`matrixRecommended_fmt` / `matrixWorks_fmt` / `matrixQuestion_fmt` /
+    /// `matrixFail_fmt` / `matrixUnknown_fmt`), prepended to everything below.
+    /// The table is gone: "★ recommended", "⚠ uncertain" and "no data" are
+    /// verdicts from a lab run at pin time, presented as if they described the
+    /// carriers today. What survives is the SILENT gate — `transportOptions(for:)`
+    /// disables a `.fail` combo so an impossible install cannot be submitted.
     private var transportFooter: String {
-        let compat: String
-        switch CarrierTransportMatrix.compat(carrier: carrier, transport: transport) {
-        case .recommended: compat = L10n.matrixRecommended_fmt.formatted(carrier)
-        case .ok:          compat = L10n.matrixWorks_fmt.formatted(carrier)
-        case .question:    compat = L10n.matrixQuestion_fmt.formatted(carrier)
-        case .fail:        compat = L10n.matrixFail_fmt.formatted(carrier)
-        case .unknown:     compat = L10n.matrixUnknown_fmt.formatted(carrier)
-        }
         // #097 was: the warning also covered seichannel — stale since the install
         // sheet gained the SEI steppers (seiSection → installEnv → OLCRTC_SEI_*).
         // `vp8channel` tunes via the Settings sliders, `seichannel` via the
         // steppers above; only `videochannel` still installs with the server-side
         // defaults from scripts/srv.sh (OLCRTC_VIDEO_* deliberately has no UI —
         // #097 decision: ten niche knobs aren't worth the sheet sprawl).
-        if transport == "videochannel" {
-            return compat + "\n" + L10n.transportUsesServerDefaults_fmt.formatted(transport)
-        }
-        return compat
+        transport == "videochannel"
+            ? L10n.transportUsesServerDefaults_fmt.formatted(transport)
+            : ""
     }
 
     private var roomFooter: String {
@@ -435,16 +468,7 @@ struct InstallOptionsView: View {
         }
     }
 
-    /// #455 (editorial): the compatibility caption for an EXTRA protocol's
-    /// current carrier+transport — the extras' parity with the primary
-    /// transport footer. Reuses the same matrix* strings.
-    private func extraCompat(_ c: String) -> String {
-        switch CarrierTransportMatrix.compat(carrier: c, transport: draft(c).transport) {
-        case .recommended: return L10n.matrixRecommended_fmt.formatted(c)
-        case .ok:          return L10n.matrixWorks_fmt.formatted(c)
-        case .question:    return L10n.matrixQuestion_fmt.formatted(c)
-        case .fail:        return L10n.matrixFail_fmt.formatted(c)
-        case .unknown:     return L10n.matrixUnknown_fmt.formatted(c)
-        }
-    }
+    // #457 was: `extraCompat(_:)` — the same ★/⚠/✗ compatibility sentence for an
+    // extra protocol. Deleted with the table (see `transportFooter`); the extras
+    // keep the hard `.fail` gate through `transportOptions(for:)`.
 }

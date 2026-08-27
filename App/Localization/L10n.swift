@@ -43,17 +43,14 @@ enum L10n: String, CaseIterable {
     case okPrompt           // "Done"
 
     // MARK: Tabs
-    case tabConnections, tabServers, tabLogs, tabSettings
-    case tabConfig                          // #301: "Config" tab (placeholder)
-    case configComingSoonTitle              // #301: placeholder title
-    case configComingSoonHint               // #301: placeholder hint
+    // #457 was: `tabLogs` — Logs stopped being a tab and became a detail
+    // view pushed from the thing it explains (hero / server card).
+    case tabConnections, tabServers, tabSettings
     case autoDetectedContainer_fmt          // #302: "Auto-detected existing container: %@"
 
     // MARK: Tunnel mode (#vpn)
-    case tunnelModeProxy, tunnelModeVPN     // picker chips in the Config tab
+    case tunnelModeProxy, tunnelModeVPN     // #457: picker chips, Connect screen
     case configModeSectionHeader            // "Tunnel mode"
-    case configProxyExplainer               // proxy = in-app SOCKS5, opt-in per app
-    case configVPNExplainer                 // vpn = whole-device NE tunnel, paid team
     case configVPNUnavailableFooter         // lead-in line above the capability reason
     case vpnVideochannelUnsupported         // videochannel transport can't run in the appex
     case vpnDisconnected                    // generic unexpected-drop reason
@@ -73,7 +70,6 @@ enum L10n: String, CaseIterable {
     case healthLatencyLabel                 // row: latency
     case healthThroughputLabel              // row: speed
     case healthLatencyMs_fmt                // "%d ms"
-    case healthMeasuring                    // live-ping placeholder
     case healthLocationUnknown              // geo lookup empty/failed
     case healthRefresh                      // refresh button a11y
     // #455: premium redesign — editorial-consistency additions
@@ -110,7 +106,6 @@ enum L10n: String, CaseIterable {
     case actionConnect, actionRetry
     case shareAction, copyURIAction
     case shareConnectionTitle, shareConnectionExplanation, shareConnectionURIHeader
-    case primaryRoleMain                    // "primary"
     case copiedURI_fmt                      // "📋 URI copied: %@"
     // #135: full-access (co-admin) share — carries SSH creds; destructive.
     case shareFullAccessTitle               // "Share full access (SSH)"
@@ -162,9 +157,11 @@ enum L10n: String, CaseIterable {
     case hostField, portField, loginField, passwordField
     case actionInstall, actionUninstall, actionUpdate, actionReboot
     case actionChangeRoomTransport         // "Change Room / Transport"
-    // #339 was: actionDownloadContainerLogs ("Download container logs") — the
-    // action shows the logs in the Logs tab now, it doesn't download a file.
-    case actionContainerLogs                // "Container logs"
+    // #457 (audit fix): actionContainerLogs is BACK. It was retired on the
+    // assumption the server card would open the container log as a detail view,
+    // but no partition wired that route, so container logs became unreachable.
+    // The menu item now pushes LogsView(subject: .container(host)).
+    case actionContainerLogs               // "Container logs" (server overflow menu)
     case actionDone
     case actionRemoveFromList               // "Remove host from list"
     case removeHostConfirmTitle             // "Remove %@?"
@@ -226,7 +223,6 @@ enum L10n: String, CaseIterable {
     case logsTitle                          // "Logs"
     case logsSearchPlaceholder              // "Search"
     case emptyLogsGeneric                   // "Empty"
-    case emptyLogsGenericHint               // "Run an operation in the Connections or Servers tab"
     case noSearchResults                    // "Nothing found"
     case noSearchResultsHint_fmt            // "No matches for «%@»."
     case categoryConnection                 // "Connection"
@@ -344,8 +340,6 @@ enum L10n: String, CaseIterable {
     case appearanceSystem                   // "System"
     case appearanceLight                    // "Light"
     case appearanceDark                     // "Dark"
-    // #342 — fixed-footprint hero footer
-    case heroDisconnectedHint_fmt           // "Flip the switch to connect via %@."
 
     // MARK: InstallOptionsView
     case installTitle                       // "Install olcrtc"
@@ -716,7 +710,6 @@ enum L10n: String, CaseIterable {
     case healthActionVerify                 // "Verify" — run the end-to-end probe
     case healthVerifyAllAction              // "Verify all" — sweep every node here
     case healthShowReasonAction             // "What's wrong?" — reveals the full reason
-    case healthWhyTitle                     // title of the explanation alert (matches the action)
     case healthLatencyNotMeasured           // nil rtt AFTER an attempt finished
     case healthSweepSkipped_fmt             // "%d more not checked — …" (count)
 
@@ -730,18 +723,65 @@ enum L10n: String, CaseIterable {
     case vpsHeadlineNotCheckedHint          // the auto-refresh is running
     case vpsHeadlineStopped                 // container exists, is not running
     case vpsHeadlineStoppedHint             // what to do about it
-    case vpsProcessCaption_fmt              // "Server process: %@ · checked %@ ago"
-    case vpsProcessCaptionNever_fmt         // "Server process: %@ · not checked"
 
     // MARK: #456 Misc UI copy
     case shareConnectionOnlyBadge           // scope of a plain olcrtc:// link
     case shareConnectionOnlySub             // what that link can and cannot do
-    case heroSelectedNotLive_fmt            // "Selected: %@ — reconnect to switch"
     case roomIDLastUsed_fmt                 // "Use last room: %@" — remembered per carrier
     case installExistingFoundTitle_fmt      // "This VPS already runs %@"
     case installExistingFoundBody           // what a reinstall would destroy
     case installUseExistingAction           // adopt the existing container
     case installReinstallAction             // destructive: wipe and reinstall
+
+    // MARK: #457 Tunnel-mode picker (moved out of the deleted Config tab)
+    case tunnelModeLockedNote               // why the picker is disabled mid-session
+    // The three questions the picker answers, each with a proxy and a VPN answer.
+    case tunnelCompareScope, tunnelCompareScopeProxy, tunnelCompareScopeVPN
+    case tunnelCompareNeeds, tunnelCompareNeedsProxy, tunnelCompareNeedsVPN
+    case tunnelCompareRuns, tunnelCompareRunsProxy, tunnelCompareRunsVPN
+
+    // MARK: #457 Logs as a detail view (the Logs tab is gone)
+    case settingsOpenLogsRow                // Settings row that opens the log reader
+    case logsSubjectConnection              // title when the subject is the tunnel
+    case logsSubjectProvisioning            // title when the subject is server work
+    case logsSubjectContainer_fmt           // "Server log · %@" (server label)
+    case logsEmptySubjectHint               // nothing recorded for this subject yet
+
+    // MARK: #457 Connect hero
+    case actionDisconnect                   // mirrors actionConnect
+    case heroSubjectNone                    // no connection saved yet
+    case heroLastUsedLabel                  // label above the remembered connection
+    case heroPickAConnection                // what to do when nothing is selected
+    case heroEvidenceStarting_fmt           // "starting… %d s" (elapsed seconds)
+    case heroEvidenceUnverified             // live, but nothing measured through it
+    case heroEvidenceNoNetwork              // waitingForNetwork, session held
+    case heroScopeProxy_fmt                 // what the tunnel covers, proxy (%@ port)
+    case heroScopeVPN                       // what the tunnel covers, whole device
+
+    // MARK: #457 Connection rows
+    case connectRowLive                     // badge on the row that is carrying traffic
+    case connectRowTapHint                  // VoiceOver hint for the row
+    case connectRowRemove                   // destructive row action
+    case connectGroupFailing_fmt            // "%d of %d not working" (failing, total)
+
+    // MARK: #457 Where a suggested action lives
+    case healthActionOnServersTab_fmt       // "%@ — on the Servers tab" (action title)
+    case healthActionInSettings_fmt         // "%@ — in Settings" (action title)
+    case healthNeverMeasured                // age clause when nothing was ever measured
+
+    // MARK: #457 Server card — the process caption and the protocol rows
+    case vpsProtocolsFailing_fmt            // "%d of %d protocols…" (failing, total)
+    // The caption's own vocabulary: what a probe found, in plain words. These
+    // never colour anything — a running process is not a working connection.
+    case vpsProcessRunning
+    case vpsProcessStopped
+    case vpsProcessNothingInstalled
+    case vpsProcessNotSetUp
+    case vpsProcessUnread
+    case vpsProcessAge_fmt                  // "%@ · read %@ ago" (state word, age)
+    case protocolStoppedNote                // protocol row: container isn't running
+    case vpsScanBeforeInstall               // install pre-scan, in progress
+    case vpsScanFailed_fmt                  // install pre-scan failed (%@ = reason)
 }
 
 extension L10n {
