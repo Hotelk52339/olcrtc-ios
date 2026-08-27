@@ -15,7 +15,14 @@ import SwiftUI
 // #258: the per-row actions used to be split between a long-press gesture
 // (time-to-ready), a standalone pencil button, and a hidden contextMenu. They are
 // now all in the one visible OlcOverflowMenu; the row keeps only tap-to-set-primary
-// and a single health-check chip (#274 — one action runs RTT + time-to-ready).
+// and a single evidence chip.
+//
+// #456: that chip is the app's ONE health vocabulary — `HealthCoordinator`'s
+// persisted, timestamped verdict, rendered by `OlcHealthChip`. Green means a real
+// end-to-end probe (HTTP 2xx through that node's own SOCKS listener) succeeded
+// MINUTES ago, not "we ran something once". "Not checked" and "couldn't check"
+// look like neither good nor bad. #456 was: two competing view-local badges —
+// a group-ping ms pill and a per-row health chip, both unstamped.
 
 struct ConnectionsView: View {
     @ObservedObject var store   : ConnectionStore
@@ -28,6 +35,11 @@ struct ConnectionsView: View {
     var onPasteImport: ((OlcrtcSubscription.ImportInput) -> Void)? = nil
     // #337: observe the screenshot-safe toggle so the IP-check rows re-mask live.
     @ObservedObject private var settings = SettingsStore.shared
+    // #456: the ONE health vocabulary. Observed exactly like SettingsStore.shared
+    // above — the coordinator is written by non-view code (TunnelManager) and read
+    // by two tabs, so it is a singleton rather than an init parameter. Every green
+    // on this tab now traces back to a measured, timestamped probe it owns.
+    @ObservedObject private var health = HealthCoordinator.shared
 
     // boc #327: routing switch removed for now — it only rerouted the app's own
     // diagnostics (IP check / speed test), never the actual SOCKS tunnel, and the
@@ -58,23 +70,25 @@ struct ConnectionsView: View {
     // which owns its own resolve state — so the Connections layout no longer
     // shifts when a session comes up.
 
-    /// #274: per-row health-check state, keyed by connection id. Absent = never
-    /// run. One action runs both probes — time-to-ready (#242) + RTT (#234) — and
-    /// shows one combined result, replacing the old dual ping/ready chips.
-    @State private var healthState    : [UUID: HealthRowState] = [:]
+    // boc #456 was: @State healthState / HealthRowState / batchPing / pingingGroups
+    // — view-local @State. Results were unstamped, per-view and lost on tab switch,
+    // so a "32 ms" chip from yesterday rendered identically to a fresh one and the
+    // list was blank at every launch. HealthCoordinator persists each verdict with
+    // its age; the row chips read it and visibly go stale.
+    //
+    //   @State private var healthState    : [UUID: HealthRowState] = [:]
+    //   private enum HealthRowState: Equatable {
+    //       case checking
+    //       case done(ready: PingOutcome, rtt: PingOutcome)
+    //   }
+    //   @State private var batchPing      : [UUID: PingOutcome] = [:]
+    //   @State private var pingingGroups  : Set<String> = []
+    // eoc #456
 
-    private enum HealthRowState: Equatable {
-        case checking
-        case done(ready: PingOutcome, rtt: PingOutcome)
-    }
-
-    /// #364: batch "ping group" state. `batchPing` is the latest RTT per node from
-    /// the most recent group ping (badged on each row); `pingingGroups` holds the
-    /// group names with a sequential ping in flight (disables that group's action
-    /// and shows a spinner). Kept separate from `healthState` so a single-row
-    /// Health check and a group ping don't clobber each other's display.
-    @State private var batchPing      : [UUID: PingOutcome] = [:]
-    @State private var pingingGroups  : Set<String> = []
+    /// #456: one-OK alert for the row menu's "Why?" item — the human explanation
+    /// of a failed / unverifiable node. Mirrors the ServersView pattern
+    /// (`@State alertText: String?` + a single alert titled `L10n.okPrompt`).
+    @State private var alertText : String?
 
     /// #403: cache the per-group subscription metadata so `body` doesn't call
     /// `store.subscriptionInfo(for:)` for every group on every render — `body`
@@ -103,6 +117,7 @@ struct ConnectionsView: View {
         case edit(ConnectionRecord)
         case qr(ConnectionRecord)
         case carrierEndpoints(OlcrtcConnection)   // #406
+        case share(ConnectionRecord)              // #456: connection-only share (no SSH)
 
         var id: String {
             switch self {
@@ -110,6 +125,7 @@ struct ConnectionsView: View {
             case .edit(let c):      return "edit-\(c.id.uuidString)"
             case .qr(let c):        return "qr-\(c.id.uuidString)"
             case .carrierEndpoints: return "carrier"
+            case .share(let c):     return "share-\(c.id.uuidString)"   // #456
             }
         }
     }
@@ -259,8 +275,29 @@ struct ConnectionsView: View {
                     // with copy-host / copy-IP / copy-both actions. It resolves on
                     // appear and owns its own state.
                     CarrierEndpointsView(params: params)
+                case .share(let conn):
+                    // #456: connection-ONLY share — the `olcrtc://` URI, no SSH
+                    // credentials (the full-access variant stays VPS-card-only,
+                    // which is where the server is actually administered).
+                    ShareConnectionView(conn: conn)
                 }
             }
+        }
+        // #456: an in-flight native probe can't be interrupted, but leaving the tab
+        // stops the coordinator from starting further ones (its result is dropped).
+        .onDisappear { health.cancelAll() }
+        // #456: the row menu's "Why?" explanation, in human terms. Attached to the
+        // NavigationStack rather than the List so the List's modifier chain (which
+        // has already hit the SwiftUI type-checker budget once) doesn't grow.
+        // #456 (clarity audit): titled with the question the user tapped, not the
+        // generic "Done" prompt this pattern uses for op results elsewhere.
+        .alert(L10n.healthWhyTitle.localized(), isPresented: Binding(
+            get: { alertText != nil },
+            set: { if !$0 { alertText = nil } }
+        )) {
+            Button(L10n.ok.localized()) { alertText = nil }
+        } message: {
+            Text(alertText ?? "")
         }
     }
 
@@ -301,23 +338,9 @@ struct ConnectionsView: View {
 
                 // Server line — always two lines; the mono subtitle reserves
                 // its line (single space) even with no primary connection.
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "server.rack")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.Palette.textSecondary)
-                        Text(store.primary?.displayName ?? L10n.emptyNoConnections.localized())
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(store.primary != nil
-                                             ? Theme.Palette.textPrimary
-                                             : Theme.Palette.textSecondary)
-                            .lineLimit(1)
-                    }
-                    Text(store.primary?.subtitle ?? " ")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(Theme.Palette.textSecondary)
-                        .lineLimit(1)
-                }
+                // #456 was: this VStack inline, reading `store.primary`. Extracted
+                // (keeps this body small) and re-pointed at `heroRecord`.
+                heroServerLine
 
                 Divider().overlay(Theme.Palette.separator)
 
@@ -327,6 +350,56 @@ struct ConnectionsView: View {
             // #455: a gentle spring on state change so the glow/footer settle in
             // with a premium bounce instead of a flat cross-fade.
             .animation(.spring(response: 0.42, dampingFraction: 0.82), value: tunnel.state)
+        }
+    }
+
+    /// #456: the record the hero actually describes. While a session is up that is
+    /// `tunnel.connectedRecord` — the node carrying traffic — NOT `store.primary`:
+    /// tapping a row moves `primary` WITHOUT reconnecting, so the hero used to
+    /// print "Connected" over a server the tunnel was not using.
+    /// #456 was: `store.primary` read directly in the hero's server line.
+    private var heroRecord: ConnectionRecord? {
+        tunnel.state.isConnected ? tunnel.connectedRecord : store.primary
+    }
+
+    /// #456: the tunnel is live on one node while the user has selected another.
+    /// The hero names the LIVE one and adds a caption for the selected one, so the
+    /// two can never be read as the same server.
+    private var heroSelectionDiverged: Bool {
+        guard tunnel.state.isConnected,
+              let live = tunnel.connectedRecord,
+              let selected = store.primary else { return false }
+        return selected.id != live.id
+    }
+
+    /// #456: the hero's server line — name + mono subtitle (always rendered, the
+    /// subtitle reserving its line with a single space so the card keeps the #342
+    /// fixed footprint), plus the divergence caption when it applies. Its own
+    /// `@ViewBuilder` so `heroCard`'s body stays small.
+    @ViewBuilder
+    private var heroServerLine: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: "server.rack")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.textSecondary)
+                Text(heroRecord?.displayName ?? L10n.emptyNoConnections.localized())
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(heroRecord != nil
+                                     ? Theme.Palette.textPrimary
+                                     : Theme.Palette.textSecondary)
+                    .lineLimit(1)
+            }
+            Text(heroRecord?.subtitle ?? " ")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .lineLimit(1)
+            if heroSelectionDiverged {
+                Text(L10n.heroSelectedNotLive_fmt.formatted(store.primary?.displayName ?? ""))
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -705,53 +778,41 @@ struct ConnectionsView: View {
         _ = await store.refreshAllSources()
     }
 
-    /// #364: group section header — the group name plus a "Ping all" action that
-    /// sequentially health-checks every node in the group and badges each row with
-    /// its latency. The button is disabled (and shows a spinner) while this group's
-    /// ping is in flight.
+    /// #364: group section header — the group name plus the group's health control.
+    /// #456 was: a "Ping all" button gated on the view-local `pingingGroups` set;
+    /// the trailing control now lives in its own builder so this stays tiny.
     @ViewBuilder
     private func groupHeader(_ group: String, items: [ConnectionRecord]) -> some View {
         HStack {
             Text(ConnectionRecord.displayGroupName(group))
             Spacer()
-            if pingingGroups.contains(group) {
-                ProgressView().controlSize(.mini)
-            } else {
-                Button(L10n.pingGroupAction.localized(), systemImage: "dot.radiowaves.left.and.right") {
-                    runGroupPing(group: group, items: items)
-                }
-                .font(.caption2)
-                .buttonStyle(.borderless)
-                .textCase(nil)
-            }
+            groupHealthControl(items)
         }
     }
 
-    /// #364: sequentially ping every node in a group via `TunnelManager.pingGroup`
-    /// (each probe leases its own ephemeral port + unique clientID, never the SOCKS
-    /// port, and the live tunnel's node is skipped). Results badge each row as they
-    /// land; a summary line is logged when the group finishes.
-    private func runGroupPing(group: String, items: [ConnectionRecord]) {
-        guard !pingingGroups.contains(group) else { return }
-        pingingGroups.insert(group)
-        // Clear stale badges for this group so partial old results don't linger.
-        for c in items { batchPing[c.id] = nil }
-        Task {
-            // #388 was: `pingGroup(items, connectedNode: tunnel.state.isConnected ?
-            // store.primary : nil)` — `store.primary` is the UI selection, which a
-            // no-reconnect row tap desyncs from the live node, so the skip missed the
-            // genuinely-connected node and pinged it as a 2nd client in its room.
-            // `pingGroup` now reads the live node from `tunnel.connectedRecord`
-            // itself (re-read each iteration), so the caller passes nothing.
-            let results = await tunnel.pingGroup(items) { id, outcome in
-                batchPing[id] = outcome
+    /// #456: "Check all" for one group. Hands the whole group to the coordinator,
+    /// which probes STRICTLY sequentially (parallel native clients race the Go
+    /// runtime) and never probes the room the live tunnel holds. It returns at
+    /// once, so no `Task` here; the spinner tracks the coordinator's own in-flight
+    /// set, which survives a tab switch instead of living in this view.
+    @ViewBuilder
+    private func groupHealthControl(_ items: [ConnectionRecord]) -> some View {
+        if items.contains(where: { health.isChecking($0.id) }) {
+            ProgressView().controlSize(.mini)
+        } else {
+            Button(L10n.healthVerifyAllAction.localized(), systemImage: "checkmark.shield") {
+                health.verifyAll(items, using: tunnel)
             }
-            pingingGroups.remove(group)
-            let ok = results.values.filter { if case .success = $0 { return true } else { return false } }.count
-            LogStore.shared.log(.connection, L10n.pingGroupResult_fmt.formatted(
-                ConnectionRecord.displayGroupName(group), ok, results.count - ok))
+            .font(.caption2)
+            .buttonStyle(.borderless)
+            .textCase(nil)
         }
     }
+
+    // #456 was: runGroupPing(group:items:) — drove `pingingGroups` / `batchPing`
+    // (view-local, unstamped, lost on tab switch) via `TunnelManager.pingGroup`.
+    // The sequential-probe + skip-the-live-node logic it relied on now lives once,
+    // inside HealthCoordinator, which also persists each result with its age.
 
     /// #363: per-group subscription metadata, rendered in the section footer for
     /// groups whose nodes came from an olcrtc-sub:// link. All values are
@@ -874,11 +935,10 @@ struct ConnectionsView: View {
 
             Spacer()
 
-            // #364: latency badge from the most recent group ping, if any.
-            if let outcome = batchPing[conn.id] {
-                batchPingBadge(outcome)
-            }
-            healthButton(conn)
+            // #456 was: `batchPingBadge(outcome)` + `healthButton(conn)` — two
+            // badges in two unrelated vocabularies (group-ping pill, health chip),
+            // neither stamped. ONE evidence chip now, carrying its own age.
+            rowHealthChip(conn)
             // #258 was: a standalone pencil quick-edit button — removed (Edit is in
             // the overflow menu and the swipe action).
             OlcOverflowMenu(items: serverMenuItems(conn))
@@ -924,20 +984,16 @@ struct ConnectionsView: View {
         }
     }
 
-    /// #364: compact latency pill for a row, populated by a group ping —
-    /// the measured RTT (coloured by threshold) or a red marker on failure.
+    /// #456: the row's ONE evidence chip — "48 ms · 2m" / "not checked" /
+    /// "failed 5m ago" / "couldn't check". Green only while a real end-to-end probe
+    /// is fresh; never-checked and couldn't-check look like neither good nor bad.
+    /// Tapping forces a re-check (a forced check ignores the coordinator's
+    /// debounce). #456 was: batchPingBadge(_:) + healthButton(_:).
     @ViewBuilder
-    private func batchPingBadge(_ outcome: PingOutcome) -> some View {
-        switch outcome {
-        case .success(let ms):
-            Text("\(ms) ms")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(Self.latencyColor(ms))
-        case .failure:
-            Image(systemName: "xmark.circle.fill")
-                .font(.caption2)
-                .foregroundStyle(Theme.Palette.red)
-        }
+    private func rowHealthChip(_ conn: ConnectionRecord) -> some View {
+        OlcHealthChip(display: health.display(for: conn.id), onTap: {
+            Task { await health.verify(conn, using: tunnel, force: true) }
+        })
     }
 
     /// #363: the per-node subscription metadata line under a row's subtitle —
@@ -965,18 +1021,40 @@ struct ConnectionsView: View {
     /// across a long-press gesture, a pencil button, and a contextMenu.
     private func serverMenuItems(_ conn: ConnectionRecord) -> [OlcMenuItem] {
         var items: [OlcMenuItem] = []
+        // boc #456: verification leads the menu — "does this node actually pass
+        // traffic right now" is the question every other action depends on.
+        // #456 was: `L10n.healthCheckAction` → runHealthCheck(conn), whose result
+        // lived in view-local @State and was never stamped with a time.
+        items.append(.action(L10n.healthActionVerify.localized(), systemImage: "checkmark.shield") {
+            Task { await health.verify(conn, using: tunnel, force: true) }
+        })
+        // #456: explain a failure in HUMAN terms, right where it is shown — never a
+        // raw core log line. Offered only when there is a reason to explain.
+        let display = health.display(for: conn.id)
+        switch display {
+        case .broken, .inconclusive:
+            items.append(.action(L10n.healthShowReasonAction.localized(),
+                                 systemImage: "questionmark.circle") {
+                alertText = "\(display.title)\n\n\(display.subtitle)"
+            })
+        default:
+            break
+        }
+        // eoc #456
         if store.primary?.id != conn.id {
             items.append(.action(L10n.actionConnect.localized(), systemImage: "play.fill") {
                 store.setPrimary(conn.id)
                 tunnel.connect(record: conn)   // #393: guard now in TunnelManager.connect
             })
         }
-        // #274: one "Health check" item runs both probes (RTT + time-to-ready).
-        items.append(.action(L10n.healthCheckAction.localized(), systemImage: "waveform.path.ecg") {
-            runHealthCheck(conn)
+        // #456: connection-ONLY share — it hands over the `olcrtc://` URI and
+        // nothing else, so it grants NO VPS/SSH access; the full-access variant
+        // stays on the Manage VPS host card. #304 had moved sharing off this tab
+        // entirely, which left imported / manually-added records with no path to it.
+        items.append(.action(L10n.shareConnectionTitle.localized(), systemImage: "square.and.arrow.up") {
+            activeSheet = .share(conn)
         })
-        // #304: "Share connection" moved to the Manage VPS server card. Copy URI /
-        // QR remain here as lightweight per-connection utilities.
+        // #304: Copy URI / QR remain here as lightweight per-connection utilities.
         items.append(.divider)
         items.append(.action(L10n.copyURIAction.localized(), systemImage: "doc.on.doc") {
             UIPasteboard.general.string = Self.uriOf(conn)
@@ -995,94 +1073,25 @@ struct ConnectionsView: View {
         return items
     }
 
-    // MARK: Per-connection health check (#274 — merges #234 RTT + #242 time-to-ready)
+    // MARK: Per-connection health (#456 — one vocabulary, owned by HealthCoordinator)
 
-    /// Trailing health chip: a heartbeat glyph that becomes a spinner while
-    /// probing, then the measured RTT (or the ready time if RTT failed, or a red
-    /// marker if both failed). One tap runs both probes; the full combined result
-    /// lands in the log + the accessibility label.
-    @ViewBuilder
-    private func healthButton(_ conn: ConnectionRecord) -> some View {
-        Button {
-            runHealthCheck(conn)
-        } label: {
-            healthChipLabel(conn)
-                .font(.caption2.monospacedDigit())
-                .frame(minWidth: 28, minHeight: 28)
-                .padding(.horizontal, 10)
-                .background(Theme.Palette.fill, in: Capsule())
-                // #370: grow the TOUCH region to Apple's 44pt minimum without
-                // enlarging the drawn chip (the capsule keeps its 28pt height).
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(healthState[conn.id] == .checking)
-        .accessibilityLabel(L10n.healthCheckAction.localized())
-    }
-
-    @ViewBuilder
-    private func healthChipLabel(_ conn: ConnectionRecord) -> some View {
-        switch healthState[conn.id] {
-        case .checking:
-            ProgressView().controlSize(.mini)
-        case .done(let ready, let rtt):
-            if case .success(let ms) = rtt {
-                // Healthy: show RTT (familiar latency pill), coloured by threshold.
-                Text("\(ms) ms").foregroundStyle(Self.latencyColor(ms))
-            } else if case .success(let ms) = ready {
-                // Transport reached ready but the RTT probe failed — show ready, amber.
-                HStack(spacing: 3) {
-                    Image(systemName: "stopwatch")
-                    Text("\(ms) ms").monospacedDigit()
-                }
-                .foregroundStyle(Theme.Palette.orange)
-            } else {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Theme.Palette.red)
-            }
-        case nil:
-            Image(systemName: "waveform.path.ecg")
-                .foregroundStyle(Theme.Palette.textSecondary)
-        }
-    }
-
-    /// Runs both isolated probes — time-to-ready (#242) then RTT (#234) — and logs
-    /// one combined line. The underlying `TunnelManager`/engine probes are
-    /// unchanged; only the row UI collapses (#274).
-    private func runHealthCheck(_ conn: ConnectionRecord) {
-        guard healthState[conn.id] != .checking else { return }
-        healthState[conn.id] = .checking
-        Task {
-            // #407: run the RTT probe first. Each probe establishes its OWN
-            // isolated WebRTC session (~5 s of setup), and a successful RTT
-            // already proves the transport reached ready — so in the common
-            // (healthy) case we skip the separate time-to-ready probe and the
-            // health check takes ~one session setup instead of two for a single
-            // "32 ms" result. Only when RTT fails do we run checkReady, to keep
-            // the "transport ready but data path down" (amber) distinction.
-            // #407 was: ready = checkReady(); rtt = ping() — always both, serial.
-            let rtt = await tunnel.ping(conn.details)
-            if case .success = rtt {
-                healthState[conn.id] = .done(ready: rtt, rtt: rtt)
-                LogStore.shared.log(.connection, L10n.healthResultRTT_fmt.formatted(
-                    conn.displayName, Self.healthValue(rtt)))
-            } else {
-                let ready = await tunnel.checkReady(conn.details)
-                healthState[conn.id] = .done(ready: ready, rtt: rtt)
-                LogStore.shared.log(.connection, L10n.healthResult_fmt.formatted(
-                    conn.displayName, Self.healthValue(ready), Self.healthValue(rtt)))
-            }
-        }
-    }
-
-    /// Formats one probe outcome for the combined health log line.
-    private static func healthValue(_ outcome: PingOutcome) -> String {
-        switch outcome {
-        case .success(let ms):  return "\(ms) ms"
-        case .failure(let msg): return "n/a (\(msg))"
-        }
-    }
+    // boc #456 was: healthButton(_:) + healthChipLabel(_:) + runHealthCheck(_:) +
+    // healthValue(_:) — a per-row probe whose verdict lived in view-local @State.
+    // It was honest but unstamped, per-view and lost on tab switch, so a "32 ms"
+    // chip from yesterday rendered exactly like a fresh one and every badge was
+    // empty at launch. The probe itself is unchanged; it now runs inside
+    // HealthCoordinator, which stamps, persists and ages the result, and the row
+    // renders it through `rowHealthChip(_:)` above.
+    //
+    // #456: DELIBERATELY no `.task` / `.onAppear` sweep on this tab. Each probe is
+    // a real conference join on a third-party carrier costing ~5-15 s, cellular
+    // data and a full WebRTC media stack; firing one per node on every cold start
+    // would spam carrier infrastructure and drain the battery for information the
+    // user may not even be looking at. The persisted, visibly-aged chips already
+    // answer "what worked recently" at launch for free, and Manage VPS owns the
+    // on-entry refresh. Probing here is always a user action: the row chip, the
+    // menu's Verify, or a group's "Check all".
+    // eoc #456
 
     /// #285: passes the active carrier/transport into the speed test (when
     /// tunnelled) so the header logs the connection type and the datachannel
@@ -1090,7 +1099,11 @@ struct ConnectionsView: View {
     private func runSpeedTest() {
         var carrier: String?
         var transport: String?
-        if currentMode == .tunnel, case .olcrtc(let p)? = store.primary?.details {
+        // #456 was: `store.primary?.details` — a row tap moves `primary` without
+        // reconnecting, so the result got labelled with a carrier/transport the
+        // measurement never went through. `currentMode == .tunnel` already implies
+        // a live proxy session, so read the node actually carrying it.
+        if currentMode == .tunnel, case .olcrtc(let p)? = tunnel.connectedRecord?.details {
             carrier = p.carrier
             transport = p.transport
         }

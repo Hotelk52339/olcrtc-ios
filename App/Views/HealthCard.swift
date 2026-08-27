@@ -24,8 +24,17 @@ struct HealthCard: View {
     /// #337: screenshot-safe IP masking (mirrors the IP-check rows).
     let maskIPs: Bool
 
-    /// Live latency, refreshed by the ping loop below. nil → "measuring…".
+    /// Live latency, refreshed by the ping loop below. nil = no measurement — see
+    /// `attempted` for whether that means "not yet" or "the probe failed".
+    /// #456 was: "nil → measuring…" — nil was rendered as work-in-progress forever.
     @State private var latencyMs: Double?
+
+    /// #456: has at least one measurement attempt COMPLETED for the current record?
+    /// `SpeedTest.quickPing` returns nil on any error, so nil alone cannot tell
+    /// "haven't measured yet" from "the probe failed" — and the card used to claim
+    /// the first, indefinitely, over a dead data path (most plausible in VPN mode,
+    /// where no keep-alive will ever flip the tunnel state).
+    @State private var attempted = false
 
     var body: some View {
         OlcCard {
@@ -47,10 +56,20 @@ struct HealthCard: View {
         // a failover (record swap, #453) restarts the loop against the new
         // protocol; the conditional mount cancels it on disconnect.
         .task(id: record?.id) {
+            // #456: a new live record has been measured zero times — clear the flag
+            // so the first tick reads "measuring…" rather than inheriting the
+            // previous node's "not measured".
+            attempted = false
+            // #456 (audit): and clear the VALUE with it. Without this the previous
+            // node's latency — tinted green under 150 ms — kept rendering as the
+            // new node's until the first tick returned, i.e. one protocol's
+            // measurement shown as another's after a #453 failover swap.
+            latencyMs = nil
             while !Task.isCancelled {
                 let ms = await speed.quickPing(via: mode)
                 if Task.isCancelled { return }
                 latencyMs = ms
+                attempted = true   // #456: an attempt COMPLETED (ms may still be nil)
                 try? await Task.sleep(for: .seconds(8))
             }
         }
@@ -113,6 +132,7 @@ struct HealthCard: View {
                 Task {
                     await ipCheck.refreshExitGeo(via: mode)
                     latencyMs = await speed.quickPing(via: mode)
+                    attempted = true   // #456: a manual refresh is a completed attempt too
                 }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -126,10 +146,14 @@ struct HealthCard: View {
     // MARK: Helpers
 
     /// #455: tint the live latency by quality — under 150 ms reads calm green,
-    /// up to 400 ms amber, worse red (same thresholds the row ping badges use).
-    /// nil (still measuring) stays neutral.
+    /// up to 400 ms amber, worse red.
+    /// #456: with no measurement, the tone says WHICH no: neutral before the first
+    /// attempt completes, tertiary (visibly dimmed, not a value) after one has and
+    /// produced nothing. #456 was: `guard let ms = latencyMs else { return nil }`.
     private var latencyTone: Color? {
-        guard let ms = latencyMs else { return nil }
+        guard let ms = latencyMs else {
+            return attempted ? Theme.Palette.textTertiary : nil
+        }
         switch Int(ms.rounded()) {
         case ..<150: return Theme.Palette.green
         case ..<400: return Theme.Palette.orange
@@ -137,8 +161,16 @@ struct HealthCard: View {
         }
     }
 
+    /// #456 was: `guard let ms = latencyMs else { return L10n.healthMeasuring... }`
+    /// — `quickPing` returns nil on ANY error, so a permanently failing probe
+    /// rendered as "measuring…" forever, i.e. work-in-progress instead of a
+    /// verdict. "measuring…" now only covers the window before the first attempt
+    /// finishes; after that a nil is stated plainly as "not measured".
     private var latencyValue: String {
-        guard let ms = latencyMs else { return L10n.healthMeasuring.localized() }
+        guard let ms = latencyMs else {
+            return attempted ? L10n.healthLatencyNotMeasured.localized()
+                             : L10n.healthMeasuring.localized()
+        }
         return L10n.healthLatencyMs_fmt.formatted(Int(ms.rounded()))
     }
 

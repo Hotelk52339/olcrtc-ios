@@ -182,7 +182,7 @@ enum L10nTable {
         // (git fetch --depth 1 + checkout), no git pull / moving branch.
         .actionUpdate:               "Update binary (fetch pinned build + rebuild)",
         .actionReboot:               "Reboot",
-        .actionChangeRoomTransport:  "Change Room / Transport",
+        .actionChangeRoomTransport:  "Change room / transport",
         .actionContainerLogs:        "Container logs",   // #339 was: "Download container logs"
         .actionDone:                 "Done",
         .actionRemoveFromList:       "Remove host from list",
@@ -193,7 +193,6 @@ enum L10nTable {
         .deepUninstallConfirmBody:   "Removes container, Go cache (~300 MB), and encryption key. Podman and image stay.",
         .rebootConfirmTitle:         "Reboot server?",
         .rebootConfirmBody:          "This will reboot the entire VPS. The olcrtc container will restart automatically once the server is back online.",
-        .carrierTransportMatrix:     "Carrier × Transport",
 
         // #303: Recover connection from server
         .actionRecoverConnection:    "Recover connection",
@@ -363,13 +362,12 @@ enum L10nTable {
         .appearanceSystem:           "System",
         .appearanceLight:            "Light",
         .appearanceDark:             "Dark",
-        .appearanceGray:             "Gray",
         // #342: fixed-footprint hero footer
         .heroDisconnectedHint_fmt:   "Flip the switch to connect via %@.",
 
         // InstallOptionsView
         .installTitle:               "Install olcrtc",
-        .reconfigureTitle:           "Change Room / Transport",
+        .reconfigureTitle:           "Change room / transport",
         .reconfigureInfoFooter:      "The container will be restarted with the new -carrier/-id/-transport flags. No reinstall (no apt-get / go build).",
         .reconfigureTransportTuningFooter: "Changing the transport resets vp8/sei tuning on the server to its defaults. Reinstall to set custom tuning.",
         .parametersHeader:           "Parameters",
@@ -382,11 +380,6 @@ enum L10nTable {
         .matrixFail_fmt:             "✗ Does not work with %@ — choose another transport.",
         .matrixUnknown_fmt:          "No compatibility data for %@.",
         .carrierFooter:          "client-id=ios-<random> (auto-generated) · key=hex64 (auto-generated) · DNS and VP8 from Settings",
-        .matrixStatusRecommended:    "recommended",
-        .matrixStatusOK:             "works",
-        .matrixStatusQuestion:       "uncertain",
-        .matrixStatusFail:           "doesn't work",
-        .matrixStatusUnknown:        "no data",
         .transportSectionHeader:     "Transport",
         .roomIDSectionHeader:        "Room ID",
         .jitsiServerHeader:          "Jitsi server",
@@ -493,9 +486,6 @@ enum L10nTable {
         // ConnectionsView per-connection ping (#234)
         .pingNoFreePort:             "No free local port available for ping",
         .pingFailed:                 "Ping failed",
-        .healthCheckAction:          "Health check",
-        .healthResult_fmt:           "🩺 Health %@ — ready %@ · RTT %@",
-        .healthResultRTT_fmt:        "🩺 Health %@ — RTT %@",
 
         // ServersView alerts
         .alertPasswordMissingShort:  "Password not found",
@@ -590,10 +580,6 @@ enum L10nTable {
         .subMetaAvailable:           "Available",
         .subMetaMultipleSources_fmt: "%d sources",   // #396
         .pullToRefreshSubscriptions: "Pull to refresh subscriptions",   // #411
-
-        // #364: batch "ping group"
-        .pingGroupAction:            "Ping all",
-        .pingGroupResult_fmt:        "📡 Pinged %@: %d ok, %d failed",
 
         // #346: VPS-card mini-stat labels (abbreviations; ru = en per operator)
         .vpsStatPing:                "Ping",
@@ -715,6 +701,94 @@ enum L10nTable {
         .installExtrasFooter:         "Installed on the same server right after the primary protocol, sharing one encryption key. Each protocol gets its own connection in the list — pick which one to use at connect time.",
         .installExtraToggle_fmt:      "Also install %@",
         .installExtrasPartialFail_fmt: "Some protocols failed to install: %@",
+
+        // #456: verified health vocabulary. Nothing below claims success
+        // without a probe behind it; "Working" is granted only by an
+        // end-to-end result that is still inside the freshness window.
+        .healthNeverChecked:          "Not checked yet",
+        .healthNeverCheckedHint:      "Tap Verify to push a real request through this node.",
+        .healthChecking:              "Checking…",
+        .healthCheckingHint:          "Joining the room and loading a test page",
+        .healthVerified:              "Working",
+        .healthVerifiedHint_fmt:      "Verified %@ ago · %d ms",
+        .healthVerifiedNoRTTHint_fmt: "Verified %@ ago",
+        .healthFading:                "Worked recently",
+        .healthHandshake:             "Connects, but no data",
+        .healthHandshakeHint_fmt:     "Joined the room %@ ago, but no traffic passed",
+        .healthStale:                 "Out of date",
+        .healthStaleHint_fmt:         "Last checked %@ ago — too old to trust",
+        .healthInconclusive:          "Couldn't check",
+        .healthCheckedAgo_fmt:        "checked %@ ago",
+        .healthChipNever:             "not checked",
+        .healthChipStale_fmt:         "%@ old",
+        .healthChipFailed_fmt:        "failed %@ ago",
+        .healthChipHandshake_fmt:     "no data · %@",
+        .healthChipUnchecked:         "couldn't check",
+        .ageJustNow:                  "just now",
+        .ageMinutes_fmt:              "%dm",
+        .ageHours_fmt:                "%dh",
+        .ageDays_fmt:                 "%dd",
+
+        // #456: failure reasons — what happened AND what to do next.
+        .healthReasonKeyMismatch:      "The server's key has changed, so your saved key no longer matches. Use Recover connection to read the new one.",
+        .healthReasonKeyMismatchShort: "Key no longer matches",
+        .healthReasonNoPeer:           "Nobody answered in the room. The server may be stopped, on a different room, or its key may no longer match after a reinstall.",
+        .healthReasonNoPeerShort:      "No answer in the room",
+        .healthReasonRoomInvalid:      "The room ID isn't valid for this carrier. Check it in Change room / transport.",
+        .healthReasonRoomInvalidShort: "Room ID rejected",
+        .healthReasonCarrierRejected:  "The conferencing service refused the connection. The room may be gone, or the account token may be wrong.",
+        .healthReasonCarrierRejectedShort: "Service refused",
+        .healthReasonNetworkDown:      "This device has no internet connection, so this says nothing about the server.",
+        .healthReasonNetworkDownShort: "No internet",
+        .healthReasonHostUnreachable:  "The VPS didn't answer. It may be off, rebooting, or blocked by your network.",
+        .healthReasonHostUnreachableShort: "VPS didn't answer",
+        .healthReasonSSHAuth:          "SSH login was refused. The password or key saved for this VPS is wrong.",
+        .healthReasonSSHAuthShort:     "SSH login refused",
+        .healthReasonPortBusy:         "Another app is holding the local SOCKS port. Free it, or pick a different port in Settings.",
+        .healthReasonPortBusyShort:    "Local port busy",
+        .healthReasonVPNActive:        "Other nodes can't be tested while the system VPN is on. Turn it off and check again.",
+        .healthReasonVPNActiveShort:   "System VPN is on",
+        .healthReasonContainerStopped: "The server container isn't running. Start it, then check again.",
+        .healthReasonContainerStoppedShort: "Server stopped",
+        .healthReasonTimedOut:         "The test ran out of time before any data came back.",
+        .healthReasonTimedOutShort:    "Timed out",
+        .healthReasonUnknown:          "The check came back with no clear answer. The Logs tab has the raw details.",
+        .healthReasonUnknownShort:     "No clear answer",
+
+        // #456: health actions — same wording as the same action elsewhere.
+        .healthActionRecover:         "Recover connection",
+        .healthActionCheckRoom:       "Change room / transport",
+        .healthActionStart:           "Start server",
+        .healthActionPortSettings:    "Open port settings",
+        .healthActionRetry:           "Retry",
+        .healthActionVerify:          "Verify",
+        .healthVerifyAllAction:       "Verify all",
+        .healthShowReasonAction:      "What's wrong?",
+        .healthWhyTitle:              "What's wrong",
+        .healthLatencyNotMeasured:    "not measured",
+        .healthSweepSkipped_fmt:      "%d more not checked — tap Verify all",
+
+        // #456: VPS card headlines. "Couldn't check" is not "stopped".
+        .vpsHeadlineOpFailed:            "Last action failed",
+        .vpsHeadlineUnreachable:         "Can't reach the server",
+        .vpsHeadlineUnreachableHint_fmt: "SSH didn't answer (%@ ago)",
+        .vpsHeadlineUnreachableHintNever: "SSH didn't answer",
+        .vpsHeadlineNotChecked:          "Not checked yet",
+        .vpsHeadlineNotCheckedHint:      "Checking the server…",
+        .vpsHeadlineStopped:             "Server stopped",
+        .vpsHeadlineStoppedHint:         "The container exists but isn't running — tap Start server",
+        .vpsProcessCaption_fmt:          "Server process: %@ · checked %@ ago",
+        .vpsProcessCaptionNever_fmt:     "Server process: %@ · not checked",
+
+        // #456: misc UI copy
+        .shareConnectionOnlyBadge:    "Connection link — no server access",
+        .shareConnectionOnlySub:      "The link below lets someone connect through your server. It carries no SSH login, and it cannot manage, reconfigure, or wipe the VPS.",
+        .heroSelectedNotLive_fmt:     "Selected: %@ — reconnect to switch",
+        .roomIDLastUsed_fmt:          "Use last room: %@",
+        .installExistingFoundTitle_fmt: "This VPS already runs %@",
+        .installExistingFoundBody:    "Reinstalling deletes it and every other olcrtc container on this server, along with their rooms and keys.",
+        .installUseExistingAction:    "Use the existing one",
+        .installReinstallAction:      "Reinstall anyway",
     ]
 
     // MARK: Russian
@@ -877,7 +951,7 @@ enum L10nTable {
         // (audit) was: "… (git pull + rebuild)" — see the English entry.
         .actionUpdate:               "Обновить бинарник (закреплённая сборка + пересборка)",
         .actionReboot:               "Reboot",
-        .actionChangeRoomTransport:  "Изменить Room / Transport",
+        .actionChangeRoomTransport:  "Сменить комнату / транспорт",
         .actionContainerLogs:        "Логи контейнера",   // #339 was: "Скачать логи контейнера"
         .actionDone:                 "Готово",
         .actionRemoveFromList:       "Удалить из списка",
@@ -888,7 +962,6 @@ enum L10nTable {
         .deepUninstallConfirmBody:   "Удаляет контейнер, кеш Go (~300 МБ) и ключ шифрования. Podman и образ остаются.",
         .rebootConfirmTitle:         "Перезагрузить сервер?",
         .rebootConfirmBody:          "Будет выполнена перезагрузка всего VPS. Контейнер olcrtc запустится автоматически после того, как сервер поднимется.",
-        .carrierTransportMatrix:     "Carrier × Transport",
 
         // #303: Recover connection from server
         .actionRecoverConnection:    "Восстановить подключение",
@@ -1059,13 +1132,12 @@ enum L10nTable {
         .appearanceSystem:           "Системное",
         .appearanceLight:            "Светлое",
         .appearanceDark:             "Тёмное",
-        .appearanceGray:             "Серая",
         // #342: подсказка в подвале hero-карточки
         .heroDisconnectedHint_fmt:   "Переведи переключатель, чтобы подключиться через %@.",
 
         // InstallOptionsView
         .installTitle:               "Установка olcrtc",
-        .reconfigureTitle:           "Изменить Room / Transport",
+        .reconfigureTitle:           "Сменить комнату / транспорт",
         .reconfigureInfoFooter:      "Контейнер будет перезапущен с новыми флагами -carrier/-id/-transport. Переустановка не нужна (apt-get / go build не запускаются).",
         .reconfigureTransportTuningFooter: "При смене транспорта настройки vp8/sei на сервере сбрасываются на значения по умолчанию. Для тонкой настройки переустановите.",
         .parametersHeader:           "Параметры",
@@ -1078,11 +1150,6 @@ enum L10nTable {
         .matrixFail_fmt:             "✗ Не работает с %@ — выбери другой транспорт.",
         .matrixUnknown_fmt:          "Нет данных о совместимости с %@.",
         .carrierFooter:          "client-id=ios-<случайный> (генерируется) · key=hex64 (генерируется) · DNS и VP8 из настроек",
-        .matrixStatusRecommended:    "рекомендуется",
-        .matrixStatusOK:             "работает",
-        .matrixStatusQuestion:       "под вопросом",
-        .matrixStatusFail:           "не работает",
-        .matrixStatusUnknown:        "нет данных",
         .transportSectionHeader:     "Транспорт",
         .roomIDSectionHeader:        "Room ID",
         .jitsiServerHeader:          "Сервер Jitsi",
@@ -1189,9 +1256,6 @@ enum L10nTable {
         // ConnectionsView per-connection ping (#234)
         .pingNoFreePort:             "Нет свободного локального порта для пинга",
         .pingFailed:                 "Пинг не удался",
-        .healthCheckAction:          "Проверка соединения",
-        .healthResult_fmt:           "🩺 Соединение %@ — готовность %@ · RTT %@",
-        .healthResultRTT_fmt:        "🩺 Соединение %@ — RTT %@",
 
         // ServersView alerts
         .alertPasswordMissingShort:  "Пароль не найден",
@@ -1286,10 +1350,6 @@ enum L10nTable {
         .subMetaAvailable:           "Доступно",
         .subMetaMultipleSources_fmt: "%d источников",   // #396
         .pullToRefreshSubscriptions: "Потяните вниз, чтобы обновить подписки",   // #411
-
-        // #364: групповой пинг
-        .pingGroupAction:            "Пинговать все",
-        .pingGroupResult_fmt:        "📡 Пинг %@: %d ок, %d неудач",
 
         // #346: подписи мини-статистики карточки VPS (аббревиатуры; ru = en по решению оператора)
         .vpsStatPing:                "Ping",
@@ -1411,5 +1471,93 @@ enum L10nTable {
         .installExtrasFooter:         "Устанавливаются на тот же сервер сразу после основного протокола с общим ключом шифрования. Каждый протокол получает своё подключение в списке — выбирайте нужное при подключении.",
         .installExtraToggle_fmt:      "Также установить %@",
         .installExtrasPartialFail_fmt: "Часть протоколов не установилась: %@",
+
+        // #456: словарь проверенного состояния. Ничего здесь не утверждает
+        // успех без реальной проверки; «Работает» даёт только сквозной
+        // результат, который ещё не устарел.
+        .healthNeverChecked:          "Ещё не проверено",
+        .healthNeverCheckedHint:      "Нажмите «Проверить», чтобы пропустить настоящий запрос через этот узел.",
+        .healthChecking:              "Проверяем…",
+        .healthCheckingHint:          "Заходим в комнату и загружаем тестовую страницу",
+        .healthVerified:              "Работает",
+        .healthVerifiedHint_fmt:      "Проверено %@ назад · %d мс",
+        .healthVerifiedNoRTTHint_fmt: "Проверено %@ назад",
+        .healthFading:                "Недавно работало",
+        .healthHandshake:             "Соединяется, но данные не идут",
+        .healthHandshakeHint_fmt:     "Вошли в комнату %@ назад, но трафик не прошёл",
+        .healthStale:                 "Устарело",
+        .healthStaleHint_fmt:         "Последняя проверка %@ назад — слишком давно, чтобы на неё полагаться",
+        .healthInconclusive:          "Не удалось проверить",
+        .healthCheckedAgo_fmt:        "проверено %@ назад",
+        .healthChipNever:             "не проверено",
+        .healthChipStale_fmt:         "давность %@",
+        .healthChipFailed_fmt:        "сбой %@ назад",
+        .healthChipHandshake_fmt:     "нет данных · %@",
+        .healthChipUnchecked:         "не удалось проверить",
+        .ageJustNow:                  "только что",
+        .ageMinutes_fmt:              "%d мин",
+        .ageHours_fmt:                "%d ч",
+        .ageDays_fmt:                 "%d д",
+
+        // #456: причины сбоя — что случилось И что делать дальше.
+        .healthReasonKeyMismatch:      "Ключ сервера изменился, и сохранённый у вас ключ больше не подходит. Нажмите «Восстановить подключение», чтобы считать новый.",
+        .healthReasonKeyMismatchShort: "Ключ не подходит",
+        .healthReasonNoPeer:           "В комнате никто не ответил. Возможно, сервер остановлен, использует другую комнату, или его ключ после переустановки больше не совпадает.",
+        .healthReasonNoPeerShort:      "Нет ответа в комнате",
+        .healthReasonRoomInvalid:      "Идентификатор комнаты не подходит для этого сервиса. Проверьте его в «Сменить комнату / транспорт».",
+        .healthReasonRoomInvalidShort: "ID комнаты отклонён",
+        .healthReasonCarrierRejected:  "Сервис видеосвязи отклонил подключение. Возможно, комнаты больше нет или неверен токен аккаунта.",
+        .healthReasonCarrierRejectedShort: "Сервис отказал",
+        .healthReasonNetworkDown:      "У устройства нет интернета, поэтому о сервере это ничего не говорит.",
+        .healthReasonNetworkDownShort: "Нет интернета",
+        .healthReasonHostUnreachable:  "VPS не ответил. Возможно, он выключен, перезагружается или заблокирован вашей сетью.",
+        .healthReasonHostUnreachableShort: "VPS не ответил",
+        .healthReasonSSHAuth:          "SSH-вход отклонён. Сохранённый для этого VPS пароль или ключ не подходит.",
+        .healthReasonSSHAuthShort:     "SSH-вход отклонён",
+        .healthReasonPortBusy:         "Локальный порт SOCKS занят другим приложением. Освободите его или выберите другой порт в настройках.",
+        .healthReasonPortBusyShort:    "Локальный порт занят",
+        .healthReasonVPNActive:        "Пока включён системный VPN, другие узлы проверить нельзя. Отключите его и проверьте снова.",
+        .healthReasonVPNActiveShort:   "Системный VPN включён",
+        .healthReasonContainerStopped: "Контейнер сервера не запущен. Запустите его и проверьте снова.",
+        .healthReasonContainerStoppedShort: "Сервер остановлен",
+        .healthReasonTimedOut:         "Проверка не уложилась во время — данные так и не пришли.",
+        .healthReasonTimedOutShort:    "Истекло время",
+        .healthReasonUnknown:          "Проверка не дала ясного ответа. Подробности — на вкладке «Логи».",
+        .healthReasonUnknownShort:     "Нет ясного ответа",
+
+        // #456: действия — те же формулировки, что и у этих действий в других местах.
+        .healthActionRecover:         "Восстановить подключение",
+        .healthActionCheckRoom:       "Сменить комнату / транспорт",
+        .healthActionStart:           "Запустить сервер",
+        .healthActionPortSettings:    "Открыть настройки порта",
+        .healthActionRetry:           "Повторить",
+        .healthActionVerify:          "Проверить",
+        .healthVerifyAllAction:       "Проверить все",
+        .healthShowReasonAction:      "Что не так?",
+        .healthWhyTitle:              "Что не так",
+        .healthLatencyNotMeasured:    "не измерено",
+        .healthSweepSkipped_fmt:      "Ещё %d не проверено — нажмите «Проверить все»",
+
+        // #456: заголовки карточки VPS. «Не удалось проверить» — это не «остановлен».
+        .vpsHeadlineOpFailed:            "Последнее действие не удалось",
+        .vpsHeadlineUnreachable:         "Сервер недоступен",
+        .vpsHeadlineUnreachableHint_fmt: "SSH не ответил (%@ назад)",
+        .vpsHeadlineUnreachableHintNever: "SSH не ответил",
+        .vpsHeadlineNotChecked:          "Ещё не проверено",
+        .vpsHeadlineNotCheckedHint:      "Проверяем сервер…",
+        .vpsHeadlineStopped:             "Сервер остановлен",
+        .vpsHeadlineStoppedHint:         "Контейнер есть, но не запущен — нажмите «Запустить сервер»",
+        .vpsProcessCaption_fmt:          "Процесс сервера: %@ · проверено %@ назад",
+        .vpsProcessCaptionNever_fmt:     "Процесс сервера: %@ · не проверялось",
+
+        // #456: прочие строки интерфейса
+        .shareConnectionOnlyBadge:    "Ссылка подключения — без доступа к серверу",
+        .shareConnectionOnlySub:      "По ссылке ниже можно подключаться через ваш сервер. SSH-доступа она не даёт, управлять VPS, перенастраивать или стирать его по ней нельзя.",
+        .heroSelectedNotLive_fmt:     "Выбрано: %@ — переподключитесь, чтобы сменить",
+        .roomIDLastUsed_fmt:          "Использовать прошлую комнату: %@",
+        .installExistingFoundTitle_fmt: "На этом VPS уже работает %@",
+        .installExistingFoundBody:    "Переустановка удалит его и все остальные контейнеры olcrtc на этом сервере — вместе с их комнатами и ключами.",
+        .installUseExistingAction:    "Использовать существующий",
+        .installReinstallAction:      "Всё равно переустановить",
     ]
 }

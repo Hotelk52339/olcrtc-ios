@@ -386,9 +386,12 @@ struct SettingsView: View {
 
             // #340: appearance scheme — System / Light / Dark (applied via
             // preferredColorScheme in App.swift). #343: relabeled "Theme" —
-            // the section header carries "Appearance" now. #299: + Gray, a real
-            // fourth colour scheme (the picker iterates allCases, so it appears
-            // automatically); the Refined/Console "Direction" picker was removed.
+            // the section header carries "Appearance" now.
+            // #456 was: "+ Gray, a real fourth colour scheme". Gray is gone (a
+            // fourth scheme diluted the palette and forced a full TabView rebuild
+            // to refresh Theme's tokens); the picker iterates allCases, so it
+            // dropped out of this list with the case, and Light is now tuned to
+            // be genuinely good rather than a fallback.
             Picker(L10n.themeLabel.localized(), selection: $settings.appearanceMode) {
                 ForEach(AppearanceMode.allCases) { mode in
                     Text(mode.title).tag(mode)

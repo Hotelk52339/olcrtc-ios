@@ -89,12 +89,25 @@ final class TunnelManagerStateTests: XCTestCase {
 
     // Lock the language for any message comparisons.
     private var savedLanguage: String = ""
+    // #456: a real connect attempt now records measured evidence into
+    // HealthCoordinator.shared (runEngine / keep-alive chokepoints), which
+    // persists to `olcrtc_health_v1`. These tests launch real engine tasks that
+    // fail asynchronously in the test host, so snapshot + restore that key like
+    // every other one this suite touches.
+    private let healthKey = "olcrtc_health_v1"
+    private var healthSnapshot: Data?
     override func setUp() {
         super.setUp()
         savedLanguage = SettingsStore.shared.language
         SettingsStore.shared.language = "en"
+        healthSnapshot = UserDefaults.standard.data(forKey: healthKey)   // #456
     }
     override func tearDown() {
+        // #456
+        HealthCoordinator.shared._resetForTesting()
+        HealthCoordinator.flushPendingWrites()
+        if let d = healthSnapshot { UserDefaults.standard.set(d, forKey: healthKey) }
+        else { UserDefaults.standard.removeObject(forKey: healthKey) }
         SettingsStore.shared.language = savedLanguage
         super.tearDown()
     }

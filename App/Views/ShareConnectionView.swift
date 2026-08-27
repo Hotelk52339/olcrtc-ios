@@ -42,6 +42,13 @@ struct ShareConnectionView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    // #456: what this link grants must be the FIRST thing on
+                    // screen, not a conclusion the user draws from the absence of
+                    // a warning. True of the URI block in both modes (the
+                    // full-access blob below is a separate, opt-in payload), so
+                    // it renders unconditionally.
+                    connectionOnlyBadge
+
                     Text(L10n.shareConnectionExplanation.localized())
                         .font(.subheadline)
                         .foregroundStyle(Theme.Palette.textSecondary)
@@ -114,6 +121,30 @@ struct ShareConnectionView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    // MARK: - Connection-only badge (#456)
+
+    /// #456: states the scope of the `olcrtc://` URI in plain words — it lets
+    /// someone connect THROUGH the server and nothing else. Extracted into its
+    /// own @ViewBuilder because `body` is already a deep nest and this repo has
+    /// hit the SwiftUI type-checker timeout twice on large bodies.
+    @ViewBuilder
+    private var connectionOnlyBadge: some View {
+        OlcCard {
+            HStack(spacing: 8) {
+                Image(systemName: "lock.shield")
+                    .foregroundStyle(Theme.Palette.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.shareConnectionOnlyBadge.localized())
+                        .font(Theme.Typography.statusTitle)
+                        .foregroundStyle(Theme.Palette.textPrimary)
+                    Text(L10n.shareConnectionOnlySub.localized())
+                        .font(.caption)
+                        .foregroundStyle(Theme.Palette.textSecondary)
+                }
+            }
+        }
     }
 
     // MARK: - Full-access (co-admin) section (#135)

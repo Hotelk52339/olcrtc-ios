@@ -198,6 +198,19 @@ struct InstallOptionsView: View {
         }
     }
 
+    /// #456: the app already knows the last room used with this carrier — offer
+    /// it instead of making the user go and find it again (requirement 8). Shown
+    /// only while the field is empty, so it never fights what the user typed.
+    @ViewBuilder
+    private func roomSuggestion(carrier: String, into binding: Binding<String>) -> some View {
+        if binding.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty,
+           let last = RoomMemory.lastRoom(forCarrier: carrier) {
+            Button(L10n.roomIDLastUsed_fmt.formatted(last)) { binding.wrappedValue = last }
+                .font(.caption)
+                .foregroundStyle(Theme.Palette.accent)
+        }
+    }
+
     @ViewBuilder
     private var roomIDSection: some View {
         if requiresRoomID {
@@ -206,6 +219,7 @@ struct InstallOptionsView: View {
                     .font(.system(.body, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                roomSuggestion(carrier: carrier, into: $roomID)   // #456
             } header: {
                 Text(L10n.roomIDSectionHeader.localized())
             } footer: {
@@ -318,6 +332,7 @@ struct InstallOptionsView: View {
                     .font(.system(.body, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                roomSuggestion(carrier: c, into: binding.roomID)   // #456
             } else {
                 Label(L10n.roomIDAutoGenHint.localized(), systemImage: "wand.and.stars")
                     .font(.caption)
