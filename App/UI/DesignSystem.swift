@@ -341,8 +341,14 @@ struct OlcStatusPill<Trailing: View>: View {
                     Text(subtitle)
                         .font(Theme.Typography.statusSubtitle)
                         .foregroundStyle(Theme.Palette.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        // #456 (audit fix) was: .lineLimit(1) + .truncationMode(.tail)
+                        // — the subtitle now carries the SENTENCE THAT SAYS WHAT TO
+                        // DO ("the server's key has changed — use Recover
+                        // connection"), and tail-truncating it cut off exactly the
+                        // actionable half. Let it wrap; the pill's container uses
+                        // minHeight, so the card grows instead of clipping.
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 8)

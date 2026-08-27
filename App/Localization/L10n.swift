@@ -675,6 +675,9 @@ enum L10n: String, CaseIterable {
     // Chip labels: lower case, no final period — they sit inside a pill.
     case healthChipNever                    // "not checked"
     case healthChipStale_fmt                // "%@ old" (age)
+    // #456 (audit fix): `.fading` must not share `.verified`'s words — past tense
+    case healthChipFaded_fmt                // "was %@ · %@" (rtt, age)
+    case healthChipFadedNoRTT_fmt           // "worked %@ ago" (age)
     case healthChipFailed_fmt               // "failed %@ ago" (age)
     case healthChipHandshake_fmt            // "no data · %@" (age)
     case healthChipUnchecked                // "couldn't check"

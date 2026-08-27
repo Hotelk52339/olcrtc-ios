@@ -44,9 +44,12 @@ struct ShareConnectionView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // #456: what this link grants must be the FIRST thing on
                     // screen, not a conclusion the user draws from the absence of
-                    // a warning. True of the URI block in both modes (the
-                    // full-access blob below is a separate, opt-in payload), so
-                    // it renders unconditionally.
+                    // a warning.
+                    // #456 (audit fix) was: rendered unconditionally — which put a
+                    // green "no server access" shield at the top of a sheet that,
+                    // in full-access mode, hands over SSH control. The badge is now
+                    // shown only in the genuinely connection-only case; the
+                    // full-access section below carries its own warning.
                     connectionOnlyBadge
 
                     Text(L10n.shareConnectionExplanation.localized())
@@ -131,6 +134,12 @@ struct ShareConnectionView: View {
     /// hit the SwiftUI type-checker timeout twice on large bodies.
     @ViewBuilder
     private var connectionOnlyBadge: some View {
+        // #456 (audit fix): show the reassurance ONLY when this sheet really is
+        // connection-only. When a full-access payload is present the sheet can
+        // hand over SSH control of the server, and leading with a green
+        // "no server access" shield is the most dangerous kind of untrue —
+        // a safety claim the screen itself contradicts further down.
+        if fullAccess == nil {
         OlcCard {
             HStack(spacing: 8) {
                 Image(systemName: "lock.shield")
@@ -145,6 +154,7 @@ struct ShareConnectionView: View {
                 }
             }
         }
+        }   // #456: end of the `fullAccess == nil` guard
     }
 
     // MARK: - Full-access (co-admin) section (#135)

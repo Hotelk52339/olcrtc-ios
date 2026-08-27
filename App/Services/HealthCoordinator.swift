@@ -69,9 +69,38 @@ final class HealthCoordinator: ObservableObject {
     /// by `cancelAll()`.
     private var sweepTask: Task<Void, Never>?
 
-    private init() { load() }
+    /// #456 (audit fix): the ageing clock. `HealthDisplay` is derived from
+    /// `Date()` at render time, but the only redraw trigger is `$revision`, which
+    /// bumps on WRITES — so a verdict rendered green sat there green until some
+    /// unrelated probe happened to write. Freshness that never expires on screen
+    /// is the same lie as an undated claim. This ticks while anything is stored,
+    /// so `.verified` visibly demotes to "worked N ago" and then to stale on its
+    /// own. Cheap: one wake every 30 s, and it stops itself when the store empties.
+    private var ageTicker: Task<Void, Never>?
+    private static let ageTickSeconds: UInt64 = 30
+
+    private init() {
+        load()
+        startAgeTickerIfNeeded()
+    }
 
     private func bump() { revision &+= 1 }
+
+    /// #456: run the ageing clock exactly while there is something to age.
+    private func startAgeTickerIfNeeded() {
+        guard ageTicker == nil, !store.isEmpty else { return }
+        ageTicker = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Double(Self.ageTickSeconds)))
+                guard let self, !Task.isCancelled else { return }
+                guard !self.store.isEmpty else {
+                    self.ageTicker = nil
+                    return
+                }
+                self.bump()   // re-render every dated verdict with its new age
+            }
+        }
+    }
 
     // MARK: Reads
 
@@ -90,6 +119,23 @@ final class HealthCoordinator: ObservableObject {
         Self.summarize(recordIDs.map { display(for: $0, now: now) })
     }
 
+    /// #456 (audit fix): how many of these nodes are KNOWN to be failing, and how
+    /// many there are in total. `summary` deliberately reports the best evidence
+    /// ("at least one protocol works" is the useful headline), but on its own that
+    /// lets a host with one working and one dead protocol read as simply fine —
+    /// a known failure hidden behind an average. The card pairs the headline with
+    /// this count so a failure is never silent. `.inconclusive` is NOT counted:
+    /// couldn't-check is not a failure verdict.
+    func failingCount(for recordIDs: [UUID], now: Date = Date()) -> (failing: Int, total: Int) {
+        let failing = recordIDs.reduce(into: 0) { acc, id in
+            switch display(for: id, now: now) {
+            case .broken, .handshakeOnly: acc += 1
+            default: break
+            }
+        }
+        return (failing, recordIDs.count)
+    }
+
     // MARK: Writes (free evidence — no probe required)
 
     /// #456: the live tunnel just passed `verifyTunnel` (HTTP 200 through its own
@@ -102,8 +148,14 @@ final class HealthCoordinator: ObservableObject {
     /// #456: a raw failure string from the engine / a connect attempt. Mapped to a
     /// stable reason; "couldn't check" reasons are stored as `.inconclusive`, never
     /// as `.broken` (requirement 2).
-    func noteFailure(recordID: UUID, raw: String, source: String) {
-        let reason = HealthFailureMapper.reason(forRaw: raw)
+    /// `classified` — a reason already determined at the THROW site, where the
+    /// raw core text (always English) was still available. Prefer it: `raw` is
+    /// frequently the app's own LOCALIZED sentence by the time it arrives here,
+    /// and substring-matching English needles against Russian text resolved every
+    /// real failure to `.unknown` — i.e. filed as "couldn't check" (#456).
+    func noteFailure(recordID: UUID, raw: String, source: String,
+                     classified: HealthReason? = nil) {
+        let reason = classified ?? HealthFailureMapper.reason(forRaw: raw)
         let kind: NodeHealthKind = HealthFailureMapper.isInconclusive(reason) ? .inconclusive : .broken
         store[recordID.uuidString] = NodeHealth(kind: kind,
                                                 reason: reason,
@@ -192,7 +244,15 @@ final class HealthCoordinator: ObservableObject {
 
         let probe = TunnelManager.recordForBatchPing(
             record, clientID: TunnelManager.batchPingClientID(recordID: record.id))
+        // #456 (audit fix): remember how long we actually waited. A probe gets a
+        // 20 s budget while a real connect gets the user's start timeout (60 s by
+        // default), so a slow-but-alive carrier can fail HERE and succeed THERE.
+        // Blaming the node for our own shorter deadline is a false negative — the
+        // honest verdict for "we ran out of our own time" is "couldn't check".
+        let probeStarted = Date()
         let rtt = await tunnel.ping(probe.details, timeoutMs: HealthPolicy.probeTimeoutMs)
+        let hitOurCap = Date().timeIntervalSince(probeStarted)
+            >= Double(HealthPolicy.probeTimeoutMs) / 1000 * 0.95
 
         switch rtt {
         case .success(let ms):
@@ -214,6 +274,14 @@ final class HealthCoordinator: ObservableObject {
                         "Health: \(record.displayName) joined the room but no data passed")
                     return
                 }
+            }
+            // #456 (audit fix): our own deadline expiring is not evidence the
+            // node is broken.
+            if hitOurCap {
+                noteInconclusive(recordID: record.id, reason: .timedOut)
+                LogStore.shared.log(.connection,
+                    "Health: \(record.displayName) — no answer within the \(HealthPolicy.probeTimeoutMs / 1000)s check budget; not treating that as a failure")
+                return
             }
             noteFailure(recordID: record.id, raw: raw, source: "probe")
             LogStore.shared.log(.connection,
@@ -318,6 +386,10 @@ final class HealthCoordinator: ObservableObject {
     }
 
     private func save() {
+        // #456 (audit fix): the store just became non-empty on a fresh install /
+        // after a reset — start the ageing clock so the first verdict can expire
+        // on screen without waiting for a second write.
+        startAgeTickerIfNeeded()
         var out = store
         if out.count > HealthPolicy.maxEntries {
             let keep = out.sorted { $0.value.checkedAt > $1.value.checkedAt }

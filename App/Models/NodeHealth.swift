@@ -136,9 +136,17 @@ enum HealthDisplay: Equatable, Sendable {
         switch self {
         case .never:        return L10n.healthChipNever.localized()
         case .checking:     return ""                                   // chip shows a spinner
-        case .verified(let ms, let age), .fading(let ms, let age):
+        // #456 (audit fix) was: one shared case for .verified and .fading, so
+        // "working" and "worked a while ago" rendered the SAME words and were
+        // told apart by colour alone — the exact failure this vocabulary exists
+        // to prevent. `.fading` now says it in the past tense.
+        case .verified(let ms, let age):
             let a = HealthAge.label(age)
             return ms.map { "\($0) ms · \(a)" } ?? a
+        case .fading(let ms, let age):
+            let a = HealthAge.label(age)
+            return ms.map { L10n.healthChipFaded_fmt.formatted("\($0) ms", a) }
+                ?? L10n.healthChipFadedNoRTT_fmt.formatted(a)
         case .handshakeOnly(let age): return L10n.healthChipHandshake_fmt.formatted(HealthAge.label(age))
         case .broken(_, let age):     return L10n.healthChipFailed_fmt.formatted(HealthAge.label(age))
         case .inconclusive:           return L10n.healthChipUnchecked.localized()

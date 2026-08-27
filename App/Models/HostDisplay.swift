@@ -182,13 +182,19 @@ extension HostDisplay {
 /// demoted to a caption line with its own age; the headline answers the only
 /// question the user actually has: *what is true right now, and what do I do?*
 enum HostHeadline: Equatable {
-    /// An operation is running. Payload: the op's VERB (e.g. "Installing") —
-    /// chosen over the live provisioner note because the note already carries its
-    /// own punctuation ("Connecting…") and the card renders it separately next to
-    /// the progress bar. Documented per the design's "pick one" latitude.
-    case busy(String)
-    /// The last operation failed. Payload: its message (shown as the subtitle).
-    case opFailed(String)
+    /// An operation is running. Carries the op's VERB for the title AND the live
+    /// provisioner note + step for the subtitle.
+    /// #456 (audit fix) was: `case busy(String)` holding only the verb, so the
+    /// pill rendered "Installing…" as its title and "Installing" as its subtitle
+    /// — the same word twice — and the running commentary the user relies on to
+    /// see progress (which the provisioner publishes continuously) was dropped.
+    case busy(verb: String, note: String, step: Int, of: Int)
+    /// The last operation failed: WHICH op, and its message.
+    /// #456 (audit fix) was: `case opFailed(String)` (message only), so the title
+    /// became a generic "Last action failed" and the user could no longer tell
+    /// whether the install, the reconfigure or the uninstall was the thing that
+    /// broke.
+    case opFailed(verb: String, message: String)
     /// SSH / TCP said no. This is "couldn't check" — requirement 2 — and is NEVER
     /// rendered as stopped or failed, however old the last container reading is.
     case unreachable(age: TimeInterval?)
@@ -208,8 +214,12 @@ enum HostHeadline: Equatable {
                        reachable: Bool?,
                        lastProbeAge: TimeInterval?,
                        health: HealthDisplay) -> HostHeadline {
-        if case .running(let op, _, _, _) = display { return .busy(op.verb) }
-        if case .failed(_, _, let message, _) = display { return .opFailed(message) }
+        if case .running(let op, let phase, let note, _) = display {
+            return .busy(verb: op.verb, note: note, step: phase, of: op.stepCount)   // #456
+        }
+        if case .failed(let op, _, let message, _) = display {
+            return .opFailed(verb: op.verb, message: message)   // #456
+        }
         // Before ANY container reading: an unreachable VPS tells us nothing about
         // the container, so a stale "stopped" must never surface as fact here.
         if reachable == false { return .unreachable(age: lastProbeAge) }
@@ -234,8 +244,9 @@ enum HostHeadline: Equatable {
 
     var title: String {
         switch self {
-        case .busy(let verb):     return "\(verb)…"
-        case .opFailed:           return L10n.vpsHeadlineOpFailed.localized()
+        case .busy(let verb, _, _, _): return "\(verb)…"
+        // #456 (audit fix): name the operation that failed, not a generic sentence.
+        case .opFailed(let verb, _):  return L10n.vpsOpFailed_fmt.formatted(verb)
         case .unreachable:        return L10n.vpsHeadlineUnreachable.localized()
         case .notChecked:         return L10n.vpsHeadlineNotChecked.localized()
         case .containerStopped:   return L10n.vpsHeadlineStopped.localized()
@@ -246,8 +257,11 @@ enum HostHeadline: Equatable {
 
     var subtitle: String {
         switch self {
-        case .busy(let n):        return n
-        case .opFailed(let m):    return m
+        // #456 (audit fix): the live note plus "step n/total" — what the card
+        // showed before the headline reducer existed.
+        case .busy(_, let note, let step, let total):
+            return note.isEmpty ? "\(step)/\(total)" : "\(note) · \(step)/\(total)"
+        case .opFailed(_, let m): return m
         case .unreachable(let age):
             return age.map { L10n.vpsHeadlineUnreachableHint_fmt.formatted(HealthAge.label($0)) }
                 ?? L10n.vpsHeadlineUnreachableHintNever.localized()

@@ -1540,7 +1540,11 @@ final class TunnelManager: ObservableObject {
                 // #456: a real connect attempt failed — record it as measured
                 // evidence for this node (mapped to a human reason at display time).
                 if let id = manager?.lastRecord?.id {
-                    HealthCoordinator.shared.noteFailure(recordID: id, raw: e.message, source: "connect")
+                    // #456: `e.message` is already localized — pass the engine's
+                    // own stable classification so a Russian UI still resolves
+                    // "the key no longer matches" instead of "couldn't check".
+                    HealthCoordinator.shared.noteFailure(recordID: id, raw: e.message,
+                                                         source: "connect", classified: e.reason)
                 }
                 manager?.state = .failed(e.message)
             }

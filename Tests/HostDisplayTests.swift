@@ -189,7 +189,12 @@ final class HostDisplayTests: XCTestCase {
                                     reachable: false,
                                     lastProbeAge: nil,
                                     health: .broken(.keyMismatch, age: 1))
-        XCTAssertEqual(h, .busy(HostOp.install.verb))
+        // #456: `.busy` now carries the live note + step so the pill can show
+        // progress instead of repeating its own title. `HostDisplay.start` seeds
+        // phase 0 with the "connecting" note.
+        XCTAssertEqual(h, .busy(verb: HostOp.install.verb,
+                                note: L10n.vpsConnecting.localized(),
+                                step: 0, of: HostOp.install.stepCount))
         XCTAssertEqual(h.tone, .progress)
     }
 
@@ -197,7 +202,9 @@ final class HostDisplayTests: XCTestCase {
         let failed = busyDisplay(.start, from: .stopped).failed(message: "container exited")
         let h = HostHeadline.reduce(display: failed, reachable: true,
                                     lastProbeAge: 10, health: .verified(ms: 20, age: 5))
-        XCTAssertEqual(h, .opFailed("container exited"))
+        // #456: `.opFailed` now names the operation, so the headline can say
+        // WHICH action failed rather than a generic "last action failed".
+        XCTAssertEqual(h, .opFailed(verb: HostOp.start.verb, message: "container exited"))
         XCTAssertEqual(h.tone, .error)
         XCTAssertEqual(h.subtitle, "container exited")
     }

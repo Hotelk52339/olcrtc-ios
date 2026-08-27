@@ -14,7 +14,18 @@ import Mobile
 
 struct TunnelEngineError: Error {
     let message: String
-    init(_ message: String) { self.message = message }
+    /// #456: a STABLE failure code classified at the throw site, where the raw
+    /// (English, core-emitted) text is still available. `message` is the
+    /// user-facing string and is often ALREADY LOCALIZED here (connectNoPeer,
+    /// errorPortBusy_fmt, errorRuntimeStillStopping), so classifying it later by
+    /// English substring silently failed for every non-English user — the health
+    /// layer then filed a real failure as "couldn't check". nil ⇒ the receiver
+    /// falls back to substring mapping.
+    let reason: HealthReason?
+    init(_ message: String, reason: HealthReason? = nil) {
+        self.message = message
+        self.reason = reason
+    }
 }
 
 struct EngineStartSettings: Sendable {
@@ -172,7 +183,7 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
 
     func start(_ details: ConnectionDetails, port: Int, settings s: EngineStartSettings) async throws {
         guard case .olcrtc(let params) = details else {
-            throw TunnelEngineError("internal: OlcrtcEngine received non-olcrtc details")
+            throw TunnelEngineError("internal: OlcrtcEngine received non-olcrtc details", reason: .unknown)   // #456
         }
         await MainActor.run {
             LogStore.shared.log(.connection,
@@ -232,7 +243,8 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
         } catch {
             let raw = (error as NSError).localizedDescription
             await MainActor.run { LogStore.shared.log(.connection, L10n.mobileStartFailed_fmt.formatted(raw)) }
-            throw TunnelEngineError(Self.startErrorReason(raw, port: port))
+            throw TunnelEngineError(Self.startErrorReason(raw, port: port),
+                                    reason: HealthFailureMapper.reason(forRaw: raw))   // #456
         }
 
         do {
@@ -252,7 +264,8 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
             // error. (#333's same-port wait covers only the port symptom — the
             // port can already be free while the goroutine still drains.)
             guard Self.isAlreadyActiveError(raw) else {
-                throw TunnelEngineError(Self.startErrorReason(raw, port: port))
+                throw TunnelEngineError(Self.startErrorReason(raw, port: port),
+                                    reason: HealthFailureMapper.reason(forRaw: raw))   // #456
             }
             await MainActor.run {
                 LogStore.shared.log(.connection,
@@ -264,7 +277,7 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
             } catch {
                 let raw2 = (error as NSError).localizedDescription
                 await MainActor.run { LogStore.shared.log(.connection, L10n.mobileStartFailed_fmt.formatted(raw2)) }
-                throw TunnelEngineError(L10n.errorRuntimeStillStopping.localized())
+                throw TunnelEngineError(L10n.errorRuntimeStillStopping.localized(), reason: .timedOut)   // #456
             }
         }
         await MainActor.run { LogStore.shared.log(.connection, L10n.mobileStartOK.localized(), code: .nativeStartOK) }  // OLC-1003
@@ -286,7 +299,12 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
                 // now, not from Start.
                 return Self.startErrorReason(raw, port: port)
             }
-            throw TunnelEngineError(diagnostic)
+            // #456: classify from the RAW core text (English) captured above —
+            // `diagnostic` may already be a localized sentence.
+            let reason: HealthReason = Self.isNoPeerWaitError(raw)
+                ? .noPeer
+                : HealthFailureMapper.reason(forRaw: raw)
+            throw TunnelEngineError(diagnostic, reason: reason)
         }
         await MainActor.run {
             LogStore.shared.log(.connection, L10n.waitReadyOK.localized())

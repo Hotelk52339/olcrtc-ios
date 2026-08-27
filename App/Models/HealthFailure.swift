@@ -64,7 +64,12 @@ enum HealthReason: String, Codable, Sendable, CaseIterable {
         switch self {
         case .keyMismatch:      return .recoverConnection
         case .roomInvalid:      return .checkRoom
-        case .noPeer:           return .checkRoom
+        // #456 was: .checkRoom — but this state's own message names three causes
+        // (server stopped, different room, key rotated by a reinstall) and
+        // Recover connection is the one action that settles all three: it
+        // re-reads the live server's room AND key. Checking the room by hand
+        // fixes only one of them, and not the most likely one after a reinstall.
+        case .noPeer:           return .recoverConnection
         case .containerStopped: return .startContainer
         case .portBusy:         return .openPortSettings
         case .networkDown, .hostUnreachable, .carrierRejected, .timedOut, .unknown:
