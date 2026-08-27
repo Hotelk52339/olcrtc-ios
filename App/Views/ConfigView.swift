@@ -94,6 +94,10 @@ struct TunnelSettingsReliabilitySection: View {
         Section {
             Toggle(L10n.configFailoverToggle.localized(), isOn: $settings.autoFailover)
             TunnelSettingsNote(text: L10n.configFailoverExplainer.localized())
+            // #458: check what you own when the app opens, so the first screen is
+            // current instead of showing whatever was true when you last looked.
+            Toggle(L10n.settingsRefreshOnEntryToggle.localized(), isOn: $settings.refreshOnEntry)
+            TunnelSettingsNote(text: L10n.settingsRefreshOnEntryExplainer.localized())
         } header: {
             Text(L10n.configReliabilityHeader.localized())
         } footer: {

@@ -313,6 +313,24 @@ final class HealthCoordinator: ObservableObject {
         }
     }
 
+    /// #458: the on-entry pass. Unlike `verifyStale` it is not restricted to
+    /// never/stale nodes and is NOT capped, so opening the app really does tell
+    /// you about everything you own; unlike `verifyAll` it is not forced, so
+    /// `shouldProbe`'s debounce still refuses to re-probe anything checked within
+    /// `HealthPolicy.minRecheckSeconds`. Returns immediately — the coordinator
+    /// serialises the probes and skips the room the live tunnel holds.
+    func verifyDue(_ records: [ConnectionRecord], using tunnel: TunnelManager) {
+        let batch = records.filter { !inFlight.contains($0.id) }
+        guard !batch.isEmpty else { return }
+        sweepTask?.cancel()
+        sweepTask = Task { @MainActor in
+            for r in batch {
+                if Task.isCancelled { return }
+                await self.verify(r, using: tunnel, force: false)
+            }
+        }
+    }
+
     /// #456: the user asked for everything ("Check all"). No staleness filter, no
     /// limit, and forced — the debounce is a cost guard for AUTOMATIC passes only.
     func verifyAll(_ records: [ConnectionRecord], using tunnel: TunnelManager) {

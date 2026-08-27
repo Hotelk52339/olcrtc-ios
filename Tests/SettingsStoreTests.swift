@@ -27,6 +27,7 @@ final class SettingsStoreTests: XCTestCase {
         "settings.keepAliveSeconds",
         "settings.tunnelMode",   // #vpn (string-backed enum, snapshot pattern still applies)
         "settings.autoFailover",   // #453
+        "settings.refreshOnEntry",   // #458
     ]
 
     private var s: SettingsStore { SettingsStore.shared }
@@ -47,6 +48,7 @@ final class SettingsStoreTests: XCTestCase {
             "keepAliveSeconds":       s.keepAliveSeconds,
             "tunnelMode":             s.tunnelMode,   // #vpn
             "autoFailover":           s.autoFailover,   // #453
+            "refreshOnEntry":         s.refreshOnEntry,   // #458
         ]
     }
 
@@ -61,6 +63,7 @@ final class SettingsStoreTests: XCTestCase {
         s.keepAliveSeconds       = snapshot["keepAliveSeconds"]       as! Int
         s.tunnelMode             = snapshot["tunnelMode"]             as! TunnelMode   // #vpn
         s.autoFailover           = snapshot["autoFailover"]           as! Bool   // #453
+        s.refreshOnEntry         = snapshot["refreshOnEntry"]         as! Bool   // #458
         super.tearDown()
     }
 
@@ -261,6 +264,7 @@ final class SettingsStoreTests: XCTestCase {
         s.keepAliveSeconds       = 300
         s.tunnelMode             = .vpn   // #vpn: non-numeric, but reset() covers it too
         s.autoFailover           = false  // #455: default is now true — mutate away so reset() is proven to restore it
+        s.refreshOnEntry         = false  // #458: default true — mutate away so reset() is proven to restore it
 
         s.reset()
 
@@ -274,6 +278,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(s.fontSizeIndex,          SettingsStore.Defaults.fontSizeIndex)
         XCTAssertEqual(s.tunnelMode,             .proxy)   // #vpn
         XCTAssertEqual(s.autoFailover, SettingsStore.Defaults.autoFailover)   // #455: assert against the default (now true), not a literal
+        XCTAssertEqual(s.refreshOnEntry, SettingsStore.Defaults.refreshOnEntry)   // #458
     }
 
     // MARK: defaults sanity — protects the Defaults ranges from drift

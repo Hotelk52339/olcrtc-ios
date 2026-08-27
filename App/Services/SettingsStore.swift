@@ -107,6 +107,10 @@ final class SettingsStore: ObservableObject {
         static let autoConnectOnLaunch  = true    // #455 was: hardcoded false
         static let backgroundAudio      = true    // #455 was: hardcoded false — keeps the SOCKS port alive in the background
         static let autoFailover         = true    // #455 was: false — protocol failover on by default
+        // #458: check servers and protocols when the app is opened. ON by default —
+        // the user should not have to ask the app what is true; the probes are
+        // debounced (nothing re-checked inside HealthPolicy.minRecheckSeconds).
+        static let refreshOnEntry       = true
         static let vpsAutoPingRange     = 10...300
         static let updateCheckEnabled   = true          // #360: opt-out
     }
@@ -236,6 +240,10 @@ final class SettingsStore: ObservableObject {
     @Published var autoFailover: Bool {
         didSet { Self.persist(autoFailover, forKey: Keys.autoFailover) }
     }
+    /// #458: re-check servers and protocols on entering the app / the Servers tab.
+    @Published var refreshOnEntry: Bool {
+        didSet { Self.persist(refreshOnEntry, forKey: Keys.refreshOnEntry) }
+    }
     @Published var vpsAutoPingInterval: Int {
         didSet {
             let v = vpsAutoPingInterval.clamped(to: Defaults.vpsAutoPingRange)
@@ -334,6 +342,7 @@ final class SettingsStore: ObservableObject {
         vpsAutoPingEnabled  = (d.object(forKey: Keys.vpsAutoPingEnabled)  as? Bool)                                                          ?? Defaults.vpsAutoPingEnabled
         earlyRestartOnWedge = (d.object(forKey: Keys.earlyRestartOnWedge) as? Bool)                                                          ?? Defaults.earlyRestartOnWedge
         autoFailover        = (d.object(forKey: Keys.autoFailover)        as? Bool)                                                          ?? Defaults.autoFailover           // #453
+        refreshOnEntry      = (d.object(forKey: Keys.refreshOnEntry)      as? Bool)                                                          ?? Defaults.refreshOnEntry        // #458
         vpsAutoPingInterval = (d.object(forKey: Keys.vpsAutoPingInterval) as? Int)  .map { $0.clamped(to: Defaults.vpsAutoPingRange) }       ?? Defaults.vpsAutoPingInterval
         if let arr = d.object(forKey: Keys.enabledIPSources) as? [String] {
             enabledIPSources = Set(arr)
@@ -372,6 +381,7 @@ final class SettingsStore: ObservableObject {
         vpsAutoPingInterval    = Defaults.vpsAutoPingInterval
         earlyRestartOnWedge    = Defaults.earlyRestartOnWedge
         autoFailover           = Defaults.autoFailover   // #453
+        refreshOnEntry         = Defaults.refreshOnEntry   // #458
         enabledIPSources       = AppConstants.defaultEnabledIPCheckLabels
         speedTestProviderID    = AppConstants.SpeedTest.defaultProviderID
         updateCheckEnabled     = Defaults.updateCheckEnabled   // #360
@@ -438,6 +448,7 @@ final class SettingsStore: ObservableObject {
         static let vpsAutoPingInterval       = "settings.vpsAutoPingInterval"
         static let earlyRestartOnWedge       = "settings.earlyRestartOnWedge"
         static let autoFailover              = "settings.autoFailover"
+        static let refreshOnEntry            = "settings.refreshOnEntry"
         static let enabledIPSources          = "settings.enabledIPSources"
         static let speedTestProviderID       = "settings.speedTestProviderID"
         static let updateCheckEnabled        = "settings.updateCheckEnabled"   // #360

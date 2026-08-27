@@ -14,18 +14,12 @@ import SwiftUI
 //   2 what is true right now      → verdict (headline + progress + failures + process line)
 //   3 what runs on it, does it work → PROTOCOLS (the content, above the numbers)
 //   4 how is the machine doing    → metrics, demoted
-//   5 what do I do next           → ONE full-width action, then the few repeats
+//   5 what do I do next           → ONE full-width action
 //
 // #457 was: four unlabelled 44pt icon buttons (antenna / arrow.down.doc /
 // slider.horizontal.3 / RobotIcon) squeezing the primary action into a fifth of
 // the row. Every one of them duplicated an item that is already in the overflow
 // menu, so deleting them costs nothing and buys the primary action its width.
-// #458 was: …and deleting ALL of them cost the owner the action they use most.
-// "Check" is not a duplicate of the primary button — on an installed, healthy
-// server the primary button is Stop, so Check existed only inside a menu nobody
-// opens to do a routine thing. A SHORT row of icon buttons comes back UNDER the
-// full-width primary (`quickRow`), so the primary keeps its width and the
-// routine actions keep their place. The menu stays the complete set.
 
 /// #457: the primary action a card is allowed to offer. The rule the old
 /// `primaryButton` broke: never offer an action no evidence justifies. A server
@@ -79,40 +73,6 @@ struct ServerCardMetrics {
     let uptime: String
 }
 
-/// #458: one of the two or three actions the owner repeats all day, shown on the
-/// card as a compact icon button. Every one is built by `ServersView.quickActions`
-/// from the SAME handler as its `menuItems` entry — a quick action is always a
-/// VISIBLE SUBSET of the overflow menu, never an operation of its own.
-struct ServerQuickAction: Identifiable {
-    /// Also the VoiceOver label: an icon-only button must say its own name.
-    let title: String
-    let systemImage: String
-    let perform: () -> Void
-
-    /// Titles inside one card are distinct, so the wording is a stable identity
-    /// (no per-body UUID churn under the ForEach).
-    var id: String { title }
-}
-
-/// #458: what the card may say about "add another protocol here".
-///
-/// #458 was: a `canAddProtocol: Bool` fed by `!missingCarriers(host).isEmpty`,
-/// and `missingCarriers` returned [] whenever the per-host carrier list had not
-/// been read yet — so a host that was merely UNSCANNED (or unreachable, or whose
-/// scan threw) rendered exactly like a host with every carrier already
-/// installed: no offer at all, and no way to get it back. Absence of knowledge
-/// was drawn as absence of possibility. Unknown is now its own state.
-enum ServerAddProtocolState: Equatable {
-    /// A carrier this server does not run yet — the plain offer.
-    case available
-    /// The protocol list has never been read. Shown, never hidden; the tap goes
-    /// and reads it first (`ServersView.beginAddProtocol`).
-    case unknown
-    /// Known, and there is genuinely nothing to add: every carrier is installed,
-    /// or there is no base deployment to hang a sibling container off.
-    case unavailable
-}
-
 struct ServerCardView: View {
     /// Server label.
     let name: String
@@ -135,14 +95,11 @@ struct ServerCardView: View {
     let rows: [SSHRunner.CarrierInfo]
     /// A protocol-level op (add / remove / sibling start-stop) is in flight.
     let rowsBusy: Bool
-    // #458 was: `let canAddProtocol: Bool` — see ServerAddProtocolState.
-    let addProtocol: ServerAddProtocolState
+    let canAddProtocol: Bool
     let actionsDisabled: Bool
     let primary: ServerPrimaryAction
     /// The single COMPLETE action set for this server.
     let menuItems: [OlcMenuItem]
-    /// #458: the handful of items from that set worth a button of their own.
-    let quickActions: [ServerQuickAction]
     let onPrimary: () -> Void
     let onAddProtocol: () -> Void
     let onVerifyAll: () -> Void
@@ -230,11 +187,9 @@ struct ServerCardView: View {
 
     @ViewBuilder
     private var protocolsSection: some View {
-        // #458 was: `canAddProtocol` — an unread list hid the whole section too.
-        if !rows.isEmpty || addProtocol != .unavailable {
+        if !rows.isEmpty || canAddProtocol {
             VStack(alignment: .leading, spacing: 6) {
                 protocolsHeader
-                unreadNote
                 ForEach(rows) { info in row(info) }
             }
             .opacity(isBusy ? 0.45 : 1)
@@ -248,59 +203,32 @@ struct ServerCardView: View {
                 .foregroundStyle(Theme.Palette.textTertiary)
             if rowsBusy { ProgressView().controlSize(.mini) }
             Spacer(minLength: 0)
-            addProtocolButton
+            if canAddProtocol { addProtocolButton }
         }
     }
 
-    /// #458: an empty PROTOCOLS list is two very different facts — "this server
-    /// runs nothing" and "we have not looked". Say which one this is, so the
-    /// lone Add-protocol button below is not read as the whole truth.
-    @ViewBuilder
-    private var unreadNote: some View {
-        if addProtocol == .unknown, rows.isEmpty {
-            Text(L10n.protocolsNotReadYet.localized())
-                .font(.caption)
-                .foregroundStyle(Theme.Palette.textTertiary)
-        }
-    }
-
-    /// #458: shown for BOTH `.available` and `.unknown`. In the unknown state the
-    /// tap reads the server's protocol list first and opens the sheet against
-    /// what it learned (`ServersView.beginAddProtocol`) — the offer is never
-    /// withheld because the app has not looked yet.
-    @ViewBuilder
     private var addProtocolButton: some View {
-        if addProtocol != .unavailable {
-            Button(action: onAddProtocol) {
-                Label(L10n.addProtocolAction.localized(), systemImage: "plus.circle")
-                    .font(.caption)
-                    // #458 (audit): the drawn label is one caption line (~15pt),
-                    // so this was a target a third of Apple's 44pt minimum — on
-                    // the very control the owner reported as unusable. Same fix
-                    // the rest of the app already uses (OlcHealthChip,
-                    // ConnectionRowView.healthLabel): the TOUCH region grows,
-                    // the text keeps its own size, nothing is scaled down.
-                    .frame(minHeight: Theme.Metrics.controlHeight)
-                    .contentShape(Rectangle())
-            }
-            .disabled(actionsDisabled)
+        Button(action: onAddProtocol) {
+            Label(L10n.addProtocolAction.localized(), systemImage: "plus.circle")
+                .font(.caption)
         }
+        .disabled(actionsDisabled)
     }
 
     // MARK: 4 — the machine (supporting numbers, below the protocols)
 
-    /// #458 was: ONE `HStack(spacing: 12)` carrying all four `OlcMiniStat`s —
-    /// each of which puts its label and its value on the SAME line. Four
-    /// label+value pairs never fit a phone-width card once the values grew
-    /// ("407M/1967M", "36/40G", "2 days"): they squeezed, shrank and misaligned,
-    /// which is the disk row the owner has now reported twice. The layout is the
-    /// bug, so the layout is what changes — see ServerMetricsGrid.
+    // #458: the four readings used to sit in ONE row with each label and value
+    // side by side, so a cell cost the SUM of their widths and the row could not
+    // fit on a phone in Russian. `ServerMetricsGrid` puts the label ABOVE the
+    // value (a cell costs the wider of the two) in two columns, and folds to one
+    // column at accessibility text sizes. Nothing shrinks — scaling text down
+    // makes the reading unreadable, which defeats the point of showing it.
     private var metricsStrip: some View {
         ServerMetricsGrid(metrics: metrics)
             .opacity(isBusy ? 0.45 : 1)
     }
 
-    // MARK: 5 — the one next step, and the two or three the owner repeats
+    // MARK: 5 — the one next step
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -308,29 +236,7 @@ struct ServerCardView: View {
                       role: primary.role, isBusy: primary.isBusy,
                       fillWidth: true, action: onPrimary)
                 .disabled(actionsDisabled && !primary.isBusy)
-            quickRow
             sweepNote
-        }
-    }
-
-    /// #458: the routine actions, back on the card. Deliberately UNDER the
-    /// primary button rather than beside it — that is what kept #457's mistake
-    /// from simply coming back: the primary keeps the full width it was given,
-    /// and these read as the quieter second rank. Icon-only at the standard
-    /// 44×44 tap target, each with its own VoiceOver name; `ServersView` builds
-    /// them from the menu's own handlers and drops any that would duplicate the
-    /// primary button.
-    @ViewBuilder
-    private var quickRow: some View {
-        if !quickActions.isEmpty {
-            HStack(spacing: 10) {
-                ForEach(quickActions) { action in
-                    OlcIconButton(systemImage: action.systemImage, action: action.perform)
-                        .accessibilityLabel(action.title)
-                        .disabled(actionsDisabled)
-                }
-                Spacer(minLength: 0)
-            }
         }
     }
 
@@ -344,16 +250,9 @@ struct ServerCardView: View {
                 Text(L10n.healthSweepSkipped_fmt.formatted(uncheckedCount))
                     .font(.caption2)
                     .foregroundStyle(Theme.Palette.textTertiary)
-                // #458 (audit): the sentence beside it says "tap Verify all", so
-                // the target has to be tappable — a caption2 line is ~14pt. The
-                // touch region grows to 44pt; the word keeps its size.
-                Button(action: onVerifyAll) {
-                    Text(L10n.healthVerifyAllAction.localized())
-                        .font(.caption2)
-                        .frame(minHeight: Theme.Metrics.controlHeight)
-                        .contentShape(Rectangle())
-                }
-                .disabled(actionsDisabled)
+                Button(L10n.healthVerifyAllAction.localized(), action: onVerifyAll)
+                    .font(.caption2)
+                    .disabled(actionsDisabled)
             }
         }
     }
