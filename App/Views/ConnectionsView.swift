@@ -6,17 +6,22 @@ import SwiftUI
 // changes it. Nothing is drawn that cannot be dated.
 //
 // Top to bottom:
-//   1. ConnectHero          — the state as the largest text on the screen, the
-//                             connection it applies to, one line of dated
-//                             evidence, the scope, one labelled button, and that
-//                             connection's action menu.
-//   2. Diagnostics          — "This session" (protocol / exit / response time,
-//                             only while connected) + "Checks" (IP check / speed
-//                             test / carrier endpoints). See HealthCard.swift.
-//   2b. Auto-switch         — #460: the failover switch, moved off the Settings
-//                             tab to sit with the protocols it switches between.
-//   3. Switch to            — one row per OTHER connection: name, kind, and one
-//                             `OlcHealthChip`. TAP = connect.
+//   1. ConnectHero          — the state as the largest text on the screen, WHICH
+//                             SERVICE the traffic hides inside (#461), one line
+//                             of dated evidence, the scope, one labelled button,
+//                             and that connection's action menu.
+//   2. Switch protocol      — one row per OTHER connection: carrier · transport,
+//                             the host label under it, and one `OlcHealthChip`.
+//                             TAP = connect.
+//   3. Auto-switch          — #460: the failover switch, moved off the Settings
+//                             tab to sit with the protocols it switches between;
+//                             #461: now BELOW the list it governs.
+//   4. Diagnostics          — "This session" (protocol / exit / latency, only
+//                             while connected) + "Checks" (IP check, speed
+//                             test). See HealthCard.swift.
+//
+// #461: THAT ORDER IS THE CHANGE. Readouts may not stand between the user and
+// the switcher — see `connectionList` for the rule and where it comes from.
 //
 // #459: THE ONE STRUCTURAL DECISION — the hero's subject is NOT in the list.
 // `heroSubjectID` (the live node while a session is up, else `store.primary`) is
@@ -34,10 +39,11 @@ import SwiftUI
 // hero's subject renders as an empty `Section` rather than silently dropping its
 // quota footer.
 //
-// #459: DIAGNOSTICS MOVED ABOVE THE LIST. It describes the hero's subject, and
-// the list is a switcher, so the switcher goes last. (#457's note about demoting
-// it below the list, and about a future pushed "Check & why" screen, is retired:
-// Diagnostics is now the ONE card, having absorbed the old `HealthCard`.)
+// #461 was: "#459: DIAGNOSTICS MOVED ABOVE THE LIST … so the switcher goes
+// last." That order is inverted now — the switcher is second and Diagnostics is
+// LAST, below the auto-switch card. See `connectionList` for the rule that put
+// it there. (#457's note about a future pushed "Check & why" screen stays
+// retired: Diagnostics is the ONE card, having absorbed the old `HealthCard`.)
 //
 // #459: PULL TO REFRESH replaces the per-group "Verify all" button. See
 // `refreshEverything()`.
@@ -139,18 +145,48 @@ struct ConnectionsView: View {
         .onDisappear { health.cancelAll() }
     }
 
+    // boc #461
+    /// #461: ONE PAGE, and the rule that decides what may be on the first
+    /// screenful of it — the owner's complaint 6 ("combine the first tab into
+    /// one full screen, like IVPN; go and LOOK at how their first page is
+    /// implemented").
+    ///
+    /// IVPN's main screen is a map with a two-anchor FloatingPanel over it. The
+    /// resting anchor is `274 - bottomSafeArea` points tall and their own
+    /// `heightForRowAt` says exactly what fits in it: row 0 = the state word +
+    /// the connect switch (100 pt), row 1 = multi-hop (44 pt), row 2 = the
+    /// server row that pushes a picker (85 pt). 100 + 44 + 85 = 229, which with
+    /// the grabber IS the 274. Everything else — AntiTracker, the network row,
+    /// the PROTOCOL row, and the 230 pt IP/location block — is below the fold,
+    /// reachable only by dragging the panel to `.full`.
+    ///
+    /// We have no map and add no third-party panel library, so the honest
+    /// equivalent is a single scrolling List whose first screenful holds only
+    /// things you can act on:
+    ///
+    ///     NOTHING BELOW THE PRIMARY BUTTON ON THE FIRST SCREENFUL MAY BE A
+    ///     READOUT. Everything there is the answer, the control, or the switcher.
+    ///
+    /// #461 was: hero → Diagnostics → auto-switch → the switcher. The technical
+    /// readouts sat between the user and the list of protocols they came to
+    /// change, and the rule governing that list sat above the list itself. Not
+    /// one of the four clients read for this change (IVPN, Mullvad, Amnezia,
+    /// Windscribe) puts its readouts above its switcher; three of them hide them
+    /// behind a disclosure or below a drag. Diagnostics now starts at roughly
+    /// y = 700–900 in every configuration — one deliberate scroll, exactly where
+    /// Mullvad's chevron and IVPN's `.full` drag put it.
+    ///
     /// #459 was: `HealthCard` sat between the hero and the list, and Diagnostics
     /// sat under the list. Both reported latency; only one of them could date it.
     private var connectionList: some View {
         List {
-            Section { heroBlock }
-            diagnosticsSection
-            // #460 (instruction 26): the auto-switch control sits with the
-            // protocols it switches between, immediately above the switcher.
-            autoSwitchSection
-            connectionsSection
+            Section { heroBlock }   // 1. the answer + the one action
+            connectionsSection      // 2. the switcher
+            autoSwitchSection       // 3. the rule that governs the switcher
+            diagnosticsSection      // 4. the readouts
         }
     }
+    // eoc #461
 
     private func listChrome(_ content: some View) -> some View {
         content
@@ -280,7 +316,11 @@ struct ConnectionsView: View {
         }
     }
 
-    // MARK: 2b. Auto-switch — the setting that lives with its subject (#460)
+    // MARK: 3. Auto-switch — the setting that lives with its subject (#460)
+    //
+    // #461 was: "MARK: 2b". The four MARKs in this file read 1 / 2b / 3 / 2 and
+    // matched neither each other nor the render order; they are numbered by the
+    // order `connectionList` builds now.
 
     // boc #460
     /// #460 (instruction 26): `SettingsStore.autoFailover` had UI only in
@@ -309,7 +349,7 @@ struct ConnectionsView: View {
     }
     // eoc #460
 
-    // MARK: 3. The connection list — the switcher
+    // MARK: 2. The connection list — the switcher (#461 was: "MARK: 3")
 
     @ViewBuilder
     private var connectionsSection: some View {
@@ -324,6 +364,8 @@ struct ConnectionsView: View {
                 .olcCardRow()
             }
         } else {
+            // #461: the one-protocol install — see `onlyOneProtocolNote`.
+            onlyOneProtocolNote
             // #459 was: a `pullToRefreshHint` row — a caption instructing the
             // user to perform a standard system gesture. The gesture now does
             // considerably more, and still needs no caption.
@@ -362,6 +404,45 @@ struct ConnectionsView: View {
         let excluded = heroSubjectID
         return items.contains { $0.id != excluded }
     }
+
+    // boc #461
+    /// #461: the ONE-PROTOCOL case. `connectionsSection` only ever drew an
+    /// empty state for "no connections at all"; a user with exactly one — every
+    /// fresh install, and the owner's own second server for weeks — got a
+    /// switcher section with no header and no rows, i.e. a silent gap between
+    /// the hero and the auto-switch card that governs a choice they cannot make.
+    ///
+    /// It is ONE ROW, not a card and not a CTA button: the fix is on the Servers
+    /// tab, and this screen's convention for an action that lives elsewhere is
+    /// to NAME the screen in prose rather than draw a control that navigates
+    /// away (`ConnectActionSite.elsewhereNote`). ~54 pt.
+    @ViewBuilder
+    private var onlyOneProtocolNote: some View {
+        if !hasAnyVisibleRow {
+            Section {
+                VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
+                    Label(L10n.connectSwitcherOnlyOne.localized(),
+                          systemImage: "square.stack.3d.up.slash")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Palette.textSecondary)
+                    Text(L10n.connectSwitcherAddHint.localized())
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Palette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .olcCardRow()
+            }
+        }
+    }
+
+    /// #461: does the switcher have anything to switch TO? Read once per body
+    /// pass, not per row (this view re-evaluates ~10x/s during a speed test),
+    /// and it short-circuits on the first visible record.
+    private var hasAnyVisibleRow: Bool {
+        let excluded = heroSubjectID
+        return groups.contains { group in group.items.contains { $0.id != excluded } }
+    }
+    // eoc #461
 
     private func row(_ conn: ConnectionRecord) -> some View {
         // #459 was: also `isLive:` — the live node is the hero's subject and is
@@ -416,8 +497,10 @@ struct ConnectionsView: View {
 
     /// #459: the default group's header says what the list below it IS — a
     /// switcher for everything that is not the hero's subject. #457 had left it
-    /// blank because its own name ("Connections") repeated the tab it sits in;
-    /// "Switch to" is the same length and carries the whole structural decision.
+    /// blank because its own name ("Connections") repeated the tab it sits in.
+    /// #461: the header names the SUBJECT of the choice ("Switch protocol"), not
+    /// a bare preposition — "Switch to" ran straight into the row under it and
+    /// read as "Switch to — zaza". #461 was: `connectListOtherHeader` = "Switch to".
     ///
     /// #459 was: `groupHealthControl` — a per-group "Verify all" button plus its
     /// spinner, sitting in a section header. Pull-to-refresh replaces it, checks
@@ -468,31 +551,36 @@ struct ConnectionsView: View {
         }
     }
 
-    // MARK: 2. Diagnostics — the ONE card (defined in HealthCard.swift)
+    // MARK: 4. Diagnostics — the ONE card (defined in HealthCard.swift)
+    // #461 was: "MARK: 2", from the pass that put this above the list.
 
-    /// #459: promoted ABOVE the list (it describes the hero's subject) and merged
-    /// with the old `HealthCard`. `Diagnostics` is the name that survives.
+    /// #459: merged with the old `HealthCard` — `Diagnostics` is the name that
+    /// survives. #461: and moved to LAST, below the switcher and the rule that
+    /// governs it, because readouts may not stand between the user and the list
+    /// of protocols they came to change (`connectionList`).
     private var diagnosticsSection: some View {
         Section {
+            // #461 was: also `carrierParams: activeOlcrtcParams` and
+            // `onCarrierEndpoints:`. The carrier-endpoints tool is an action ON
+            // A CONNECTION, so it moved into `rowMenuItems` — see there.
             DiagnosticsCard(record: tunnel.connectedRecord,
                             ipCheck: ipCheck, speed: speed,
                             mode: currentMode, maskIPs: settings.maskIPs,
                             isConnected: tunnel.state.isConnected,
-                            carrierParams: activeOlcrtcParams,
-                            onSpeedTest: { runSpeedTest() },
-                            onCarrierEndpoints: { activeSheet = .carrierEndpoints($0) })
+                            onSpeedTest: { runSpeedTest() })
                 .olcCardRow()
         } header: {
             Text(L10n.diagnosticsTitle.localized())
         }
     }
 
-    /// #389: the LIVE node's params (not `store.primary`, which a row tap desyncs)
-    /// — the carrier-endpoint tool must name the host the tunnel actually holds.
-    private var activeOlcrtcParams: OlcrtcConnection? {
-        guard case .olcrtc(let p)? = tunnel.connectedRecord?.details else { return nil }
-        return p
-    }
+    // boc #461
+    // #461 was: `activeOlcrtcParams` — the live node's params, fed to
+    // `DiagnosticsCard.carrierParams`. `rowMenuItems` reads the params off the
+    // record it is already given and checks it against
+    // `tunnel.connectedRecord?.id`, so the derived property has no second
+    // reader; deleting it is what makes the carrier row a MOVE, not a copy.
+    // eoc #461
 
     /// #285: pass the LIVE carrier/transport into the speed test so the header logs
     /// the connection type and the datachannel hint can fire.
@@ -532,6 +620,7 @@ struct ConnectionsView: View {
         items.append(.action(L10n.actionQR.localized(), systemImage: "qrcode") {
             activeSheet = .qr(conn)
         })
+        carrierEndpointsItem(conn, into: &items)
         items.append(.divider)
         items.append(.action(L10n.edit.localized(), systemImage: "pencil") { activeSheet = .edit(conn) })
         // #457 was: `actionRemoveFromList` + systemImage "trash" — the string says
@@ -543,6 +632,34 @@ struct ConnectionsView: View {
         })
         return items
     }
+
+    // boc #461
+    /// #461: the carrier-endpoints tool, MOVED here from a ~90 pt Diagnostics
+    /// row (`DiagnosticsTools.carrierRow`: a title, a two-line
+    /// audience-selecting hint and a "Show" button, permanently mounted on the
+    /// app's main screen and disabled whenever nothing is connected).
+    ///
+    /// It is an ACTION ON A CONNECTION — "which addresses does THIS carrier
+    /// need let out directly?" — and it only has an answer for the live one, so
+    /// it belongs in that connection's menu. The live node is the hero's
+    /// subject, the hero carries `rowMenuItems` for its subject, and that menu
+    /// is on screen at all times: the tool is no further away than it was, and
+    /// the first screenful is 90 pt lighter.
+    ///
+    /// Gated on the LIVE record (not `store.primary`, which a row tap desyncs) —
+    /// the endpoints depend on the host the tunnel actually holds. Rows in the
+    /// switcher are never the live record, so in practice this item appears
+    /// only in the hero's menu.
+    private func carrierEndpointsItem(_ conn: ConnectionRecord, into items: inout [OlcMenuItem]) {
+        guard case .olcrtc(let params) = conn.details,
+              conn.id == tunnel.connectedRecord?.id else { return }
+        items.append(.divider)
+        items.append(.action(L10n.carrierEndpointsRowTitle.localized(),
+                             systemImage: "arrow.triangle.branch") {
+            activeSheet = .carrierEndpoints(params)
+        })
+    }
+    // eoc #461
 
     /// Reassembles the original `olcrtc://` URI for sharing / copy / QR.
     private static func uriOf(_ conn: ConnectionRecord) -> String {

@@ -608,10 +608,12 @@ enum L10n: String, CaseIterable {
     // built the feature, on the app's main screen, with nothing saying who
     // needs it. The row now opens with the question that selects its audience
     // and the sheet explains itself before the address list.
-    case carrierEndpointsRowTitle           // #460: "Using another proxy app?" — the diagnostics row
-    case carrierEndpointsRowHint            // #460: what goes wrong without it, when connected
-    case carrierEndpointsRowConnectHint     // #460: same row, nothing to show yet
-    case carrierEndpointsShowAction         // #460: "Show" — opens the sheet
+    case carrierEndpointsRowTitle           // #461: now the ⋯ menu item's title
+    // #461 was: `carrierEndpointsRowHint`, `carrierEndpointsRowConnectHint`
+    // and `carrierEndpointsShowAction`. The ~90 pt row left the Diagnostics
+    // card for the live connection's ⋯ menu, and a menu item is a label: the
+    // two-line audience hint and the "Show" button lost their last call site.
+    // The explanation survives once, inside the sheet (`carrierEndpointsLead`).
     case carrierEndpointsScreenTitle        // #460: the sheet's title, named after the action
     case carrierEndpointsLead               // #460: the "is this screen for me?" paragraph
     case carrierEndpointsFootnote           // #460: these addresses rotate
@@ -626,7 +628,7 @@ enum L10n: String, CaseIterable {
     // #460 was: `carrierEndpointsCheckAction` ("Check" — it read as "check
     // these endpoints' health", which the button does not do),
     // `carrierEndpointsConnectHint` and `carrierEndpointsReadyHint`. Replaced
-    // by the `carrierEndpointsRow*` / `carrierEndpointsShowAction` set above.
+    // by `carrierEndpointsRowTitle` above (#461: now a ⋯ menu item).
     case carrierEndpointCopyAll             // "Copy host & IPs"
 
     // MARK: #359 — accessibility for the hero connect toggle + icon toolbar buttons
@@ -901,21 +903,31 @@ enum L10n: String, CaseIterable {
     // MARK: #460 Screenshot round 2–4
     // The screen printed two numbers for one connection — 1109 ms in red on the
     // Diagnostics card, 133 ms on a connection's chip — and called both "the
-    // latency" (findings 2 / 15). They are different measurements: the card
-    // opens a whole new connection through the live tunnel and times the
-    // answer, while a connection check times a round-trip on a connection that
-    // is already open. Neither number is wrong; the label was. The card's row
-    // is renamed and carries the reconciliation, printed at the one place the
-    // two figures sit near each other.
-    case diagResponseLabel                  // "Response time" — was `healthLatencyLabel`
-    case diagResponseNote                   // why this figure is larger than a connection's
-    // The hero is the most prominent place the app prints a country, so it also
-    // says where that country came from.
-    case heroExitSourceNote
+    // latency" (findings 2 / 15). #460 kept both measurements and explained the
+    // gap in a 250-character note.
+    // #461: the owner did not want the explanation, he wanted the numbers to
+    // agree. Both sides now measure the same way — best of several round-trips
+    // on one kept-alive connection — so the note has nothing left to reconcile
+    // and the row is simply "Latency", the word the chips always used.
+    // #461 was: `diagResponseNote`.
+    case diagResponseLabel                  // "Latency" — was `healthLatencyLabel`
+    // #461 was: `heroExitSourceNote` — a whole sentence of provenance under the
+    // hero's country line. The hero states the fact; the Diagnostics card's
+    // `diagExitNote` still says where the country came from, once.
     // #460 / instruction 26: the auto-switch control moved from Settings onto
     // the Connections screen, above the protocols it switches between. Short
     // enough for a card — the long Settings sentence stayed behind.
     case connectAutoSwitchHint
+
+    // MARK: #461 Screenshot round 5 — one page, protocol first
+    // A server with exactly one installed protocol produced a switcher section
+    // with a header and no rows — a silent gap between the hero and the
+    // auto-switch card that governs a choice the user cannot make. The row
+    // states that fact and names the screen that fixes it, following this
+    // screen's rule of naming a place rather than drawing a control that
+    // navigates away.
+    case connectSwitcherOnlyOne             // "Only one protocol on this server"
+    case connectSwitcherAddHint             // where to install a second one, and why
 }
 
 extension L10n {

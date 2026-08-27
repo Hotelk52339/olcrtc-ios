@@ -22,7 +22,11 @@ final class DisplayNameTests: XCTestCase {
         defer { SettingsStore.shared.language = saved }
 
         SettingsStore.shared.language = "ru"
-        XCTAssertEqual(CarrierTransportMatrix.carrierLabel("telemost"), "Телемост")
+        // #461: the carrier is named by its SERVICE, so the label gained its
+        // vendor. #461 was: «Телемост» — renamed with `L10n.carrierTelemost`
+        // («Яндекс Телемост» / "Yandex Telemost") when the Connect tab started
+        // leading with the carrier instead of the server label.
+        XCTAssertEqual(CarrierTransportMatrix.carrierLabel("telemost"), "Яндекс Телемост")
         // Unknown IDs pass through so a future backend still renders.
         XCTAssertEqual(CarrierTransportMatrix.carrierLabel("future"), "future")
         XCTAssertEqual(CarrierTransportMatrix.transportLabel("future"), "future")

@@ -3,7 +3,9 @@ import Foundation
 // MARK: - SpeedTest
 //
 // Measures three values against a selectable speed-test provider:
-//   - ping (TTFB, averaged across N samples, warmup discarded)
+//   - ping — #461 was: "TTFB, averaged across N samples, warmup discarded", by a
+//     method of its own. It is `LatencyProbe.measure(via:)` now, the app's ONE
+//     definition of latency, shared with the Connect tab's live readout.
 //   - download throughput
 //   - upload throughput
 //
@@ -66,7 +68,7 @@ final class SpeedTest: ObservableObject {
     @Published var lastResult: SpeedResult?
     @Published var isTesting  = false
 
-    private let pingSamples = AppConstants.SpeedTest.pingSamples
+    // #461 was: `private let pingSamples` — read by `measurePing`, which is gone.
 
     /// `carrier`/`transport` (when tunnelled) are logged in the header and drive
     /// the datachannel speed hint; the caller passes them from the active record.
@@ -93,12 +95,14 @@ final class SpeedTest: ObservableObject {
             // Serialise on the narrow pipe: parallel connections trigger
             // "remote not ready" on vp8channel. Each step tolerates its own
             // failure and still reports the others (partial results).
-            p = await measurePing(mode: mode, provider: provider)
+            // #461 was: `measurePing(mode:provider:)` — a THIRD definition of
+            // latency (mean of cold samples, a fresh session each). One probe now.
+            p = await LatencyProbe.measure(via: mode)
             d = await measureDownload(mode: mode, provider: provider)
             u = await measureUpload(mode: mode, provider: provider)
         } else {
             // Direct: parallel for speed.
-            async let ping     = measurePing(mode: mode, provider: provider)
+            async let ping     = LatencyProbe.measure(via: mode)   // #461
             async let download = measureDownload(mode: mode, provider: provider)
             async let upload   = measureUpload(mode: mode, provider: provider)
             (p, d, u) = await (ping, download, upload)
@@ -131,69 +135,52 @@ final class SpeedTest: ObservableObject {
         }
     }
 
-    // #454: a single lightweight latency sample for the Connection-health card's
-    // live readout. Same provider + ping endpoint as `run`, but ONE HEAD request
-    // (no warmup/averaging) and it never touches `isTesting`/`lastResult` — a
-    // background probe, not a user-run speed test, so it must not disturb the UI's
-    // speed-test state. Returns nil on failure ("measuring…" stays).
+    // #454: the Connect tab's live latency readout. Name, signature and callers
+    // are unchanged; it never touches `isTesting`/`lastResult` (a background
+    // probe, not a user-run speed test) and returns nil on failure.
+    //
+    // boc #461
+    // #461 was: ONE HEAD request on a BRAND-NEW `URLSession` — fresh SOCKS
+    // connect + fresh TLS handshake, no warm-up, no averaging. Most of that
+    // number was connection setup, which is why this row read ~947 ms while the
+    // per-node chips, measuring a round-trip on an already-open connection, read
+    // ~131 ms for the same server. The owner's complaint ("ping is 947 again,
+    // while somewhere else it is different") was a real defect, not a
+    // misreading: two numbers, one word.
+    //
+    // It delegates to `LatencyProbe` now — the app's single definition of
+    // latency — so this figure and the chips' figure are produced by the same
+    // METHOD. `LatencyProbe.measure` keeps the `SOCKSSession.noteTunnelActivity()`
+    // side effect this function has always had (keep-alive skips its own probe
+    // for one interval after that marker), and sets it on the FIRST successful
+    // sample rather than the only one.
     func quickPing(via mode: RouteMode) async -> Double? {
-        let provider = AppConstants.SpeedTest.provider(id: SettingsStore.shared.speedTestProviderID)
-        guard let url = URL(string: provider.pingURL()) else { return nil }
-        let timeout = mode == .tunnel ? AppConstants.SpeedTest.pingTimeoutTunnel
-                                      : AppConstants.SpeedTest.pingTimeoutDirect
-        let session = SOCKSSession.make(mode: mode, timeout: timeout)
-        defer { session.finishTasksAndInvalidate() }
-        var req = URLRequest(url: url)
-        req.httpMethod = "HEAD"
-        let start = Date()
-        do {
-            _ = try await session.data(for: req)
-            // A successful tunnel probe IS activity — mark it so keep-alive skips
-            // its own redundant probe this interval (same as the IP/speed paths).
-            if mode == .tunnel { SOCKSSession.noteTunnelActivity() }
-            return Date().timeIntervalSince(start) * 1000
-        } catch {
-            return nil
-        }
+        await LatencyProbe.measure(via: mode)
     }
+    // eoc #461
 
     // MARK: Measurements
 
-    private func measurePing(mode: RouteMode, provider: SpeedTestProvider) async -> Double? {
-        guard let url = URL(string: provider.pingURL()) else { return nil }
-        let timeout = mode == .tunnel ? AppConstants.SpeedTest.pingTimeoutTunnel
-                                      : AppConstants.SpeedTest.pingTimeoutDirect
-        var samples: [Double] = []
-        for i in 0..<pingSamples {
-            // Fresh session per sample — avoids HTTP/2 connection reuse, which
-            // causes error 310 when the tunnel is busy with download/upload.
-            let session = SOCKSSession.make(mode: mode, timeout: timeout)
-            // #445 (audit fix 9): un-invalidated URLSessions (and their delegate
-            // threads) leak until app exit — invalidate at the end of each loop
-            // iteration; `finishTasksAndInvalidate` lets the in-flight sample
-            // complete first.
-            defer { session.finishTasksAndInvalidate() }
-            let start = Date()
-            do {
-                var req = URLRequest(url: url)
-                req.httpMethod = "HEAD"
-                _ = try await session.data(for: req)
-                if i > 0 { samples.append(Date().timeIntervalSince(start) * 1000) }  // discard warmup
-            } catch {
-                // Tolerated (#285): one failed sample is skipped; we only return
-                // nil ("ping n/a") if *every* sample fails.
-                LogStore.shared.log(.diagnostics, "  ping sample \(i): n/a (\(error.localizedDescription))")
-            }
-        }
-        guard !samples.isEmpty else { return nil }
-        return samples.reduce(0, +) / Double(samples.count)
-    }
+    // boc #461
+    // #461 was: `measurePing(mode:provider:)` — `pingSamples` samples, a FRESH
+    // `URLSession` per sample (so every one paid a cold SOCKS connect and TLS
+    // handshake), sample 0 discarded, the MEAN returned. That was a THIRD
+    // definition of latency, unnamed anywhere in the UI, feeding
+    // `SpeedResult.pingMs`. `run()` calls `LatencyProbe.measure(via:)` now, so
+    // the speed test's ping, the Connect tab's live readout and the per-node
+    // chips are all the same measurement.
+    //
+    // The fresh-session-per-sample existed to dodge HTTP/2 error 310 when the
+    // tunnel is busy with a concurrent transfer. `LatencyProbe` issues its
+    // samples SEQUENTIALLY on one session, which cannot produce that, and
+    // `run()` already serialises ping -> download -> upload in `.tunnel` mode.
+    // eoc #461
 
     private func measureDownload(mode: RouteMode, provider: SpeedTestProvider) async -> Double? {
         guard let url = URL(string: provider.downloadURL(mode: mode)) else { return nil }
         let timeout = mode == .tunnel ? AppConstants.SpeedTest.xferTimeoutTunnel
                                       : AppConstants.SpeedTest.xferTimeoutDirect
-        // #445 (audit fix 9): invalidate on exit — see measurePing.
+        // #445 (audit fix 9): invalidate on exit — see LatencyProbe.
         let session = SOCKSSession.make(mode: mode, timeout: timeout)
         defer { session.finishTasksAndInvalidate() }
         do {
@@ -231,7 +218,7 @@ final class SpeedTest: ObservableObject {
         req.httpMethod = "POST"
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
-        // #445 (audit fix 9): invalidate on exit — see measurePing.
+        // #445 (audit fix 9): invalidate on exit — see LatencyProbe.
         let session = SOCKSSession.make(mode: mode, timeout: timeout)
         defer { session.finishTasksAndInvalidate() }
         do {
@@ -243,5 +230,79 @@ final class SpeedTest: ObservableObject {
             LogStore.shared.log(.diagnostics, "  upload: n/a (\(error.localizedDescription))")
             return nil
         }
+    }
+}
+
+// MARK: - LatencyProbe (#461)
+//
+// #461: THE app's definition of latency, in one place.
+//
+// PARTITION NOTE: the design calls for this in its own file,
+// `App/Services/LatencyProbe.swift`. This change may not create files, so it
+// lives here, beside its only two callers. Move it out on the next
+// `xcodegen generate` pass (`sources: - path: App` is a directory glob, so no
+// project.yml edit is involved) — nothing about it is coupled to `SpeedTest`.
+//
+// THE PROBLEM IT SOLVES. Three functions used to measure "latency" and the two
+// that reached the screen disagreed by ~8x under one word:
+//   • `SpeedTest.quickPing` — one HEAD on a brand-new session every 8 s. Fresh
+//     SOCKS connect, fresh TLS handshake, no warm-up, no averaging. ~947 ms.
+//   • `NodeHealth.rttMs`, from the Go core's `Runtime.Ping` — a warm-up GET,
+//     then three GETs over ONE kept-alive connection, BEST returned. ~131 ms.
+//   • `SpeedTest.measurePing` — mean of cold samples, fresh session each. A
+//     third method, never named in the UI, feeding `SpeedResult.pingMs`.
+//
+// This is method (2), reproduced over URLSession: one warm-up request that pays
+// the SOCKS connect and the TLS handshake, then N samples over the SAME
+// kept-alive session, and the BEST of them. Connection setup is EXCLUDED — the
+// way every other round-trip figure in this app already excludes it — so the
+// two numbers are comparable by construction rather than by explanation.
+//
+// WHAT IS LOST, stated plainly: setup cost is no longer displayed anywhere. It
+// is paid once per connection, is already visible as the `.connecting` elapsed
+// counter in the hero, and was never comparable to anything else printed here.
+//
+// A nonisolated `enum` of statics — the repo's stateless-service shape
+// (`SOCKSSession`, `NetPing`, `PortAvailability`) — so it can run off the main
+// actor and be called from the speed test and from the Connect tab's loop
+// alike. It logs nothing: it runs every 8 s while the Connect tab is open, and
+// a log line per sample would be the noisiest writer in the app.
+
+enum LatencyProbe {
+
+    /// One latency reading through `mode`, in milliseconds. nil = every sample
+    /// failed (one bad sample is skipped, not fatal — #285's tolerance).
+    static func measure(via mode: RouteMode) async -> Double? {
+        let provider = AppConstants.SpeedTest.provider(id: SettingsStore.shared.speedTestProviderID)
+        guard let url = URL(string: provider.pingURL()) else { return nil }
+        let timeout = mode == .tunnel ? AppConstants.SpeedTest.pingTimeoutTunnel
+                                      : AppConstants.SpeedTest.pingTimeoutDirect
+        // ONE session for every sample — that is what makes samples 1…n
+        // keep-alive, and it is the whole difference from what this replaced.
+        let session = SOCKSSession.make(mode: mode, timeout: timeout)
+        defer { session.finishTasksAndInvalidate() }
+        var req = URLRequest(url: url)
+        req.httpMethod = "HEAD"
+        var best: Double?
+        // `pingSamples` is already 4 and already documents "first sample is
+        // discarded as warmup" — warm-up + 3 timed samples. No constant changes.
+        for i in 0..<AppConstants.SpeedTest.pingSamples {
+            let start = Date()
+            do {
+                _ = try await session.data(for: req)
+                // #461: THE SIDE EFFECT THAT MUST SURVIVE. Keep-alive skips its
+                // own HTTP probe for one interval after this marker, and the old
+                // `quickPing` set it on its single request. Set on the FIRST
+                // success — including the warm-up, which is a real transfer
+                // through the tunnel — not only at the end.
+                if mode == .tunnel { SOCKSSession.noteTunnelActivity() }
+                guard i > 0 else { continue }          // the warm-up is not a sample
+                let ms = Date().timeIntervalSince(start) * 1000
+                best = min(best ?? ms, ms)
+            } catch {
+                continue
+            }
+        }
+        return best
     }
 }

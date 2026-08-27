@@ -29,9 +29,16 @@ import SwiftUI
 //    the row is live AND a probe verified it inside the freshness window.
 
 struct ProtocolRowView: View {
-    /// Carrier display name ("Telemost").
+    /// #461: the SERVICE this protocol hides the traffic inside — the row's
+    /// identity ("Yandex Telemost"), composed by `ServersView.rowView` from the
+    /// same `CarrierTransportMatrix` labels the Connect tab reads through
+    /// `ConnectionNaming.service(_:)`.
+    /// #461 was: "Carrier display name ("Telemost")".
     let title: String
-    /// Transport display name ("vp8channel").
+    /// #461: HOW it is carried, already a display LABEL ("VP8"), not the raw
+    /// transport id. It leads `subtitleText`, one line under the service.
+    /// #461 was: "Transport display name ("vp8channel")" — the doc named the id
+    /// while the call site has always passed `transportLabel(_:)`.
     let transport: String
     /// The srv.sh-installed protocol — the one whose container anchors the deploy dir.
     let isPrimary: Bool
@@ -146,10 +153,23 @@ struct ProtocolRowView: View {
             Text(title)
                 .font(.subheadline.weight(isLive ? .semibold : .regular))
                 .foregroundStyle(Theme.Palette.textPrimary)
-                // #460: a NAME may lose its tail to an ellipsis; a status word
-                // may not be cut in half. Carrier names are 5-8 characters, so
-                // this is a backstop rather than something anyone will see.
-                .lineLimit(1)
+                // boc #461: TWO lines, not one.
+                // #460 was: `.lineLimit(1)`, on the stated premise that "carrier
+                // names are 5-8 characters, so this is a backstop rather than
+                // something anyone will see". That premise expired the moment
+                // the carrier became its full service name ("Yandex Telemost",
+                // «Яндекс Телемост») — at one line it is the very word the owner
+                // asked to see, ellipsised, in a labels column that is ~105pt
+                // once the evidence chip and the fixed 44pt menu have taken
+                // theirs.
+                // What #460 actually guaranteed was never "one line", it was
+                // "never break a WORD" (finding 16, "Connec-ted"). Two lines
+                // keep that guarantee intact: the break falls on the space
+                // between the two words, and each of them is far narrower than
+                // the column at every non-accessibility text size — and at
+                // accessibility sizes `stacked` gives the labels the whole row.
+                .lineLimit(2)
+                // eoc #461
             if isLive { liveBadge }
             Text(subtitleText)
                 .font(.caption2)
@@ -194,15 +214,19 @@ struct ProtocolRowView: View {
 #if DEBUG
 #Preview("Protocol row — Dark") {
     VStack(spacing: 8) {
-        ProtocolRowView(title: "Telemost", transport: "vp8channel",
+        // #461: the real strings the call site passes — service labels (the
+        // longest of them is the one this row has to survive) over transport
+        // LABELS, not raw ids. A preview that lies about its inputs cannot show
+        // the width pressure the row is built for.
+        ProtocolRowView(title: "Yandex Telemost", transport: "VP8",
                         isPrimary: true, isLive: true, isRunningOnServer: true,
                         health: .verified(ms: 48, age: 120),
                         menuDisabled: false, menuItems: [], onVerify: {})
-        ProtocolRowView(title: "Jitsi", transport: "datachannel",
+        ProtocolRowView(title: "Jitsi", transport: "DataChannel",
                         isPrimary: false, isLive: false, isRunningOnServer: false,
                         health: .never,
                         menuDisabled: false, menuItems: [], onVerify: {})
-        ProtocolRowView(title: "WBStream", transport: "seichannel",
+        ProtocolRowView(title: "WB Stream", transport: "SEI",
                         isPrimary: false, isLive: false, isRunningOnServer: true,
                         health: .broken(.keyMismatch, age: 300),
                         menuDisabled: false, menuItems: [], onVerify: {})

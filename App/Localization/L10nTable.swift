@@ -45,7 +45,8 @@ enum L10nTable {
         .tunnelModeVPN:             "VPN",
         .configModeSectionHeader:   "Tunnel mode",
         .configVPNUnavailableFooter: "VPN mode is unavailable on this install:",
-        .vpnVideochannelUnsupported: "The videochannel transport is not supported in VPN mode. Switch the connection to another transport, or use proxy mode.",
+        // #461 was: "videochannel" — the raw id. Every picker names it "Video".
+        .vpnVideochannelUnsupported: "The Video transport is not supported in VPN mode. Switch the connection to another transport, or use proxy mode.",
         .vpnDisconnected:           "VPN tunnel disconnected",
         .vpnSettingsEntryName:      "OlcRTC",
         .vpnCapabilityUnavailable_fmt: "The system rejected the VPN configuration (%@). This happens when VPN access was declined, or when the app was signed with a free Apple ID — the Network Extension entitlement requires a paid Apple Developer team. Proxy mode still works.",
@@ -70,7 +71,10 @@ enum L10nTable {
         .healthLatencyMs_fmt:        "%d ms",
         .healthLocationUnknown:      "Location unknown",
         // #455: premium redesign editorial additions
-        .carrierChoiceFooter:        "Telemost is the hardest to block (vp8channel only). Jitsi with datachannel is the fastest and most stable. WBStream needs an account token.",
+        // #461 was: "Telemost … (vp8channel only) … datachannel … WBStream" —
+        // three raw ids and a carrier spelled unlike its own label, in the
+        // footer under the picker that shows all four as words.
+        .carrierChoiceFooter:        "Yandex Telemost is the hardest to block (VP8 only). Jitsi with DataChannel is the fastest and most stable. WB Stream needs an account token.",
         // #460 was: `.configReliabilityHeader` ("Reliability") — its section
         // held only the auto-switch toggle, which moved to Connections.
         .unitSeconds:                "s",
@@ -165,7 +169,8 @@ enum L10nTable {
         .seiBatchLabel:              "Batch size",
         .seiFragLabel:               "Fragment size",
         .seiAckLabel:                "ACK timeout (ms)",
-        .seiParamsHint:              "Tuning for the SEI channel. Sent only when the transport is seichannel; stored either way.",
+        // #461 was: "seichannel" — the id; the picker calls this one "SEI".
+        .seiParamsHint:              "Tuning for the SEI channel. Sent only when the transport is SEI; stored either way.",
 
         // ServersView
         // #457 was: "VPS list" — the screen title disagreed with its own tab and
@@ -319,9 +324,11 @@ enum L10nTable {
         .earlyRestartWedgeLabel:     "Auto-restart a stuck session",
         .wedgeRestartLog:            "⚠ Session appears wedged — restarting early",
         .wedgeRestartReason:         "stuck session",
-        .wbTokenHeader:              "wbstream token",
+        // #461 was: "wbstream token" — the id, not the label the picker shows.
+        .wbTokenHeader:              "WB Stream token",
         .wbTokenFieldLabel:          "Account token (optional)",
-        .wbTokenFooter:              "Paste the wbstream account token. Leave empty for an anonymous guest; a token is required for datachannel.",
+        // #461 was: "wbstream" / "datachannel" — raw ids.
+        .wbTokenFooter:              "Paste the WB Stream account token. Leave empty for an anonymous guest; a token is required for DataChannel.",
 
         // SettingsView
         .settingsTitle:              "Settings",
@@ -352,7 +359,9 @@ enum L10nTable {
         // #458 was: "…Reconfigure the server to datachannel…" — capital-R
         // "Reconfigure" reads as a control name, and no control carries it; the
         // item is `actionChangeRoomTransport`, on the server card.
-        .speedDatachannelHint:       "Tip: video transports (vp8channel/sei/video) trade bandwidth for looking like a call. For more speed, switch the server's transport to datachannel with «Change room / transport» on the Servers tab, where your network allows it.",
+        // #461 was: "(vp8channel/sei/video)" and "to datachannel" — raw ids in
+        // advice about a picker that spells all four out.
+        .speedDatachannelHint:       "Tip: the video transports (VP8, SEI, Video) trade bandwidth for looking like a call. For more speed, switch the server's transport to DataChannel with «Change room / transport» on the Servers tab, where your network allows it.",
         .settingsPortLabel:          "Port",
         .checkPortAction:            "Check port",
         .randomPortAction:           "Random",
@@ -371,7 +380,8 @@ enum L10nTable {
         // "wbstream" in the replacement sentence. `CarrierTransportMatrix`
         // displays those two as "VP8" and "WB Stream" in every picker, so
         // the note now uses the words the user was shown when they chose.
-        .vp8Note:                    "These two matter only when the server sends its traffic as video — the VP8 transport, which is what WB Stream uses by default. More frames and bigger batches move more data, but look less like an ordinary video call. The defaults, 60 and 64, are tuned for Telemost.",
+        // #461: "Telemost" -> "Yandex Telemost", to match the carrier label.
+        .vp8Note:                    "These two matter only when the server sends its traffic as video — the VP8 transport, which is what WB Stream uses by default. More frames and bigger batches move more data, but look less like an ordinary video call. The defaults, 60 and 64, are tuned for Yandex Telemost.",
         .startTimeoutLabel:          "Ready timeout",
         .startTimeoutNote:           "How long to wait for a connection to come up before giving up and reporting a failure.",
         .autoConnectOnLaunchLabel:   "Auto-connect on launch",
@@ -436,7 +446,9 @@ enum L10nTable {
         .jitsiServerHeader:          "Jitsi server",
         .jitsiServerFooter:          "Shared public instance — point at your own Jitsi for reliability and to avoid overloading it.",
         .seiSettingsHeader:          "SEI Settings",
-        .seiSettingsFooter:          "SEI params sent to srv.sh for seichannel.",
+        // #461 was: "SEI params sent to srv.sh for seichannel." — a script
+        // filename and a raw transport id in a footer the user reads.
+        .seiSettingsFooter:          "SEI parameters, sent to the server on install. Used only by the SEI transport.",
         .actionQR:                   "QR",
 
         // Status banner
@@ -588,7 +600,10 @@ enum L10nTable {
         .cameraUnavailableBody:      "QR scanning requires a physical device with a camera.",
         .sectionCarrier:             "Carrier",
         .labelTransport:             "Transport",
-        .carrierTelemost:            "Telemost",
+        // #461 was: "Telemost". Complaint 1 is that the hero must name the
+        // service the traffic hides inside; that service is a Yandex product
+        // and "Telemost" alone reads as a generic word.
+        .carrierTelemost:            "Yandex Telemost",
         .carrierWbstream:            "WB Stream",
         .carrierJitsi:               "Jitsi",
         .transportDatachannel:       "DataChannel",
@@ -649,10 +664,11 @@ enum L10nTable {
         // someone who already knew what it meant, on the main screen, with
         // nothing saying who needs it. The row now opens with the question that
         // selects its audience; the sheet explains itself before the list.
+        // #461: this is a ⋯ menu item on the live connection now, not a ~90 pt
+        // card row, so it is a label. `carrierEndpointsRowHint`,
+        // `carrierEndpointsRowConnectHint` and `carrierEndpointsShowAction`
+        // went with the row; `carrierEndpointsLead` still explains the sheet.
         .carrierEndpointsRowTitle:   "Using another proxy app?",
-        .carrierEndpointsRowHint:    "A second proxy or VPN app that routes everything on this phone will also capture the video call olcrtc itself rides on, and the tunnel stalls. This lists the addresses to let out directly.",
-        .carrierEndpointsRowConnectHint: "Connect first — the addresses depend on the server in use.",
-        .carrierEndpointsShowAction: "Show",
         .carrierEndpointsScreenTitle: "Send these direct",
         // "DIRECT" stays capitalised: it is the literal name of the rule in the
         // proxy apps this screen exists for, and the word the reader must find.
@@ -909,7 +925,9 @@ enum L10nTable {
         .heroEvidenceStarting_fmt:   "starting… %d s",
         .heroEvidenceUnverified:     "connected · no data checked through it yet",
         .heroEvidenceNoNetwork:      "holding the session until the network returns",
-        .heroScopeProxy_fmt:         "Proxy · only apps you point at 127.0.0.1:%@",
+        // #461 was: "Proxy · only apps you point at 127.0.0.1:%@" — a sentence
+        // where a caption was wanted. Same %@ (the bound port).
+        .heroScopeProxy_fmt:         "Proxy · apps pointed at 127.0.0.1:%@",
         .heroScopeVPN:               "VPN · everything on this device",
 
         // #457/#459: connection rows. The live connection is the hero's subject
@@ -943,7 +961,10 @@ enum L10nTable {
         // list under it is a switcher, Health and Diagnostics are one card, and
         // the server card's thirteen-item menu is five safe items plus a pushed
         // "Manage server" screen.
-        .connectListOtherHeader:     "Switch to",
+        // #461 was: "Switch to" — complaint 3: the header ran into the server
+        // label under it and read "Switch to — zaza". The protocol is the
+        // subject on this screen, so the header says so and the row supplies it.
+        .connectListOtherHeader:     "Switch protocol",
         .diagSessionHeader:          "This session",
         .diagToolsHeader:            "Checks",
         // #459: the owner asked, of the exit country and IP, "where do they even
@@ -955,13 +976,14 @@ enum L10nTable {
         // answered — the city and the country are read off that one answer.
         .diagExitNote:               "Your exit IP address, looked up with ipinfo.io through the tunnel — the city and country come from that same answer.",
         // #460 (findings 2 / 15): the screen showed 1109 ms in red here and
-        // 133 ms on a connection's chip, and called both "the latency". This
-        // row times a WHOLE fresh request — open a connection through the live
-        // tunnel, then wait for the answer — so most of it is setup, and it is
-        // several times a connection check's round-trip by construction. The
-        // reconciliation is printed at the one place the two numbers meet.
-        .diagResponseLabel:          "Response time",
-        .diagResponseNote:           "Time to open a fresh connection through the live tunnel and get an answer. The per-connection checks elsewhere in the app time a round-trip on a connection that is already open, so their numbers are much smaller. The two are not comparable.",
+        // 133 ms on a connection's chip, called both "the latency", and #460
+        // explained the gap in a 250-character note.
+        // #461: the owner asked twice for the numbers to agree, not for the
+        // difference to be explained. Both sides now take the best of several
+        // round-trips on one kept-alive connection, so the figures match, the
+        // note is gone, and this row uses the same word as the chips.
+        // #461 was: "Response time" and `.diagResponseNote`.
+        .diagResponseLabel:          "Latency",
         // The count is enabled sources, which the user can set to 1 — hence the
         // colon rather than "%d services", which would read "1 services".
         .diagIPSourceHint_fmt:       "Asks public services for your address, over the current route. Sources: %d.",
@@ -979,13 +1001,20 @@ enum L10nTable {
         .vpsAdvancedRemoveHostFooter:  "Forgets this server in the app. Nothing on the machine itself changes.",
 
         // #460: screenshot rounds 2–4.
-        // The hero is the most prominent place the app prints a country, so it
-        // is also where it has to say where that country came from.
-        .heroExitSourceNote:         "Where your traffic comes out — from a location lookup of the exit IP, made through the tunnel.",
+        // #461 was: `.heroExitSourceNote` — a full sentence of provenance under
+        // the hero's country line, on the screen the owner asked to fit in one
+        // page. `diagExitNote` says the same thing once, on the card.
         // Instruction 26: auto-switch moved off Settings and onto the screen
         // holding the protocols it switches between, so its explainer had to
         // shrink from a settings paragraph to one line on a card.
         .connectAutoSwitchHint:      "If the protocol in use stops answering, switch to another one on the same server.",
+
+        // #461: with one installed protocol the switcher had a header and no
+        // rows. The hint names the screen that fixes it — this screen never
+        // draws a control that navigates away — and says why a second one is
+        // worth installing, which is the whole point of the switcher.
+        .connectSwitcherOnlyOne:     "Only one protocol on this server",
+        .connectSwitcherAddHint:     "Install a second one on the Servers tab, so you can switch when one stops working.",
     ]
 
     // MARK: Russian
@@ -1015,7 +1044,8 @@ enum L10nTable {
         .tunnelModeVPN:             "VPN",
         .configModeSectionHeader:   "Режим туннеля",
         .configVPNUnavailableFooter: "Режим VPN недоступен в этой установке:",
-        .vpnVideochannelUnsupported: "Транспорт videochannel не поддерживается в режиме VPN. Переключите подключение на другой транспорт или используйте режим прокси.",
+        // #461 было: «videochannel» — сырой id; во всех списках он «Видео».
+        .vpnVideochannelUnsupported: "Транспорт «Видео» не поддерживается в режиме VPN. Переключите подключение на другой транспорт или используйте режим прокси.",
         .vpnDisconnected:           "VPN-туннель отключён",
         .vpnSettingsEntryName:      "OlcRTC",
         .vpnCapabilityUnavailable_fmt: "Система отклонила конфигурацию VPN (%@). Так бывает, если доступ к VPN был отклонён или приложение подписано бесплатным Apple ID — для Network Extension нужна платная команда Apple Developer. Режим прокси продолжает работать.",
@@ -1041,7 +1071,9 @@ enum L10nTable {
         .healthLatencyMs_fmt:        "%d мс",
         .healthLocationUnknown:      "Местоположение неизвестно",
         // #455: premium redesign editorial additions
-        .carrierChoiceFooter:        "Telemost сложнее всего заблокировать (только vp8channel). Jitsi с datachannel — самый быстрый и стабильный. WBStream требует токен аккаунта.",
+        // #461 было: «Telemost … (только vp8channel) … datachannel … WBStream» —
+        // три сырых id и имя оператора, написанное не так, как в самом списке.
+        .carrierChoiceFooter:        "«Яндекс Телемост» сложнее всего заблокировать (только VP8). Jitsi с DataChannel — самый быстрый и стабильный. WB Stream требует токен аккаунта.",
         // #460 было: `.configReliabilityHeader` («Надёжность») — в этом разделе
         // настроек остался только переключатель авто-переключения, а он переехал.
         .unitSeconds:                "с",
@@ -1132,7 +1164,8 @@ enum L10nTable {
         .seiBatchLabel:              "Размер пакета",
         .seiFragLabel:               "Размер фрагмента",
         .seiAckLabel:                "Таймаут ACK (мс)",
-        .seiParamsHint:              "Настройки SEI-канала. Отправляются только при транспорте seichannel, но сохраняются в любом случае.",
+        // #461 было: «seichannel» — id; в списке этот транспорт называется «SEI».
+        .seiParamsHint:              "Настройки SEI-канала. Отправляются только при транспорте SEI, но сохраняются в любом случае.",
 
         // ServersView
         // #457 was: «Список VPS» — заголовок экрана расходился с названием
@@ -1282,9 +1315,11 @@ enum L10nTable {
         .earlyRestartWedgeLabel:     "Автоперезапуск зависшей сессии",
         .wedgeRestartLog:            "⚠ Похоже, сессия зависла — ранний перезапуск",
         .wedgeRestartReason:         "зависшая сессия",
-        .wbTokenHeader:              "Токен wbstream",
+        // #461 было: «Токен wbstream» — id вместо подписи из списка.
+        .wbTokenHeader:              "Токен WB Stream",
         .wbTokenFieldLabel:          "Токен аккаунта (необязательно)",
-        .wbTokenFooter:              "Вставьте токен аккаунта wbstream. Пусто — анонимный гость; для datachannel токен обязателен.",
+        // #461 было: «wbstream» / «datachannel» — сырые id.
+        .wbTokenFooter:              "Вставьте токен аккаунта WB Stream. Пусто — анонимный гость; для DataChannel токен обязателен.",
 
         // SettingsView
         .settingsTitle:              "Настройки",
@@ -1311,7 +1346,9 @@ enum L10nTable {
         .speedAllFailed:             "Все измерения не удались",
         // #458: name the control that does it («Сменить комнату / транспорт»),
         // matching the English entry.
-        .speedDatachannelHint:       "Подсказка: видео-транспорты (vp8channel/sei/video) жертвуют скоростью ради вида видеозвонка. Для большей скорости смените транспорт сервера на datachannel через «Сменить комнату / транспорт» на вкладке «Серверы» там, где это позволяет сеть.",
+        // #461 было: «(vp8channel/sei/video)» и «на datachannel» — сырые id в
+        // совете про список, который пишет все четыре словами.
+        .speedDatachannelHint:       "Подсказка: видео-транспорты (VP8, SEI, Видео) жертвуют скоростью ради вида видеозвонка. Для большей скорости смените транспорт сервера на DataChannel через «Сменить комнату / транспорт» на вкладке «Серверы» там, где это позволяет сеть.",
         .settingsPortLabel:          "Порт",
         .checkPortAction:            "Проверить порт",
         .randomPortAction:           "Случайный",
@@ -1328,7 +1365,8 @@ enum L10nTable {
         // строка конфига в подписи к настройке. Само слово «vp8channel»
         // остаётся — это транспорт, который пользователь выбирает на вкладке
         // «Серверы», а не внутреннее имя.
-        .vp8Note:                    "Эти два параметра важны, только когда сервер передаёт трафик видео — транспорт VP8, который WB Stream использует по умолчанию. Больше кадров и крупнее пачки — больше данных, но меньше похоже на обычный видеозвонок. Значения по умолчанию, 60 и 64, подобраны для Telemost.",
+        // #461: «для Telemost» -> «под «Яндекс Телемост»» — как в списке.
+        .vp8Note:                    "Эти два параметра важны, только когда сервер передаёт трафик видео — транспорт VP8, который WB Stream использует по умолчанию. Больше кадров и крупнее пачки — больше данных, но меньше похоже на обычный видеозвонок. Значения по умолчанию, 60 и 64, подобраны под «Яндекс Телемост».",
         .startTimeoutLabel:          "Таймаут готовности",
         .startTimeoutNote:           "Сколько ждать, пока подключение поднимется, прежде чем прекратить попытку и сообщить об ошибке.",
         .autoConnectOnLaunchLabel:   "Авто-подключение при запуске",
@@ -1387,7 +1425,9 @@ enum L10nTable {
         .jitsiServerHeader:          "Сервер Jitsi",
         .jitsiServerFooter:          "Общий публичный сервер — укажите свой Jitsi для надёжности, чтобы не перегружать чужой.",
         .seiSettingsHeader:          "SEI-настройки",
-        .seiSettingsFooter:          "SEI-параметры передаются в srv.sh для seichannel.",
+        // #461 было: «передаются в srv.sh для seichannel» — имя скрипта и
+        // сырой id транспорта в подписи, которую читает пользователь.
+        .seiSettingsFooter:          "SEI-параметры, передаются на сервер при установке. Нужны только транспорту SEI.",
         .actionQR:                   "QR",
 
         // Status banner
@@ -1539,7 +1579,9 @@ enum L10nTable {
         .cameraUnavailableBody:      "Для сканирования QR нужно физическое устройство с камерой.",
         .sectionCarrier:             "Оператор",
         .labelTransport:             "Транспорт",
-        .carrierTelemost:            "Телемост",
+        // #461 было: «Телемост» — теперь на главном экране это ИМЯ сервиса,
+        // внутри которого прячется трафик, а у сервиса есть бренд.
+        .carrierTelemost:            "Яндекс Телемост",
         .carrierWbstream:            "WB Stream",
         .carrierJitsi:               "Jitsi",
         .transportDatachannel:       "DataChannel",
@@ -1598,10 +1640,12 @@ enum L10nTable {
         // экране и без единого слова о том, кому это вообще нужно. Строка
         // начинается с вопроса, который отбирает читателя, а экран объясняет
         // себя до списка адресов.
+        // #461: теперь это пункт меню ⋯ у активного подключения, а не строка
+        // карточки на ~90 pt, — значит, просто подпись. `carrierEndpointsRowHint`,
+        // `carrierEndpointsRowConnectHint` и `carrierEndpointsShowAction` ушли
+        // вместе со строкой; объяснение осталось в самом экране
+        // (`carrierEndpointsLead`).
         .carrierEndpointsRowTitle:   "Пользуешься другим прокси-приложением?",
-        .carrierEndpointsRowHint:    "Второе прокси- или VPN-приложение, которое заворачивает весь трафик телефона, перехватит и сам видеозвонок, внутри которого работает olcrtc, — туннель встанет. Здесь адреса, которые надо выпускать напрямую.",
-        .carrierEndpointsRowConnectHint: "Сначала подключись — адреса зависят от используемого сервера.",
-        .carrierEndpointsShowAction: "Показать",
         .carrierEndpointsScreenTitle: "Отправлять напрямую",
         // «DIRECT» остаётся латиницей и заглавными: так это правило называется
         // в самих прокси-приложениях, и именно это слово надо там найти.
@@ -1854,7 +1898,9 @@ enum L10nTable {
         .heroEvidenceStarting_fmt:   "запуск… %d с",
         .heroEvidenceUnverified:     "подключено · данные через него ещё не проверяли",
         .heroEvidenceNoNetwork:      "держим сессию, пока не вернётся сеть",
-        .heroScopeProxy_fmt:         "Прокси · только приложения, которые смотрят на 127.0.0.1:%@",
+        // #461 было: «Прокси · только приложения, которые смотрят на …» —
+        // предложение там, где нужна подпись. Тот же один %@ (порт).
+        .heroScopeProxy_fmt:         "Прокси · приложения на 127.0.0.1:%@",
         .heroScopeVPN:               "VPN · весь трафик устройства",
 
         // #457/#459: строки подключений. Активное подключение — это герой
@@ -1887,7 +1933,10 @@ enum L10nTable {
         // список под ним — переключатель, «Здоровье» и «Диагностика» слились в
         // одну карточку, а меню из тринадцати пунктов на карточке сервера стало
         // пятью безопасными пунктами плюс экран «Управление сервером».
-        .connectListOtherHeader:     "Переключиться",
+        // #461 было: «Переключиться» — жалоба 3: заголовок сливался с меткой
+        // сервера под ним и читался как «Переключиться — zaza». Предмет этого
+        // экрана — протокол, о нём заголовок и говорит.
+        .connectListOtherHeader:     "Сменить протокол",
         .diagSessionHeader:          "Текущая сессия",
         .diagToolsHeader:            "Проверки",
         // #459: владелец спросил про страну и IP выхода — «откуда они вообще
@@ -1897,14 +1946,15 @@ enum L10nTable {
         // где они разваливались в рваный столбик. Теперь подпись во всю ширину
         // и говорит, что именно измерено, а не только кто ответил.
         .diagExitNote:               "Твой выходной IP-адрес, определён через ipinfo.io по туннелю — город и страна берутся из того же ответа.",
-        // #460 (findings 2 / 15): на экране одновременно были 1109 мс красным
-        // здесь и 133 мс на плашке подключения, и то и другое называлось
-        // «задержкой». Здесь измеряется ЦЕЛЫЙ новый запрос — открыть соединение
-        // через живой туннель и дождаться ответа, — поэтому большую часть числа
-        // занимает установка связи, и оно заведомо в разы больше, чем
-        // круговая задержка в проверке подключения.
-        .diagResponseLabel:          "Время ответа",
-        .diagResponseNote:           "Время открыть новое соединение через работающий туннель и получить ответ. Проверки отдельных подключений в других местах приложения измеряют задержку по уже открытому соединению, поэтому их числа заметно меньше. Сравнивать их с этим нельзя.",
+        // #460 (findings 2 / 15): 1109 мс красным здесь и 133 мс на плашке
+        // подключения назывались одинаково, и #460 объяснил разницу заметкой
+        // на 250 символов.
+        // #461: владелец дважды просил, чтобы числа СОВПАДАЛИ, а не чтобы ему
+        // объяснили разницу. Теперь обе стороны берут лучший из нескольких
+        // круговых замеров по одному живому соединению — заметке нечего
+        // примирять, и строка называется тем же словом, что и плашки.
+        // #461 было: «Время ответа» и `.diagResponseNote`.
+        .diagResponseLabel:          "Задержка",
         // Число — это включённые источники, их может быть и один, поэтому
         // двоеточие, а не «%d сервисов».
         // #459 (audit): «ваш» → «твой» — вся остальная таблица на «ты».
@@ -1923,12 +1973,19 @@ enum L10nTable {
         .vpsAdvancedRemoveHostFooter:  "Забывает этот сервер в приложении. На самой машине ничего не меняется.",
 
         // #460: раунды скриншотов 2–4.
-        // Главный экран — самое заметное место, где приложение печатает страну,
-        // поэтому именно здесь оно и говорит, откуда эта страна взялась.
-        .heroExitSourceNote:         "Где твой трафик выходит наружу — по геолокации выходного IP, запрошенной через туннель.",
+        // #461 было: `.heroExitSourceNote` — целое предложение о происхождении
+        // страны под строкой героя, на экране, который просили уместить в одну
+        // страницу. То же самое один раз говорит `diagExitNote` на карточке.
         // Инструкция 26: авто-переключение уехало из настроек на экран с теми
         // самыми протоколами, между которыми оно переключает, и объяснение
         // ужалось с абзаца настроек до одной строки на карточке.
         .connectAutoSwitchHint:      "Если работающий протокол перестал отвечать — переключиться на другой на том же сервере.",
+
+        // #461: при одном установленном протоколе у переключателя был заголовок
+        // и ни одной строки. Подсказка называет экран, где это чинится (этот
+        // экран не рисует кнопок, уводящих в другое место), и говорит, зачем
+        // ставить второй, — ради этого переключатель и существует.
+        .connectSwitcherOnlyOne:     "На этом сервере только один протокол",
+        .connectSwitcherAddHint:     "Установи второй на вкладке «Серверы», чтобы переключаться, когда один перестанет работать.",
     ]
 }
