@@ -10,9 +10,11 @@ import SwiftUI
 //                             connection it applies to, one line of dated
 //                             evidence, the scope, one labelled button, and that
 //                             connection's action menu.
-//   2. Diagnostics          — "This session" (protocol / exit / latency, only
-//                             while connected) + "Checks" (IP check / speed test
-//                             / carrier endpoints). See HealthCard.swift.
+//   2. Diagnostics          — "This session" (protocol / exit / response time,
+//                             only while connected) + "Checks" (IP check / speed
+//                             test / carrier endpoints). See HealthCard.swift.
+//   2b. Auto-switch         — #460: the failover switch, moved off the Settings
+//                             tab to sit with the protocols it switches between.
 //   3. Switch to            — one row per OTHER connection: name, kind, and one
 //                             `OlcHealthChip`. TAP = connect.
 //
@@ -123,7 +125,10 @@ struct ConnectionsView: View {
         // modifiers on a `List` whose content is four dynamic sections is exactly
         // how it happened.
         NavigationStack {
-            listWiring(listChrome(connectionList))
+            // #460: a third wrapper (`listBars`) rather than a longer chain —
+            // this file has blown the SwiftUI type-checker's budget twice and
+            // the bar fixes are four modifiers on their own.
+            listWiring(listBars(listChrome(connectionList)))
         }
         // #459: the manual equivalent of the pull, on entry — governed by the
         // "Check on opening" switch. The contract, stated once: THE TOGGLE
@@ -140,6 +145,9 @@ struct ConnectionsView: View {
         List {
             Section { heroBlock }
             diagnosticsSection
+            // #460 (instruction 26): the auto-switch control sits with the
+            // protocols it switches between, immediately above the switcher.
+            autoSwitchSection
             connectionsSection
         }
     }
@@ -152,6 +160,37 @@ struct ConnectionsView: View {
             // all" button in every section header.
             .refreshable { await refreshEverything() }
     }
+
+    // boc #460
+    /// #460 (findings 1 and 4): BOTH SYSTEM BARS WERE DRAWING OVER THE CONTENT.
+    ///
+    /// `.scrollContentBackground(.hidden)` + a custom `Theme.Palette.bg` leaves
+    /// the navigation bar and the tab bar on their transparent scroll-edge
+    /// appearance, so a scrolled `List` does not disappear behind them — it
+    /// shows THROUGH them. On the owner's phone that clipped the top of the
+    /// hero's state word (the largest, most important text in the app) under the
+    /// navigation bar, and cut the last row's badge in half under the tab bar.
+    ///
+    /// Forcing both bars to draw their background is the fix: content that
+    /// scrolls under a bar is now covered by it, cleanly. Visibility only — no
+    /// style argument — so each bar keeps the SYSTEM material it would have
+    /// shown anyway; a flat `Palette.bg` fill here would make this tab's bars
+    /// look unlike every other tab's.
+    ///
+    /// The bottom content margin braces that belt: the last card gets the same
+    /// breathing room above the tab bar that a section gets from its neighbour,
+    /// instead of ending flush against it.
+    ///
+    /// NOTE for the other tabs: ServersView and SettingsView draw the same
+    /// `scrollContentBackground(.hidden)` + custom-background List, so they have
+    /// the same defect and want the same two lines.
+    private func listBars(_ content: some View) -> some View {
+        content
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(.visible, for: .tabBar)
+            .contentMargins(.bottom, Theme.Metrics.s6, for: .scrollContent)
+    }
+    // eoc #460
 
     private func listWiring(_ content: some View) -> some View {
         content
@@ -240,6 +279,35 @@ struct ConnectionsView: View {
             ipCheck.clearExitGeo()
         }
     }
+
+    // MARK: 2b. Auto-switch — the setting that lives with its subject (#460)
+
+    // boc #460
+    /// #460 (instruction 26): `SettingsStore.autoFailover` had UI only in
+    /// Settings, several screens away from the protocols it switches between.
+    /// The rule it encodes — "if Telemost dies and Jitsi works, move over" — is
+    /// about THIS list, so the control sits directly above it. Same stored
+    /// value, one place: this is a move, not a second setting.
+    ///
+    /// Shown only with something to switch BETWEEN. Failover picks another
+    /// protocol on the same server, so with a single connection the control
+    /// would govern nothing; the moment a second one exists it appears.
+    @ViewBuilder
+    private var autoSwitchSection: some View {
+        // #460 (audit fix) was: `if store.connections.count > 1`. The control was
+        // REMOVED from Settings so it would live in exactly one place — and this
+        // gate then meant a one-connection install had it in NO place at all, with
+        // no way to see or change a setting that is on by default. It is shown
+        // whenever there is anything at all; the card itself explains that it needs
+        // a second protocol on the same server before it can do anything.
+        if !store.connections.isEmpty {
+            Section {
+                ConnectAutoSwitchCard()
+                    .olcCardRow()
+            }
+        }
+    }
+    // eoc #460
 
     // MARK: 3. The connection list — the switcher
 
@@ -569,7 +637,12 @@ struct ConnectionsView: View {
     /// It ignores `SettingsStore.refreshOnEntry`: that switch governs only what
     /// the app does BY ITSELF.
     private func refreshEverything() async {
-        health.verifyDue(store.connections, using: tunnel)
+        // #460 (audit fix) was: `verifyDue`, which passes `force: false`, so
+        // `shouldProbe` refused every node checked in the last two minutes and
+        // the gesture did nothing while still showing a spinner. A pull is an
+        // EXPLICIT request — the debounce exists to keep AUTOMATIC passes cheap,
+        // not to ignore the user. `verifyAll` forces.
+        health.verifyAll(store.connections, using: tunnel)
         if tunnel.state.isConnected {
             await ipCheck.refreshExitGeo(via: currentMode)
         }
@@ -602,6 +675,81 @@ struct ConnectionsView: View {
     private func entrySweep() {
         guard settings.refreshOnEntry else { return }
         health.verifyDue(store.connections, using: tunnel)
+    }
+}
+
+// MARK: - ConnectAutoSwitchCard (#460 — instruction 26)
+//
+// #460: the auto-failover switch, moved here from Settings → RELIABILITY. It
+// binds to `SettingsStore.shared.autoFailover` — the SAME stored value the old
+// Settings row bound to, so nothing about persistence or the failover machinery
+// in `TunnelManager` changes; only where the control is drawn.
+//
+// It is a designed row, not a bare `Toggle` dropped on a card: a tinted glyph
+// that says "swap", the rule in one sentence, the one condition that limits it
+// ("Applies in proxy mode" — in VPN mode the core runs in the appex and
+// `TunnelManager` gates failover on `activeMode == .proxy`), and the switch
+// itself pinned opposite. The switch is the only control, so there is no
+// second, invisible tap target fighting it for the row.
+//
+// Its own struct with its own `SettingsStore` observation: ConnectionsView's
+// `body` re-evaluates ~10×/s during a speed test and must not grow, and a
+// toggle flip should re-render this card rather than the whole screen.
+
+private struct ConnectAutoSwitchCard: View {
+    @ObservedObject private var settings = SettingsStore.shared
+
+    var body: some View {
+        OlcCard {
+            HStack(alignment: .top, spacing: Theme.Metrics.s3) {
+                glyph
+                labels
+                Spacer(minLength: Theme.Metrics.s2)
+                control
+            }
+        }
+    }
+
+    private var glyph: some View {
+        Image(systemName: "arrow.triangle.2.circlepath")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Theme.Palette.accent)
+            .frame(width: 30, height: 30)
+            .background(Theme.Palette.fill,
+                        in: RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius,
+                                             style: .continuous))
+            .accessibilityHidden(true)
+    }
+
+    private var labels: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
+            Text(L10n.configFailoverToggle.localized())
+                .font(Theme.Typography.label)
+                .foregroundStyle(Theme.Palette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            // #460: the SHORT explainer. The Settings one
+            // (`configFailoverExplainer`) is a settings-page sentence; this
+            // screen gets the same rule in one line.
+            Text(L10n.connectAutoSwitchHint.localized())
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(L10n.configFailoverProxyOnlyFooter.localized())
+                .font(.caption2)
+                .foregroundStyle(Theme.Palette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The label is hidden because `labels` above IS the label; VoiceOver gets it
+    /// back explicitly, with the rule as the hint.
+    private var control: some View {
+        Toggle("", isOn: $settings.autoFailover)
+            .labelsHidden()
+            .tint(Theme.Palette.accent)
+            .accessibilityLabel(L10n.configFailoverToggle.localized())
+            .accessibilityHint(L10n.connectAutoSwitchHint.localized())
+            .onChange(of: settings.autoFailover) { _, _ in Haptics.tap() }
     }
 }
 

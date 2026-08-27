@@ -225,12 +225,27 @@ struct ConnectHero: View {
     /// `.stale` say what they actually know (in the past tense, which their own
     /// subtitle already does); only the two states that genuinely have no
     /// end-to-end reading fall back to that line.
+    ///
+    /// #460 (findings 3 / 22): the owner asked, in as many words, where the
+    /// country and the IP even come from. A place name printed with no
+    /// provenance is exactly as unaccountable as a number printed with no date,
+    /// and this is the most prominent place the app prints one — so the method
+    /// is named directly under it. The detail (which service, and that the city
+    /// comes from the same answer) belongs one card down, in Diagnostics → Exit;
+    /// here it is one caption line saying that this is a lookup of the tunnel's
+    /// own exit address, made through the tunnel.
     @ViewBuilder
     private var connectedEvidence: some View {
         if let place = exitPlace {
-            evidenceText(exitFlag.map { "\($0) \(place)" } ?? place,
-                         tone: health.isVerified ? Theme.Palette.green
-                                                 : Theme.Palette.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                evidenceText(exitFlag.map { "\($0) \(place)" } ?? place,
+                             tone: health.isVerified ? Theme.Palette.green
+                                                     : Theme.Palette.textSecondary)
+                Text(L10n.heroExitSourceNote.localized())
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } else {
             evidenceText(heroEvidenceHasReading ? health.subtitle
                                                 : L10n.heroEvidenceUnverified.localized(),

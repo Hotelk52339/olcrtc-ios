@@ -58,8 +58,15 @@ enum L10n: String, CaseIterable {
     case vpnCapabilityUnavailable_fmt       // %@ = system error text from saveToPreferences
 
     // #453: auto-failover between protocols on one server
-    case configFailoverToggle               // settings toggle label
-    case configFailoverExplainer            // what auto-failover does
+    // #460: the control moved OFF Settings and onto the Connections screen,
+    // next to the protocols it switches between. Same stored value
+    // (`SettingsStore.autoFailover`) — only the UI moved, so these two strings
+    // moved with it and are now read by `ConnectAutoSwitchCard`.
+    case configFailoverToggle               // card title (was: settings toggle label)
+    // #460 was: `configFailoverExplainer` — a settings-page sentence ("If the
+    // active protocol stops responding, automatically switch to another
+    // protocol running on the same server."). The card gets the one-line
+    // `connectAutoSwitchHint` instead; the long form had no call site left.
     case configFailoverProxyOnlyFooter      // note: proxy-mode only
     // #458: re-check servers and protocols when the app is opened
     case settingsRefreshOnEntryToggle
@@ -73,12 +80,18 @@ enum L10n: String, CaseIterable {
     // belongs to, and its refresh glyph was replaced by pull-to-refresh.
     case healthProtocolLabel                // row: protocol
     case healthExitLabel                    // row: exit ip/geo
-    case healthLatencyLabel                 // row: latency
+    // #460 was: `healthLatencyLabel` ("Latency"). The row measured a whole
+    // fresh request — connect, handshake and answer — through the live tunnel,
+    // so calling it "latency" invited the reader to compare it with the
+    // per-connection round-trip, which it is ~8× larger than by construction
+    // (findings 2 / 15). It is now `diagResponseLabel` + `diagResponseNote`.
     case healthLatencyMs_fmt                // "%d ms"
     case healthLocationUnknown              // geo lookup empty/failed
     // #455: premium redesign — editorial-consistency additions
     case carrierChoiceFooter                // install/reconfigure carrier guidance footer
-    case configReliabilityHeader            // failover section header
+    // #460 was: `configReliabilityHeader` ("Reliability") — the Settings
+    // section it headed held only the auto-switch toggle, which moved to the
+    // Connections screen, so the header lost its section and its last use.
     case unitSeconds                        // "s" unit after numeric fields
     case sshTestInvalidPort                 // add-host SSH reachability test: bad port
     case sshTestReachable_fmt               // add-host SSH test: reachable (%@ = rtt)
@@ -288,9 +301,20 @@ enum L10n: String, CaseIterable {
 
     // MARK: SettingsView
     case settingsTitle
-    case sectionSOCKS5, sectionDNS, sectionVP8, sectionConnection
+    case sectionSOCKS5, sectionDNS, sectionVP8
     // #343 was: sectionKeepAlive, sectionFont — keep-alive folded into the
     // Connection section, the font section header became "Appearance".
+    // #460 was: `sectionConnection` ("Connection") — one header over eight rows
+    // covering at least four subjects (finding 13): a launch toggle, a start
+    // timeout, keep-alive, background audio, a wedge toggle, a Servers-tab side
+    // effect, update checking and the log level. A `Form` footer belongs to the
+    // whole section, so no footer under it could say which row it meant
+    // (finding 10). It is replaced by headers that each name ONE subject.
+    case settingsSectionOnOpen              // #460: "When the app opens"
+    case settingsSectionStart               // #460: "Starting a connection"
+    case settingsSectionStayConnected       // #460: "Staying connected"
+    case settingsSectionSpeedTest           // #460: "Speed test" — split out of "Diagnostics" (finding 21b)
+    case settingsSectionUpdates             // #460: "Updates"
     case sectionLogs
     case sectionIPSources                   // "IP-check sources" (#286)
     case ipSourcesFooter                    // explanation of the IP-source toggles (#286)
@@ -312,21 +336,32 @@ enum L10n: String, CaseIterable {
     case socksPortChangeNote                // "Port change takes effect on the next connection"
     case dnsFreeFormPlaceholder             // "IP:port"
     case dnsFooter
-    case vp8Footer
+    // #460 was: `vp8Footer`, which opened with the gomobile symbol
+    // "MobileSetVP8Options" and the literal "transport=vp8channel"
+    // (finding 12). Same subject, said in the user's terms — including
+    // the transport itself, which every picker in the app calls "VP8".
+    case vp8Note
     case startTimeoutLabel                  // "Ready timeout"
+    case startTimeoutNote                   // #460: what the timeout does, under its own field
     case autoConnectOnLaunchLabel
+    case autoConnectOnLaunchNote            // #460: note under the auto-connect toggle
     case autoRemoveConnectionOnUninstallLabel
+    case autoRemoveOnUninstallNote          // #460: note under the uninstall side-effect toggle
     case tunnelCheckLabel                   // "Tunnel check"
     case keepAliveOff                       // "off"
     case backgroundAudioLabel
+    case backgroundAudioNote                // #460: note under the background-audio toggle
+    case earlyRestartWedgeNote              // #460: note under the early-restart toggle
     case localSocksAuthLabel                // #343 was: + localSocksAuthFooter (footer cut, §7)
     case logLevelLabel
+    case logLevelNote                       // #460: note under the log-level picker
     // #343 was: footerStartTimeout/AutoConnect/AutoRemove/BackgroundAudio/
     // DebugLogging + footerContainerTail — per-row footers cut when the
     // Connection and Logs groups merged into single sections (§7).
     case footerKeepAlive
     case footerLogBuffer
     case logBufferLabel, containerLogsTailLabel
+    case containerLogsTailNote              // #460: note under the container-log tail field
     case clearAllLogsAction
     case copyAllAction                      // "Copy all" (#258 logs overflow)
     case clearCategoryAction                // "Clear this category" (#258 logs overflow)
@@ -334,7 +369,9 @@ enum L10n: String, CaseIterable {
     // (audit) leftmost slider position: follow iOS Text Size (no app override,
     // AX sizes reachable). The XS…XXXL positions stay an explicit override.
     case fontSizeSystem                     // "System"
-    case fontFooter
+    // #460 was: `fontFooter` — "Applied app-wide (via SwiftUI dynamicTypeSize)"
+    // named a framework API in a Settings footer (finding 18).
+    case fontNote
     case languageLabel
     // #299 was: themeRefined/themeConsole/directionLabel — the Refined/Console
     // "design direction" picker was removed when Theme became real colour schemes.
@@ -566,8 +603,18 @@ enum L10n: String, CaseIterable {
     case maskIPsFooter                      // explanation: display-only, copy stays real, logs unmasked
 
     // MARK: #328 — active-carrier endpoints with one-tap copy (proxy-loop exclusions)
-    case carrierEndpointsTitle              // "Carrier endpoints"
-    case carrierEndpointsHint               // "Add these as DIRECT rules in your proxy app so its own traffic doesn't loop through olcrtc."
+    // #460 (finding 23) was: `carrierEndpointsTitle` ("Carrier endpoints") and
+    // `carrierEndpointsHint` — both written in the vocabulary of the person who
+    // built the feature, on the app's main screen, with nothing saying who
+    // needs it. The row now opens with the question that selects its audience
+    // and the sheet explains itself before the address list.
+    case carrierEndpointsRowTitle           // #460: "Using another proxy app?" — the diagnostics row
+    case carrierEndpointsRowHint            // #460: what goes wrong without it, when connected
+    case carrierEndpointsRowConnectHint     // #460: same row, nothing to show yet
+    case carrierEndpointsShowAction         // #460: "Show" — opens the sheet
+    case carrierEndpointsScreenTitle        // #460: the sheet's title, named after the action
+    case carrierEndpointsLead               // #460: the "is this screen for me?" paragraph
+    case carrierEndpointsFootnote           // #460: these addresses rotate
     case carrierEndpointHost                // "Host"
     case carrierEndpointResolvedIPs         // "Resolved IPs"
     case carrierEndpointResolving           // "Resolving…"
@@ -576,9 +623,10 @@ enum L10n: String, CaseIterable {
     case carrierEndpointCopied_fmt          // "📋 Copied: %@"
     case carrierEndpointRefresh             // "Re-resolve" — IPs rotate
     // #406: carrier endpoints behind a Diagnostics button + a copy-all action.
-    case carrierEndpointsCheckAction        // "Check" — opens the sheet
-    case carrierEndpointsConnectHint        // diagnostics subtitle when disconnected
-    case carrierEndpointsReadyHint          // diagnostics subtitle when connected
+    // #460 was: `carrierEndpointsCheckAction` ("Check" — it read as "check
+    // these endpoints' health", which the button does not do),
+    // `carrierEndpointsConnectHint` and `carrierEndpointsReadyHint`. Replaced
+    // by the `carrierEndpointsRow*` / `carrierEndpointsShowAction` set above.
     case carrierEndpointCopyAll             // "Copy host & IPs"
 
     // MARK: #359 — accessibility for the hero connect toggle + icon toolbar buttons
@@ -643,7 +691,11 @@ enum L10n: String, CaseIterable {
     case removeProtocolConfirmTitle_fmt    // "Remove %@ from this server?"
     case removeProtocolConfirmBody         // container + config removed; connection too
     case protocolConnectAction             // "Connect via this protocol" (row menu)
-    case protocolConnectedBadge            // "Connected" (row indicator a11y)
+    // #460 (findings 7 / 16) was: `protocolConnectedBadge` ("Connected" /
+    // «Подключено») — the longest word on the protocol row's title line, in a
+    // column too narrow for it, which SwiftUI resolved by hyphenating:
+    // "Connec-ted". The badge says the same thing in a word that fits.
+    case protocolLiveBadge                 // "Live" — the badge on the running protocol row
     case protocolPrimaryBadge              // "primary" tag on the base protocol row
     case protocolRecordMissing             // no matching saved connection — suggest Recover
     case protocolAdded_fmt                 // "Added %@/%@ — connection saved"
@@ -756,7 +808,10 @@ enum L10n: String, CaseIterable {
     case tunnelCompareRuns, tunnelCompareRunsProxy, tunnelCompareRunsVPN
 
     // MARK: #457 Logs as a detail view (the Logs tab is gone)
-    case settingsOpenLogsRow                // Settings row that opens the log reader
+    // #460 (finding 21c) was: `settingsOpenLogsRow` ("Diagnostics and logs") —
+    // the third thing in the app called "Diagnostics", and the only one of the
+    // three that is a log reader. The row now says what it opens.
+    case settingsViewLogsRow                // Settings row that opens the log reader
     case logsSubjectConnection              // title when the subject is the tunnel
     case logsSubjectProvisioning            // title when the subject is server work
     case logsSubjectContainer_fmt           // "Server log · %@" (server label)
@@ -822,7 +877,11 @@ enum L10n: String, CaseIterable {
     // come from?". Both hints name the service that actually answers.
     case diagSessionHeader                  // block A: the live session
     case diagToolsHeader                    // block B: the checks you can run
-    case diagExitSourceHint                 // where the exit country/IP is read from
+    // #460 was: `diagExitSourceHint` ("Asked ipinfo.io through the tunnel") —
+    // three words in the row's narrow right-hand value column, where it wrapped
+    // into a ragged stack. The provenance is now a full-width row note, and it
+    // says what was measured as well as who answered (findings 3 / 22).
+    case diagExitNote                       // #460: what the Exit row is and where it came from
     case diagIPSourceHint_fmt               // what the IP check does (%d = sources)
     // Server card: the read stamp, and the way into the pushed screen.
     case vpsReadAge_fmt                     // "read %@" (age phrase)
@@ -838,6 +897,25 @@ enum L10n: String, CaseIterable {
     case vpsAdvancedUninstallFooter
     case vpsAdvancedDeepUninstallFooter
     case vpsAdvancedRemoveHostFooter
+
+    // MARK: #460 Screenshot round 2–4
+    // The screen printed two numbers for one connection — 1109 ms in red on the
+    // Diagnostics card, 133 ms on a connection's chip — and called both "the
+    // latency" (findings 2 / 15). They are different measurements: the card
+    // opens a whole new connection through the live tunnel and times the
+    // answer, while a connection check times a round-trip on a connection that
+    // is already open. Neither number is wrong; the label was. The card's row
+    // is renamed and carries the reconciliation, printed at the one place the
+    // two figures sit near each other.
+    case diagResponseLabel                  // "Response time" — was `healthLatencyLabel`
+    case diagResponseNote                   // why this figure is larger than a connection's
+    // The hero is the most prominent place the app prints a country, so it also
+    // says where that country came from.
+    case heroExitSourceNote
+    // #460 / instruction 26: the auto-switch control moved from Settings onto
+    // the Connections screen, above the protocols it switches between. Short
+    // enough for a card — the long Settings sentence stayed behind.
+    case connectAutoSwitchHint
 }
 
 extension L10n {

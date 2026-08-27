@@ -24,10 +24,26 @@ import SwiftUI
 // The card is two blocks:
 //   A. "This session" — what is true about the tunnel that is up RIGHT NOW.
 //      Mounted only while connected. Protocol (the ONE place this screen states
-//      the carrier/transport), exit, live latency.
+//      the carrier/transport), exit, live response time.
 //   B. "Checks" — the three things the user can RUN: IP check, speed test,
 //      carrier endpoints. Always present, because they are the only entry points
 //      to `IPChecker.checkAll`, `SpeedTest.run` and the #328 exclusions.
+//
+// #460: block A's third fact is no longer called "latency", is no longer tinted
+// red, and now states where its number comes from — because the screen was
+// printing TWO numbers under that one word, taken by two different methods, and
+// painting the larger, less comparable one in the alarm colour. The full
+// reasoning is on `responseRow`; the short version is that this card times a
+// whole request INCLUDING opening the connection, while the per-connection
+// checks time a round-trip on a connection that is already open.
+//
+// #460: every fact in block A now also says WHERE IT COMES FROM, not just when
+// it was taken. Dating a claim answers "is this still true?"; sourcing it
+// answers "who says so?" — the owner asked the second question out loud about
+// the exit country, and it applies to every number here. Block B's third row
+// gained the same treatment for a different reason (finding 23): it named a
+// mechanism nobody outside the project recognises, so it now names the
+// SITUATION it applies to instead.
 //
 // NOTHING IS DRAWN THAT CANNOT BE DATED (#457, kept verbatim). Every value
 // carries the age of the measurement behind it, in the same `HealthAge`
@@ -95,7 +111,8 @@ struct DiagnosticsCard: View {
 // MARK: - DiagnosticsFacts — block A, "This session" (#454, moved here #459)
 //
 // The former HealthCard, minus its own title and its refresh glyph. Its dating
-// machinery moves verbatim: the 8 s latency loop, `latencyAt` / `probing`, and
+// machinery moves verbatim: the 8 s probe loop (#460: its reading is a
+// RESPONSE TIME, not a latency — see `responseRow`), `latencyAt` / `probing`, and
 // `exitAt` (tracked here because `ExitGeo` carries no timestamp and the refresh
 // is also fired from ConnectionsView on the connect transition).
 
@@ -106,7 +123,9 @@ private struct DiagnosticsFacts: View {
     let mode: RouteMode
     let maskIPs: Bool
 
-    /// Live latency, refreshed by the ping loop below. nil = no measurement.
+    /// The live response time, refreshed by the ping loop below. nil = no
+    /// measurement. #460: NOT a latency — one whole request including connection
+    /// setup; see `responseRow` for why that distinction is load-bearing.
     @State private var latencyMs: Double?
     /// #457: when the last latency measurement COMPLETED (success or failure).
     /// nil ⇒ none has completed for this record yet.
@@ -122,9 +141,9 @@ private struct DiagnosticsFacts: View {
             DiagnosticsSubheader(title: L10n.diagSessionHeader.localized())
             protocolRow
             exitRow
-            latencyRow
+            responseRow    // #460 was: latencyRow
         }
-        // Live latency: measure now, then every ~8 s. Keyed on the live record so
+        // Live response time: measure now, then every ~8 s. Keyed on the live record so
         // a failover (record swap, #453) restarts the loop against the new
         // protocol; the conditional mount cancels it on disconnect. The 8 s tick
         // is also what re-renders every age in this block.
@@ -176,26 +195,31 @@ private struct DiagnosticsFacts: View {
         }
     }
 
+    // boc #460
+    /// #460 (findings 3 / 22): the provenance moves OUT of the value column and
+    /// becomes the row's note. #459 answered the owner's "the country and the IP,
+    /// where do they even come from?" with a right-aligned fragment ("Asked
+    /// ipinfo.io through the tunnel") wrapped into the narrow trailing stack; the
+    /// sentence now runs the width of the card and says what was actually
+    /// measured — the tunnel's own exit IP — and that the city and country are
+    /// derived from that one lookup rather than known independently.
+    ///
+    /// `IPChecker.fetchExitGeo` GETs https://ipinfo.io/json through a
+    /// `SOCKSSession.make(mode:)` session, so the sentence is true and specific.
+    /// #460 was: the hint lived inside the trailing VStack, `.multilineTextAlignment(.trailing)`.
     @ViewBuilder
     private var exitRow: some View {
-        DiagnosticsRow(label: L10n.healthExitLabel.localized()) {
+        DiagnosticsRow(label: L10n.healthExitLabel.localized(),
+                       note: L10n.diagExitNote.localized()) {
             VStack(alignment: .trailing, spacing: 2) {
                 exitValue
                 // #457: the exit's age. A country printed with no date is a claim
                 // about now made from evidence about then.
                 DiagnosticsAge(at: exitAt)
-                // #459: the owner asked, in as many words, "the country and the
-                // IP, where do they even come from?". `IPChecker.fetchExitGeo`
-                // GETs https://ipinfo.io/json through a `SOCKSSession.make(mode:)`
-                // session, so this sentence is true and specific.
-                Text(L10n.diagExitSourceHint.localized())
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.textTertiary)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
+    // eoc #460
 
     @ViewBuilder
     private var exitValue: some View {
@@ -221,16 +245,52 @@ private struct DiagnosticsFacts: View {
         }
     }
 
-    /// #459 was: an `OlcMetric` in a metrics strip, whose own label would repeat
-    /// the row label beside it. The value keeps the metric FACE (mono, semibold)
-    /// and the quality tint; only the doubled word is gone.
+    // boc #460
+    /// #460 (findings 2 and 15): THE TWO CONTRADICTORY LATENCIES.
+    ///
+    /// On one screen, at one moment, this row read `LATENCY 1109 ms` in RED
+    /// while a connection row for the same server read `133 ms`. Both were
+    /// labelled "latency". They are not the same measurement and never could be:
+    ///
+    ///   • THIS row — `SpeedTest.quickPing(via:)` every 8 s: ONE HEAD request to
+    ///     the speed-test provider's ping endpoint on a BRAND-NEW `URLSession`,
+    ///     so every sample pays a fresh SOCKS connect and a fresh TLS handshake
+    ///     through the live carrier tunnel. One sample, no warm-up, no averaging.
+    ///     Most of the number is connection setup.
+    ///   • THE ROW CHIPS — `NodeHealth.rttMs`, from the Go core's `Runtime.Ping`
+    ///     (`mobile/ping.go`): a SEPARATE isolated probe tunnel, a warm-up GET,
+    ///     then three GETs over one kept-alive connection, of which it returns
+    ///     the BEST. Connection setup is excluded by construction.
+    ///
+    /// So this figure is several times the chips' figure BY DESIGN — and it was
+    /// the one painted red, because it was tinted with ping thresholds
+    /// (<150 green / <400 amber / else red) that were calibrated for a
+    /// round-trip, not for a cold fetch. The app's most alarming number was its
+    /// least comparable one.
+    ///
+    /// The fix keeps the measurement — it is the only continuously updating,
+    /// user-meaningful live reading, and its success is what marks tunnel
+    /// activity for the keep-alive loop — but stops it pretending to be latency:
+    ///   1. it is named for what it times (a response, setup included);
+    ///   2. the note says so, and says why the per-connection checks always read
+    ///      lower, so the two numbers are reconciled where they are compared.
+    ///      The note names the OTHER MEASUREMENT, not a place on the screen: the
+    ///      live node is the hero's subject and ConnectionsView deliberately
+    ///      keeps it out of the list, so "the connections below" would have
+    ///      pointed away from the chip a reader is comparing against;
+    ///   3. NO threshold tint. An uncalibrated number does not get to raise an
+    ///      alarm; measured = primary, unmeasured = tertiary, never red.
+    ///
+    /// #460 was: `latencyRow` — `DiagnosticsRow(label: healthLatencyLabel)` with
+    /// `latencyTone` (green/orange/red by ms) on the value.
     @ViewBuilder
-    private var latencyRow: some View {
-        DiagnosticsRow(label: L10n.healthLatencyLabel.localized()) {
+    private var responseRow: some View {
+        DiagnosticsRow(label: L10n.diagResponseLabel.localized(),
+                       note: L10n.diagResponseNote.localized()) {
             VStack(alignment: .trailing, spacing: 2) {
-                Text(latencyValue)
+                Text(responseValue)
                     .font(Theme.Typography.metricValue)
-                    .foregroundStyle(latencyTone ?? Theme.Palette.textPrimary)
+                    .foregroundStyle(responseTone)
                     .lineLimit(1)
                 DiagnosticsAge(at: latencyAt)
             }
@@ -242,24 +302,20 @@ private struct DiagnosticsFacts: View {
     /// #457 was: nil ⇒ "measuring…" (forever, over a dead data path) and later
     /// nil ⇒ "not measured" with no date. The word for work-in-progress is now
     /// licensed by `probing` alone, and the verdict carries its stamp below.
-    private var latencyValue: String {
+    private var responseValue: String {
         if let ms = latencyMs { return L10n.healthLatencyMs_fmt.formatted(Int(ms.rounded())) }
         if probing && latencyAt == nil { return L10n.healthChecking.localized() }
         return L10n.healthLatencyNotMeasured.localized()
     }
 
-    /// #455: tint the live latency by quality. #457: with no measurement, tertiary
-    /// says plainly that this is not a value.
-    private var latencyTone: Color? {
-        guard let ms = latencyMs else {
-            return latencyAt == nil ? nil : Theme.Palette.textTertiary
-        }
-        switch Int(ms.rounded()) {
-        case ..<150: return Theme.Palette.green
-        case ..<400: return Theme.Palette.orange
-        default:     return Theme.Palette.red
-        }
+    /// #460: two tones, and neither is an alarm — see `responseRow`. A measured
+    /// figure reads as data; the absence of one reads as tertiary, which is what
+    /// "we have no value here" looks like everywhere else in this card.
+    /// #460 was: `latencyTone` — green under 150 ms, orange under 400, red above.
+    private var responseTone: Color {
+        latencyMs == nil ? Theme.Palette.textTertiary : Theme.Palette.textPrimary
     }
+    // eoc #460
 
     /// "City, CC" from whatever geo fields are present ("location unknown" when
     /// neither is). The flag glyph is rendered separately, next to this.
@@ -362,26 +418,40 @@ private struct DiagnosticsTools: View {
     }
     // eoc #459
 
+    // boc #460
+    /// #460 (finding 23): this row was written for someone who already knew what
+    /// it was — "Carrier endpoints" over "Endpoints to route DIRECT in your proxy
+    /// app", sitting on the app's main screen with nothing to say WHEN a person
+    /// would ever want it. It now leads with the only question that selects its
+    /// audience (are you running a second proxy app?) and states the failure it
+    /// prevents, so everyone else can skip it in one line.
+    ///
+    /// #460 was: title `carrierEndpointsTitle`, hints `carrierEndpointsReadyHint`
+    /// / `carrierEndpointsConnectHint`, action `carrierEndpointsCheckAction`
+    /// ("Check" — which read as "check the endpoints' health", which it is not).
     private var carrierRow: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.carrierEndpointsTitle.localized())
+                Text(L10n.carrierEndpointsRowTitle.localized())
                     .font(.subheadline)
                     .foregroundStyle(Theme.Palette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(carrierParams != nil
-                     ? L10n.carrierEndpointsReadyHint.localized()
-                     : L10n.carrierEndpointsConnectHint.localized())
+                     ? L10n.carrierEndpointsRowHint.localized()
+                     : L10n.carrierEndpointsRowConnectHint.localized())
                     .font(.caption)
                     .foregroundStyle(Theme.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            OlcButton(L10n.carrierEndpointsCheckAction.localized(), role: .secondary) {
+            OlcButton(L10n.carrierEndpointsShowAction.localized(), role: .secondary) {
                 if let params = carrierParams { onCarrierEndpoints(params) }
             }
             .disabled(carrierParams == nil)
         }
         .padding(.vertical, Theme.Metrics.s3)
     }
+    // eoc #460
 
     private func value(_ v: Double?, _ format: String) -> String {
         if speed.isTesting { return "…" }
@@ -425,22 +495,41 @@ private struct DiagnosticsSubheader: View {
 /// Label left, value right — the fact rows of block A. The explicit init (rather
 /// than an `@ViewBuilder` stored property) matches `OlcCard` / `OlcSectionHeader`
 /// in the design system.
+///
+/// #460: an optional `note` — one full-width caption under the label/value line,
+/// inside the same vertical padding. It exists because the two rows that most
+/// needed to say WHERE THEIR NUMBER COMES FROM (exit, response time) could only
+/// squeeze that into the right-hand value column, where a sentence renders as a
+/// ragged three-word-wide stack. A provenance line is prose: it gets the row.
 private struct DiagnosticsRow<Trailing: View>: View {
     private let label: String
+    private let note: String?
     private let trailing: () -> Trailing
 
-    init(label: String, @ViewBuilder trailing: @escaping () -> Trailing) {
+    // #460 was: init(label:trailing:)
+    init(label: String, note: String? = nil,
+         @ViewBuilder trailing: @escaping () -> Trailing) {
         self.label = label
+        self.note = note
         self.trailing = trailing
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(Theme.Palette.textSecondary)
-            Spacer(minLength: 12)
-            trailing()
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Palette.textSecondary)
+                Spacer(minLength: 12)
+                trailing()
+            }
+            if let note {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(.vertical, Theme.Metrics.s3)
     }

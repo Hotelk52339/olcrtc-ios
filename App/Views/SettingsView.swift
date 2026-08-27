@@ -3,15 +3,32 @@ import SwiftUI
 // MARK: - SettingsView
 //
 // #457: the THIRD and last tab, ordered by consequence. Surfaces values that
-// used to be hardcoded, plus the two sections the deleted Config tab held:
-//   - Tunnel: proxy vs VPN + auto-failover (FIRST — it changes what the word
-//     "Connected" means, so it outranks everything below it)
-//   - SOCKS5 listener port (with a "check port" button that probes binding)
-//   - DNS server passed to the Go runtime
-//   - vp8channel codec tuning (FPS + batch size)
-//   - Connection start timeout
-//   - Diagnostics and logs (pushes LogsView(subject: .all)) + log level
-//   - Logs buffer sizes, appearance, bots, reset
+// used to be hardcoded, plus the two sections the deleted Config tab held.
+//
+// #460 (screenshot findings 10, 11, 13, 20, 21): regrouped BY SUBJECT, and
+// every explanation now sits with the control it explains.
+//
+// The old shape had one "Connection" section carrying a start timeout,
+// auto-connect, a VPS-uninstall side effect, a keep-alive interval, background
+// audio, a wedge-restart toggle, update checking AND the log level — eight rows,
+// three or four subjects, one header. Worse, a `Form` footer belongs to its
+// whole SECTION, so the keep-alive explainer rendered four rows below the field
+// it describes; "Logs" and "Diagnostics" had the same fault. Two fixes, applied
+// everywhere: split a section until its header names ONE subject, and when a
+// section legitimately holds several controls, move each explanation to a note
+// row directly under its own control (`TunnelSettingsNote`) instead of pooling
+// them in a trailing footer. A footer survives only where it explains the whole
+// section — or the single row above it.
+//
+// Section order (top-down by consequence):
+//   Tunnel mode · When the app opens | Starting a connection · Staying connected
+//   | SOCKS5 · DNS · vp8channel | Servers | IP check · Speed test | Logs
+//   | Updates · Appearance | About
+//
+// #460 was: tunnel · SOCKS5 · DNS · vp8channel · Connection · Bots ·
+// Diagnostics · Logs · Appearance · info — ten Form children, which is also the
+// ViewBuilder ceiling; the sections are grouped into eight `@ViewBuilder`
+// properties so the list can keep growing.
 //
 // Reads/writes go through SettingsStore.shared, which mirrors UserDefaults.
 // SwiftUI rebinds on @Published changes automatically.
@@ -69,82 +86,156 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                // #343: regrouped per design_handoff_logs_theme §7 — SOCKS5 →
-                // DNS (submenu) → vp8channel → Connection → Diagnostics →
-                // Logs → Appearance LAST → version footer; max one short
-                // footer per section.
-                // #457: Tunnel leads — the most consequential setting first.
-                Form {
-                    tunnelSection
-                    socksSection
-                    dnsRowSection
-                    transportSection
-                    connectionSection
-                    botsSection
-                    diagnosticsSection
-                    logsSection
-                    appearanceSection
-                    infoSection
-                }
-                // (audit #299) paint the ground from the token: without this the
-                // Form keeps the system grouped background, so the Gray scheme's
-                // mid-gray ground (Theme.Palette.bg) never showed on this tab.
-                .scrollContentBackground(.hidden)
-                .background(Theme.Palette.bg)
-                // #457 (was ConfigView's `.task`): side-effect free — only reads
-                // existing VPN preferences (a past save proves the entitlement),
-                // never pops the system consent alert. Drives the VPN chip's
-                // enabled state in `tunnelSection`.
-                .task { await tunnel.vpn.probeCapability() }
-                .onDisappear { socksPassLoaded = false }
-                // #455: reset-to-defaults confirm (unsticks a wedged state
-                // without reinstalling; connections and servers are kept).
-                .confirmationDialog(L10n.resetSettingsConfirmTitle.localized(),
-                                    isPresented: $showResetConfirm, titleVisibility: .visible) {
-                    Button(L10n.resetSettingsAction.localized(), role: .destructive) {
-                        SettingsStore.shared.reset()
-                        Haptics.success()
-                    }
-                    Button(L10n.cancel.localized(), role: .cancel) { }
-                } message: {
-                    Text(L10n.resetSettingsConfirmBody.localized())
-                }
-                .navigationTitle(L10n.settingsTitle.localized())
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button(L10n.done.localized()) { anyFieldFocused = false }
-                    }
-                }
-                // #298: committing the font size triggers the app-wide dynamic-type
-                // relayout, which shifted the Settings viewport (it jumped). Pull the
-                // Font control back into view so the scroll position stays stable.
-                .onChange(of: settings.fontSizeIndex) { _, _ in
-                    DispatchQueue.main.async {
-                        withAnimation { proxy.scrollTo(Self.fontAnchorID, anchor: .center) }
-                    }
-                }
+                // #460: the modifier stack is split across two small wrappers,
+                // the idiom ConnectionsView/ServersView adopted after this
+                // repo's SwiftUI type-checker failures — no single expression
+                // carries the whole chain.
+                formWiring(formChrome(settingsForm), proxy: proxy)
             }
         }
     }
 
+    /// Eight children — each one a section or a small group of them. Keep it
+    /// under ten: `ViewBuilder` has no eleventh-child overload.
+    private var settingsForm: some View {
+        Form {
+            tunnelGroup
+            connectionGroup
+            networkGroup
+            serversSection
+            checksGroup
+            logsSection
+            appGroup
+            infoSection
+        }
+    }
+
+    private func formChrome(_ content: some View) -> some View {
+        content
+            // (audit #299) paint the ground from the token: without this the
+            // Form keeps the system grouped background, so a non-default scheme
+            // never showed Theme.Palette.bg on this tab.
+            .scrollContentBackground(.hidden)
+            .background(Theme.Palette.bg)
+            // #460 (audit fix): the same defect Connections had. Hiding the
+            // scroll background and painting our own leaves both system bars on
+            // their transparent scroll-edge appearance, so scrolled content draws
+            // THROUGH them — a title clipped under the nav bar, the last row cut
+            // by the tab bar. Visibility only: each bar keeps its system material,
+            // so this tab still looks like the others.
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(.visible, for: .tabBar)
+            // #460: requirement 27 — the same gesture as the other two tabs.
+            .refreshable { await refreshSettings() }
+            // #457 (was ConfigView's `.task`): side-effect free — only reads
+            // existing VPN preferences (a past save proves the entitlement),
+            // never pops the system consent alert. Drives the VPN chip's
+            // enabled state in the mode section.
+            .task { await tunnel.vpn.probeCapability() }
+            .onDisappear { socksPassLoaded = false }
+    }
+
+    private func formWiring(_ content: some View, proxy: ScrollViewProxy) -> some View {
+        content
+            // #455: reset-to-defaults confirm (unsticks a wedged state
+            // without reinstalling; connections and servers are kept).
+            .confirmationDialog(L10n.resetSettingsConfirmTitle.localized(),
+                                isPresented: $showResetConfirm, titleVisibility: .visible) {
+                Button(L10n.resetSettingsAction.localized(), role: .destructive) {
+                    SettingsStore.shared.reset()
+                    Haptics.success()
+                }
+                Button(L10n.cancel.localized(), role: .cancel) { }
+            } message: {
+                Text(L10n.resetSettingsConfirmBody.localized())
+            }
+            .navigationTitle(L10n.settingsTitle.localized())
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button(L10n.done.localized()) { anyFieldFocused = false }
+                }
+            }
+            // #298: committing the font size triggers the app-wide dynamic-type
+            // relayout, which shifted the Settings viewport (it jumped). Pull the
+            // Font control back into view so the scroll position stays stable.
+            .onChange(of: settings.fontSizeIndex) { _, _ in
+                DispatchQueue.main.async {
+                    withAnimation { proxy.scrollTo(Self.fontAnchorID, anchor: .center) }
+                }
+            }
+    }
+
+    // MARK: Pull to refresh (#460)
+
+    /// #460: requirement 27 — "the swipe should refresh everything on whichever
+    /// screen I am on". Settings owns no server state, but two things here DO go
+    /// stale while the screen is open, and both are re-read for real (no faked
+    /// spinner): whether the configured SOCKS port is still free, and whether
+    /// this install is allowed to run the system VPN at all — a re-signed
+    /// sideload loses that entitlement, and the mode picker's VPN chip is gated
+    /// on it. The daily update check is NOT reachable from here: `UpdateChecker`
+    /// is owned by MainTabView and never passed down.
+    private func refreshSettings() async {
+        runPortCheck()
+        await tunnel.vpn.probeCapability()
+    }
+
     // MARK: Tunnel (#457 — absorbed from the deleted Config tab)
 
-    /// #457: the Config tab's two live sections, now FIRST in Settings. Both
-    /// bodies live in ConfigView.swift so this file doesn't grow (SwiftUI
-    /// type-checker budget) — see `TunnelSettingsModeSection` /
-    /// `TunnelSettingsReliabilitySection`.
+    /// #457: the Config tab's live sections, now FIRST in Settings. Both bodies
+    /// live in ConfigView.swift so this file doesn't grow (SwiftUI type-checker
+    /// budget) — see `TunnelSettingsModeSection` / `TunnelSettingsOnOpenSection`.
+    /// #460 was: `TunnelSettingsReliabilitySection` — see that file.
     @ViewBuilder
-    private var tunnelSection: some View {
+    private var tunnelGroup: some View {
         TunnelSettingsModeSection(tunnel: tunnel)
-        TunnelSettingsReliabilitySection()
+        TunnelSettingsOnOpenSection()
+    }
+
+    // MARK: Connection (#460 — was one section for four subjects)
+
+    @ViewBuilder
+    private var connectionGroup: some View {
+        startSection
+        stayConnectedSection
+    }
+
+    // MARK: Network (#460 group: the listener, the resolver, the codec)
+
+    @ViewBuilder
+    private var networkGroup: some View {
+        socksSection
+        dnsRowSection
+        transportSection
+    }
+
+    // MARK: Checks (#460 — was one "Diagnostics" section; findings 20/21)
+
+    @ViewBuilder
+    private var checksGroup: some View {
+        ipCheckSection
+        speedTestSection
+    }
+
+    // MARK: App-level (#460)
+
+    @ViewBuilder
+    private var appGroup: some View {
+        updatesSection
+        appearanceSection
     }
 
     // MARK: SOCKS
 
     // #343 was: two sections (port+check / auth) with three stacked footers —
-    // one section now, one short footer (the long socksFooter/auth copy cut
-    // per the handoff's one-footer rule).
+    // one section now.
+    // #460: the section footer said "Port change takes effect on the next
+    // connection" and rendered under the PASSWORD field whenever auth was on —
+    // the same fault as findings 10/11/20, one screen down. Both sentences are
+    // notes on their own rows now, and `socksAuthFooter` (written in #343, then
+    // left unused when its section was merged away) explains the auth toggle
+    // again instead of nothing explaining it.
     @ViewBuilder
     private var socksSection: some View {
         Section {
@@ -163,48 +254,15 @@ struct SettingsView: View {
                     settings.socksPort = Int.random(in: 1024...65535)
                 }
             }
+            TunnelSettingsNote(text: L10n.socksPortChangeNote.localized())
 
-            Button {
-                let port = UInt16(settings.socksPort)
-                // #313: compare against the port the tunnel actually bound
-                // (`tunnel.boundPort`, snapshotted at connect; nil unless a
-                // session is live). The #300 gate compared two reads of the
-                // *configured* port — always equal — so while connected, any
-                // value typed into the field was labeled "in use by olcrtc
-                // tunnel" even though the tunnel still holds the old port.
-                // #313 was: let tunnelHoldsPort = tunnel.state.isConnected
-                //     && TunnelManager.socksPort == settings.socksPort
-                let tunnelHoldsPort = tunnel.boundPort == settings.socksPort
-                let result = PortAvailability.state(port, tunnelHoldsPort: tunnelHoldsPort)
-                portCheck = result
-                // #287: one L10n key per concept instead of assembling the line
-                // from fragments (which drifted between code paths / languages).
-                // #300: three states → three log lines.
-                let logLine: String
-                switch result {
-                case .free:      logLine = L10n.logPortFree_fmt.formatted(settings.socksPort)
-                case .busyOther: logLine = L10n.logPortBusyOther_fmt.formatted(settings.socksPort)
-                case .busyOurs:  logLine = L10n.logPortBusyOlcrtc_fmt.formatted(settings.socksPort)
-                }
-                LogStore.shared.log(.connection, logLine)
-            } label: {
-                HStack {
-                    Image(systemName: "checkmark.circle")
-                    Text(L10n.checkPortAction.localized())
-                    Spacer()
-                    if let r = portCheck {
-                        switch r {
-                        // #317: ad-hoc .green/.red → Theme.Palette status tokens (#258 invariant)
-                        // #317 was: .foregroundStyle(.green) / .foregroundStyle(.red)
-                        case .free:      Text(L10n.portFree.localized()).foregroundStyle(Theme.Palette.green)
-                        case .busyOurs:  Text(L10n.portInUseByOlcrtc.localized()).foregroundStyle(Theme.Palette.green)
-                        case .busyOther: Text(L10n.portBusy.localized()).foregroundStyle(Theme.Palette.red)
-                        }
-                    }
-                }
-            }
+            // #460 was: the whole check ran inline in this button's action — it
+            // is a method now, so the pull-to-refresh gesture runs exactly the
+            // same check instead of a second copy of it.
+            Button { runPortCheck() } label: { portCheckLabel }
 
             Toggle(L10n.localSocksAuthLabel.localized(), isOn: $settings.localSocksAuthEnabled)
+            TunnelSettingsNote(text: L10n.socksAuthFooter.localized())
             if settings.localSocksAuthEnabled {
                 TextField(L10n.socksUserLabel.localized(), text: $settings.localSocksUser)
                     .autocorrectionDisabled()
@@ -224,10 +282,49 @@ struct SettingsView: View {
             }
         } header: {
             Text(L10n.sectionSOCKS5.localized())
-        } footer: {
-            Text(L10n.socksPortChangeNote.localized())
-                .font(.caption2)
         }
+    }
+
+    private var portCheckLabel: some View {
+        HStack {
+            Image(systemName: "checkmark.circle")
+            Text(L10n.checkPortAction.localized())
+            Spacer()
+            if let r = portCheck {
+                switch r {
+                // #317: ad-hoc .green/.red → Theme.Palette status tokens (#258 invariant)
+                // #317 was: .foregroundStyle(.green) / .foregroundStyle(.red)
+                case .free:      Text(L10n.portFree.localized()).foregroundStyle(Theme.Palette.green)
+                case .busyOurs:  Text(L10n.portInUseByOlcrtc.localized()).foregroundStyle(Theme.Palette.green)
+                case .busyOther: Text(L10n.portBusy.localized()).foregroundStyle(Theme.Palette.red)
+                }
+            }
+        }
+    }
+
+    private func runPortCheck() {
+        let port = UInt16(settings.socksPort)
+        // #313: compare against the port the tunnel actually bound
+        // (`tunnel.boundPort`, snapshotted at connect; nil unless a
+        // session is live). The #300 gate compared two reads of the
+        // *configured* port — always equal — so while connected, any
+        // value typed into the field was labeled "in use by olcrtc
+        // tunnel" even though the tunnel still holds the old port.
+        // #313 was: let tunnelHoldsPort = tunnel.state.isConnected
+        //     && TunnelManager.socksPort == settings.socksPort
+        let tunnelHoldsPort = tunnel.boundPort == settings.socksPort
+        let result = PortAvailability.state(port, tunnelHoldsPort: tunnelHoldsPort)
+        portCheck = result
+        // #287: one L10n key per concept instead of assembling the line
+        // from fragments (which drifted between code paths / languages).
+        // #300: three states → three log lines.
+        let logLine: String
+        switch result {
+        case .free:      logLine = L10n.logPortFree_fmt.formatted(settings.socksPort)
+        case .busyOther: logLine = L10n.logPortBusyOther_fmt.formatted(settings.socksPort)
+        case .busyOurs:  logLine = L10n.logPortBusyOlcrtc_fmt.formatted(settings.socksPort)
+        }
+        LogStore.shared.log(.connection, logLine)
     }
 
     // MARK: DNS (#343 — submenu)
@@ -274,7 +371,8 @@ struct SettingsView: View {
     private func numericField(_ title: String,
                                value: Binding<Int>,
                                presets: [Preset],
-                               unit: String? = nil) -> some View {
+                               unit: String? = nil,
+                               note: String? = nil) -> some View {
         HStack {
             Text(title)
             Spacer()
@@ -288,6 +386,11 @@ struct SettingsView: View {
         }
         // #258: design-system chip picker (was a row of .mini bordered buttons).
         OlcChipPicker(selection: value, options: presets.map { ($0.value, $0.label) })
+        // #460 (findings 10/11): an explanation that belongs to ONE control
+        // renders under that control, not in a section footer four rows down.
+        if let note {
+            TunnelSettingsNote(text: note)
+        }
     }
 
     // MARK: Transport tuning
@@ -305,56 +408,69 @@ struct SettingsView: View {
         } header: {
             Text(L10n.sectionVP8.localized())
         } footer: {
-            Text(L10n.vp8Footer.localized())
+            // #460 (finding 12) was: `vp8Footer`, which opened with the gomobile
+            // symbol "MobileSetVP8Options" and the literal "transport=vp8channel".
+            // Both rows here are that one subject, so a section footer is still
+            // the right place — only the words changed.
+            Text(L10n.vp8Note.localized())
                 .font(.caption2)
         }
     }
 
-    // MARK: Connection
+    // MARK: Starting a connection (#460)
 
-    // #343 was: six separate sections (start timeout / auto-connect /
-    // auto-remove / keep-alive / background audio / log level), each with its
-    // own footer — one "Connection" section now, one short footer (keep-alive
-    // is the least self-explanatory row, its footer survives).
-    private var connectionSection: some View {
+    // #460 was: part of one "Connection" section that also held auto-connect,
+    // the VPS-uninstall side effect, keep-alive, background audio, the wedge
+    // toggle, update checking and the log level (finding 13). One row, one
+    // subject, and the footer below it can only mean that row.
+    private var startSection: some View {
         Section {
             numericField(L10n.startTimeoutLabel.localized(), value: $settings.startTimeoutSeconds,
                          presets: [Preset(value: 30,  label: "30"),
                                    Preset(value: 60,  label: "60"),
                                    Preset(value: 120, label: "120")],
                          unit: L10n.unitSeconds.localized())   // #455: was hardcoded "s"
-            Toggle(L10n.autoConnectOnLaunchLabel.localized(), isOn: $settings.autoConnectOnLaunch)
-            Toggle(L10n.autoRemoveConnectionOnUninstallLabel.localized(), isOn: $settings.autoRemoveConnectionOnUninstall)
+        } header: {
+            Text(L10n.settingsSectionStart.localized())
+        } footer: {
+            Text(L10n.startTimeoutNote.localized()).font(.caption2)
+        }
+    }
+
+    // MARK: Staying connected (#460)
+
+    // #460 (finding 10): `footerKeepAlive` used to be this section's footer and
+    // rendered after four unrelated rows AND the log-level picker. It is the
+    // same sentence, now attached to the field it describes; the other two rows
+    // got the notes they never had.
+    private var stayConnectedSection: some View {
+        Section {
             numericField(L10n.tunnelCheckLabel.localized(), value: $settings.keepAliveSeconds,
                          presets: [Preset(value: 0,  label: L10n.keepAliveOff.localized()),
                                    Preset(value: 30, label: "30"),
                                    Preset(value: 60, label: "60")],
-                         unit: L10n.unitSeconds.localized())   // #455: was hardcoded "s"
-            Toggle(L10n.backgroundAudioLabel.localized(), isOn: $settings.backgroundAudio)
-            // #440: opt-in early restart of a stuck session (off by default). Label
-            // is self-explanatory, so the §7 one-footer rule (keep-alive) survives.
+                         unit: L10n.unitSeconds.localized(),
+                         note: L10n.footerKeepAlive.localized())
+            // #440: opt-in early restart of a stuck session (off by default).
             Toggle(L10n.earlyRestartWedgeLabel.localized(), isOn: $settings.earlyRestartOnWedge)
-            // #360: opt-out of the daily, anonymous GitHub-Releases update
-            // check. Self-explanatory label keeps the §7 one-footer rule (the
-            // keep-alive footer survives); the full privacy note lives in the
-            // L10n table (updateCheckFooter) for any future detail screen.
-            Toggle(L10n.updateCheckLabel.localized(), isOn: $settings.updateCheckEnabled)
-            Picker(L10n.logLevelLabel.localized(), selection: $settings.logLevel) {
-                ForEach(LogLevel.allCases, id: \.self) { level in
-                    Text(level.label).tag(level)
-                }
-            }
+            TunnelSettingsNote(text: L10n.earlyRestartWedgeNote.localized())
+            Toggle(L10n.backgroundAudioLabel.localized(), isOn: $settings.backgroundAudio)
+            TunnelSettingsNote(text: L10n.backgroundAudioNote.localized())
         } header: {
-            Text(L10n.sectionConnection.localized())
-        } footer: {
-            Text(L10n.footerKeepAlive.localized()).font(.caption2)
+            Text(L10n.settingsSectionStayConnected.localized())
         }
     }
 
-    // MARK: Bots (#420)
+    // MARK: Servers (#460 — the two settings that are about your VPS list)
 
-    private var botsSection: some View {
+    // #460 was: `autoRemoveConnectionOnUninstall` sat under "Connection" (it is
+    // a Servers-tab side effect), and Bots was a section of its own holding one
+    // link row.
+    private var serversSection: some View {
         Section {
+            Toggle(L10n.autoRemoveConnectionOnUninstallLabel.localized(),
+                   isOn: $settings.autoRemoveConnectionOnUninstall)
+            TunnelSettingsNote(text: L10n.autoRemoveOnUninstallNote.localized())
             NavigationLink {
                 BotsSettingsView(botStore: botStore)
             } label: {
@@ -366,31 +482,48 @@ struct SettingsView: View {
                         .monospacedDigit()
                 }
             }
+        } header: {
+            Text(L10n.serversTitle.localized())
         }
     }
 
     // MARK: Logs
 
     // #343 was: three sections (buffer / container tail / clear-all) with two
-    // footers — one "Logs" section, one short footer.
+    // footers. #460 (finding 11) was: one "Logs" section whose single footer
+    // ("Maximum number of lines kept in memory per log category") rendered under
+    // the "Clear all logs" BUTTON. Everything here is one subject — logs — so
+    // the section stays whole and each explanation moved onto its own row.
     private var logsSection: some View {
         Section {
             // #457: Logs stopped being a tab. This is its unscoped entrance —
             // every OTHER way in is a push from the thing the log explains
             // (a connection attempt, a provisioning run, one server's container).
+            // #460 (finding 21) was: `settingsOpenLogsRow` = "Diagnostics and
+            // logs" — a third destination sharing the word "Diagnostics" with a
+            // Connections card and a Settings section. It opens the log reader,
+            // so it says that.
             NavigationLink {
                 LogsView(subject: .all, serverStore: serverStore, connections: connections)
             } label: {
-                Text(L10n.settingsOpenLogsRow.localized())
+                Text(L10n.settingsViewLogsRow.localized())
             }
+            Picker(L10n.logLevelLabel.localized(), selection: $settings.logLevel) {
+                ForEach(LogLevel.allCases, id: \.self) { level in
+                    Text(level.label).tag(level)
+                }
+            }
+            TunnelSettingsNote(text: L10n.logLevelNote.localized())
             numericField(L10n.logBufferLabel.localized(), value: $settings.logBufferSize,
                          presets: [Preset(value: 500,  label: "500"),
                                    Preset(value: 1000, label: "1k"),
-                                   Preset(value: 5000, label: "5k")])
+                                   Preset(value: 5000, label: "5k")],
+                         note: L10n.footerLogBuffer.localized())
             numericField(L10n.containerLogsTailLabel.localized(), value: $settings.containerLogsTailLines,
                          presets: [Preset(value: 100,  label: "100"),
                                    Preset(value: 200,  label: "200"),
-                                   Preset(value: 1000, label: "1k")])
+                                   Preset(value: 1000, label: "1k")],
+                         note: L10n.containerLogsTailNote.localized())
             // #258: danger design-system button (was a plain destructive row).
             OlcButton(L10n.clearAllLogsAction.localized(), systemImage: "trash",
                       role: .danger, fillWidth: true) {
@@ -401,8 +534,22 @@ struct SettingsView: View {
             }
         } header: {
             Text(L10n.sectionLogs.localized())
+        }
+    }
+
+    // MARK: Updates (#460)
+
+    // #460 was: the update toggle sat in "Connection" with no explanation at
+    // all, while `updateCheckFooter` — written for exactly this row — sat unused
+    // in the L10n table. Own section, own footer, one row.
+    private var updatesSection: some View {
+        Section {
+            // #360: opt-out of the daily, anonymous GitHub-Releases update check.
+            Toggle(L10n.updateCheckLabel.localized(), isOn: $settings.updateCheckEnabled)
+        } header: {
+            Text(L10n.settingsSectionUpdates.localized())
         } footer: {
-            Text(L10n.footerLogBuffer.localized()).font(.caption2)
+            Text(L10n.updateCheckFooter.localized()).font(.caption2)
         }
     }
 
@@ -442,57 +589,71 @@ struct SettingsView: View {
                     .monospacedDigit()
             }
             .id(Self.fontAnchorID)   // #298: re-anchor here after the relayout
-            // #280: drag updates local @State (cheap — only this row + the
-            // preview re-render); the app-wide `fontSizeIndex` (and its
-            // UserDefaults write + full-tree relayout) commits once, on release.
-            // (audit) range starts at the -1 "System" position: no app override,
-            // the device's Text Size (incl. AX sizes) applies; XS…XXXL stay an
-            // explicit override.
-            Slider(
-                value: Binding(
-                    get: { fontDragIndex ?? Double(settings.fontSizeIndex) },
-                    set: { fontDragIndex = $0 }
-                ),
-                in: Double(SettingsStore.systemFontSizeIndex)...Double(SettingsStore.fontSizes.count - 1),
-                step: 1,
-                label: { Text(L10n.fontSizeLabel.localized()) },
-                minimumValueLabel: { Text("A").font(.caption2) },
-                maximumValueLabel: { Text("A").font(.title3) },
-                onEditingChanged: { editing in
-                    if !editing {
-                        if let v = fontDragIndex { settings.fontSizeIndex = Int(v.rounded()) }
-                        fontDragIndex = nil
-                    }
-                }
-            )
-            // Live preview without committing: scope the dragged size to this text.
-            // (audit) the "System" position has no override — the preview renders
-            // at the inherited size (a leaf Text, so the branch swap is harmless).
-            if fontLiveIndex == SettingsStore.systemFontSizeIndex {
-                Text(L10n.fontPreviewText.localized())
-                    .foregroundStyle(.secondary)
-            } else {
-                Text(L10n.fontPreviewText.localized())
-                    .foregroundStyle(.secondary)
-                    .environment(\.dynamicTypeSize, SettingsStore.fontSizes[fontLiveIndex])
-            }
+            fontSlider
+            fontPreview
         } header: {
             // #343 was: sectionFont ("Font") — the section holds language +
-            // theme + direction + font now.
+            // theme + font now.
             Text(L10n.appearanceLabel.localized())
         } footer: {
-            Text(L10n.fontFooter.localized())
+            // #460 (finding 18) was: `fontFooter`, which explained the control
+            // by naming the SwiftUI API it calls ("via SwiftUI dynamicTypeSize").
+            Text(L10n.fontNote.localized())
                 .font(.caption2)
         }
     }
 
-    // MARK: Diagnostics (#343 — merges the #293 IP-sources row + #285 provider)
+    // #280: drag updates local @State (cheap — only this row + the preview
+    // re-render); the app-wide `fontSizeIndex` (and its UserDefaults write +
+    // full-tree relayout) commits once, on release.
+    // (audit) range starts at the -1 "System" position: no app override, the
+    // device's Text Size (incl. AX sizes) applies; XS…XXXL stay an explicit
+    // override.
+    // #460: extracted from the section body — the Slider's six trailing
+    // closures were the heaviest single expression on this screen.
+    private var fontSlider: some View {
+        Slider(
+            value: Binding(
+                get: { fontDragIndex ?? Double(settings.fontSizeIndex) },
+                set: { fontDragIndex = $0 }
+            ),
+            in: Double(SettingsStore.systemFontSizeIndex)...Double(SettingsStore.fontSizes.count - 1),
+            step: 1,
+            label: { Text(L10n.fontSizeLabel.localized()) },
+            minimumValueLabel: { Text("A").font(.caption2) },
+            maximumValueLabel: { Text("A").font(.title3) },
+            onEditingChanged: { editing in
+                if !editing {
+                    if let v = fontDragIndex { settings.fontSizeIndex = Int(v.rounded()) }
+                    fontDragIndex = nil
+                }
+            }
+        )
+    }
 
-    // #343 was: two sections (ipSourcesSection / speedProviderSection) — one
-    // "Diagnostics" section now. The IP-sources footer already lives in its
-    // subscreen (IPSourcesSettingsView), so only the provider footer stays.
-    // The provider picker itself is unchanged (submenu, per operator decision).
-    private var diagnosticsSection: some View {
+    // Live preview without committing: scope the dragged size to this text.
+    // (audit) the "System" position has no override — the preview renders at the
+    // inherited size (a leaf Text, so the branch swap is harmless).
+    @ViewBuilder
+    private var fontPreview: some View {
+        if fontLiveIndex == SettingsStore.systemFontSizeIndex {
+            Text(L10n.fontPreviewText.localized())
+                .foregroundStyle(.secondary)
+        } else {
+            Text(L10n.fontPreviewText.localized())
+                .foregroundStyle(.secondary)
+                .environment(\.dynamicTypeSize, SettingsStore.fontSizes[fontLiveIndex])
+        }
+    }
+
+    // MARK: IP check (#460 — half of the old "Diagnostics" section)
+
+    // #460 (findings 20/21) was: one "Diagnostics" section holding IP sources,
+    // the speed-test provider AND "Hide IP addresses", with a footer about the
+    // SPEED TEST rendering under the IP toggle. Two subjects, two sections; each
+    // footer now sits under the row it describes. "Diagnostics" also named a
+    // card on Connections and the log-viewer row below — this half is "IP check".
+    private var ipCheckSection: some View {
         Section {
             NavigationLink {
                 IPSourcesSettingsView()
@@ -505,23 +666,65 @@ struct SettingsView: View {
                         .monospacedDigit()
                 }
             }
-            Picker(L10n.sectionSpeedProvider.localized(), selection: $settings.speedTestProviderID) {
-                ForEach(AppConstants.SpeedTest.providers) { p in
-                    Text(p.label).tag(p.id)
-                }
-            }
-            // #337: screenshot-safe mode — masks IPs in the Diagnostics rows
-            // and on VPS cards (display-only; copy + Logs stay real). The label
-            // is self-explanatory, so the section footer keeps the less obvious
-            // speed-provider note (§7 one-footer rule); the full mask
-            // explanation lives in the L10n table for any future detail screen.
+            // #337: screenshot-safe mode — masks IPs in the Connections
+            // diagnostics rows and on VPS cards (display-only; copy + Logs
+            // stay real).
             Toggle(L10n.maskIPsLabel.localized(), isOn: $settings.maskIPs)
         } header: {
-            Text(L10n.diagnosticsTitle.localized())
+            Text(L10n.ipCheckTitle.localized())
+        } footer: {
+            // The IP-sources explanation lives in its own subscreen, so the one
+            // footer here belongs to the row directly above it. #460: wires
+            // `maskIPsFooter`, which #337 wrote and left unused.
+            Text(L10n.maskIPsFooter.localized())
+                .font(.caption2)
+        }
+    }
+
+    // MARK: Speed test (#460 — the other half)
+
+    private var speedTestSection: some View {
+        Section {
+            Picker(L10n.sectionSpeedProvider.localized(), selection: $settings.speedTestProviderID) {
+                ForEach(AppConstants.SpeedTest.providers) { p in
+                    Text(Self.providerName(p)).tag(p.id)
+                }
+            }
+            // #460 (finding 19): the picker used to show the provider's `label`,
+            // which is a HOSTNAME — a menu picker prints its value on one line,
+            // so it arrived clipped ("speed.cl…are.com"). The name identifies the
+            // provider; the host is data and gets a full line of its own.
+            Text(speedProviderHost)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+        } header: {
+            Text(L10n.settingsSectionSpeedTest.localized())
         } footer: {
             Text(L10n.speedProviderFooter.localized())
                 .font(.caption2)
         }
+    }
+
+    private var speedProviderHost: String {
+        AppConstants.SpeedTest.provider(id: settings.speedTestProviderID).host
+    }
+
+    /// #460: display name for a speed-test provider. Two of the three labels
+    /// already carry the brand in parentheses ("proof.ovh.net (OVH)"); otherwise
+    /// take the host's registrable label ("speed.cloudflare.com" → "Cloudflare").
+    /// Derived, not a hardcoded brand table — a new provider needs no change
+    /// here, and a brand name is the same word in every language.
+    private static func providerName(_ p: SpeedTestProvider) -> String {
+        if let open = p.label.firstIndex(of: "("),
+           let close = p.label.lastIndex(of: ")"), open < close {
+            let inside = p.label[p.label.index(after: open)..<close]
+            let trimmed = inside.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        let parts = p.host.split(separator: ".")
+        guard parts.count >= 2 else { return p.host }
+        let name = String(parts[parts.count - 2])
+        return name.prefix(1).uppercased() + String(name.dropFirst())
     }
 
     // MARK: Info

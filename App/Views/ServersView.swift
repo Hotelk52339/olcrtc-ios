@@ -1304,7 +1304,23 @@ struct ServersView: View {
     private func refreshAllHosts() async {
         // An SSH op already holds the lane and paints its own progress bar;
         // queueing probes behind it would tell the user nothing new.
-        guard !actionsDisabled, !entryRefreshing else { return }
+        // #460 was: `guard !actionsDisabled, !entryRefreshing else { return }` — a
+        // pull that landed while the ON-ENTRY pass was still running returned
+        // instantly, so the system spinner snapped back and the gesture read as
+        // "nothing happened". This is the one tab where entering it starts a
+        // pass of its own, i.e. exactly when a user is most likely to pull. Ride
+        // the running pass out, then do the forced one they asked for: the entry
+        // pass is filtered (only hosts staler than `entryProbeStaleSeconds`, and
+        // only when `refreshOnEntry` is on), so it is not a substitute for it.
+        guard !actionsDisabled else { return }
+        while entryRefreshing {
+            if Task.isCancelled { return }
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return   // the pull was cancelled while waiting
+            }
+        }
         entryRefreshing = true
         defer { entryRefreshing = false }
         for host in serverStore.hosts {

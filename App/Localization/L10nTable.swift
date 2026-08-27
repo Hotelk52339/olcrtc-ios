@@ -50,9 +50,12 @@ enum L10nTable {
         .vpnSettingsEntryName:      "OlcRTC",
         .vpnCapabilityUnavailable_fmt: "The system rejected the VPN configuration (%@). This happens when VPN access was declined, or when the app was signed with a free Apple ID — the Network Extension entitlement requires a paid Apple Developer team. Proxy mode still works.",
 
-        // #453: auto-failover
+        // #453: auto-failover. #460: the control lives on the Connections
+        // screen now, so these two are the card's title and its condition line.
+        // #460 was: `.configFailoverExplainer` — "If the active protocol stops
+        // responding, automatically switch to another protocol running on the
+        // same server." Replaced by the one-line `connectAutoSwitchHint`.
         .configFailoverToggle:       "Auto-switch protocols",
-        .configFailoverExplainer:    "If the active protocol stops responding, automatically switch to another protocol running on the same server.",
         .configFailoverProxyOnlyFooter: "Applies in proxy mode.",
         .settingsRefreshOnEntryToggle:  "Check on opening",
         .settingsRefreshOnEntryExplainer: "When you open the app, re-check your servers and every protocol on them, so what you see is current. Anything checked in the last couple of minutes is left alone.",
@@ -63,12 +66,13 @@ enum L10nTable {
         // refresh glyph of its own.
         .healthProtocolLabel:        "Protocol",
         .healthExitLabel:            "Exit",
-        .healthLatencyLabel:         "Latency",
+        // #460 was: `.healthLatencyLabel` ("Latency") — see `diagResponseLabel`.
         .healthLatencyMs_fmt:        "%d ms",
         .healthLocationUnknown:      "Location unknown",
         // #455: premium redesign editorial additions
         .carrierChoiceFooter:        "Telemost is the hardest to block (vp8channel only). Jitsi with datachannel is the fastest and most stable. WBStream needs an account token.",
-        .configReliabilityHeader:    "Reliability",
+        // #460 was: `.configReliabilityHeader` ("Reliability") — its section
+        // held only the auto-switch toggle, which moved to Connections.
         .unitSeconds:                "s",
         .sshTestInvalidPort:         "Invalid port",
         .sshTestReachable_fmt:       "Reachable (%@)",
@@ -323,13 +327,27 @@ enum L10nTable {
         .settingsTitle:              "Settings",
         .sectionSOCKS5:              "SOCKS5",
         .sectionDNS:                 "DNS",
-        .sectionVP8:                 "vp8channel",
-        .sectionConnection:          "Connection",
+        // #460 (finding 12, verifier pass) was: "vp8channel" — the raw
+        // transport id. Every picker in the app names this transport "VP8"
+        // (`transportVp8channel`), so a Settings header spelling it the
+        // internal way was the last place that id surfaced in the UI.
+        .sectionVP8:                 "VP8 video transport",
+        // #460 was: `.sectionConnection` ("Connection") over eight rows and at
+        // least four subjects. One header per subject now, so a footer under
+        // any of them can only mean the row above it.
+        .settingsSectionOnOpen:      "When the app opens",
+        .settingsSectionStart:       "Starting a connection",
+        .settingsSectionStayConnected: "Staying connected",
+        .settingsSectionSpeedTest:   "Speed test",
+        .settingsSectionUpdates:     "Updates",
         .sectionLogs:                "Logs",
         .sectionIPSources:           "IP-check sources",
         .ipSourcesFooter:            "Services queried by the IP check. The RU-zone options stay reachable when public resolvers are blocked. If none are selected, the defaults are used.",
         .sectionSpeedProvider:       "Speed-test provider",
-        .speedProviderFooter:        "Server the speed test runs against. Switch if Cloudflare is slow or blocked on your network.",
+        // #460 (verifier pass) was: "…if Cloudflare is slow" — it named one
+        // provider by brand, so it read as false advice to anyone who had
+        // already switched away from it.
+        .speedProviderFooter:        "Server the speed test runs against. Switch if the one selected is slow or blocked on your network.",
         .speedAllFailed:             "All measurements failed",
         // #458 was: "…Reconfigure the server to datachannel…" — capital-R
         // "Reconfigure" reads as a control name, and no control carries it; the
@@ -346,26 +364,47 @@ enum L10nTable {
         .socksPortChangeNote:        "Port change takes effect on the next connection.",
         .dnsFreeFormPlaceholder:     "IP:port",
         .dnsFooter:                  "Passed to the Go runtime and to the server install script. Format: IP:port. RU carrier presets only resolve from inside that carrier's network.",
-        .vp8Footer:                  "MobileSetVP8Options only applies when transport=vp8channel. For wbstream this is the default channel. Defaults (60/64) are tuned for Telemost.",
+        // #460 (finding 12) was: `.vp8Footer` — "MobileSetVP8Options only
+        // applies when transport=vp8channel…". A gomobile symbol and a config
+        // literal in a Settings footer.
+        // #460 (verifier pass) also was: the raw ids "vp8channel" and
+        // "wbstream" in the replacement sentence. `CarrierTransportMatrix`
+        // displays those two as "VP8" and "WB Stream" in every picker, so
+        // the note now uses the words the user was shown when they chose.
+        .vp8Note:                    "These two matter only when the server sends its traffic as video — the VP8 transport, which is what WB Stream uses by default. More frames and bigger batches move more data, but look less like an ordinary video call. The defaults, 60 and 64, are tuned for Telemost.",
         .startTimeoutLabel:          "Ready timeout",
+        .startTimeoutNote:           "How long to wait for a connection to come up before giving up and reporting a failure.",
         .autoConnectOnLaunchLabel:   "Auto-connect on launch",
+        .autoConnectOnLaunchNote:    "Starts the connection shown on the Connections tab as soon as the app opens.",
         .autoRemoveConnectionOnUninstallLabel: "Remove linked connection when VPS is uninstalled",
+        .autoRemoveOnUninstallNote:  "When you uninstall a server on the Servers tab, the connection it created is removed from your Connections list too.",
         .tunnelCheckLabel:           "Tunnel check",
         .keepAliveOff:               "off",
         .backgroundAudioLabel:       "Background work (audio)",
+        .backgroundAudioNote:        "Keeps the tunnel alive while the app is in the background by playing a silent audio track. Uses more battery.",
+        .earlyRestartWedgeNote:      "Restarts the session as soon as it stops passing traffic, without waiting for it to drop. Off by default.",
         .localSocksAuthLabel:        "Require proxy authentication",
         .logLevelLabel:              "Log level",
-        .footerKeepAlive:            "Sends a periodic end-to-end probe through SOCKS5 every N seconds. On failure the tunnel reconnects automatically. Set to 0 to disable.",
+        .logLevelNote:               "How much detail is recorded. Higher levels help when you are chasing a problem, and fill the log faster.",
+        // #460 (verifier pass) was: "…every N seconds" — an algebra variable
+        // for the number in the field this note now sits directly under.
+        .footerKeepAlive:            "Sends an end-to-end probe through SOCKS5 at the interval set here. On failure the tunnel reconnects automatically. Set to 0 to disable.",
         .footerLogBuffer:            "Maximum number of lines kept in memory per log category.",
         .logBufferLabel:             "Log buffer",
-        .containerLogsTailLabel:     "Container logs (tail)",
+        // #460 (finding 12 class, verifier pass) was: "Container logs (tail)"
+        // — `tail` is the shell command this ends up running, not something
+        // the label needs to say; the note under it already explains it.
+        .containerLogsTailLabel:     "Container log lines",
+        .containerLogsTailNote:      "How many of the newest lines to pull from a server's container log.",
         .clearAllLogsAction:         "Clear all logs",
         .copyAllAction:              "Copy all",
         .clearCategoryAction:        "Clear this category",
         .fontSizeLabel:              "Font size",
         .fontSizeSystem:             "System",
         .fontPreviewText:            "Preview text — this is how labels and headings will look across the app.",
-        .fontFooter:                 "Applied app-wide (via SwiftUI dynamicTypeSize). Smaller = denser, larger = easier to read.",
+        // #460 (finding 18) was: `.fontFooter` — "Applied app-wide (via SwiftUI
+        // dynamicTypeSize)". A framework API named in a Settings footer.
+        .fontNote:                   "Sets the text size everywhere in the app. Smaller fits more on screen, larger is easier to read. «System» follows the text size from iOS Settings.",
         .languageLabel:              "Language",
         .themeLabel:                 "Theme",
 
@@ -598,11 +637,27 @@ enum L10nTable {
 
         // #337: screenshot-safe IP masking
         .maskIPsLabel:               "Hide IP addresses",
-        .maskIPsFooter:              "Masks IP addresses on the Connections diagnostics and VPS cards for safe screenshots. Display-only — copy actions and stored values stay real. Logs are not masked.",
+        // #460 (verifier pass) was: "Masks IP addresses… Logs are not masked."
+        // The toggle above it is called "Hide IP addresses"; a footer that
+        // renames the control it explains reads as being about something else.
+        .maskIPsFooter:              "Hides IP addresses on the Connections diagnostics and VPS cards for safe screenshots. Display-only — copy actions and stored values stay real. Logs still contain the real addresses.",
 
         // #328: active-carrier endpoints with one-tap copy
-        .carrierEndpointsTitle:      "Carrier endpoints",
-        .carrierEndpointsHint:       "Add these as DIRECT rules in your proxy app so its own traffic doesn't loop through olcrtc.",
+        // #460 (finding 23) was: `.carrierEndpointsTitle` ("Carrier endpoints")
+        // and `.carrierEndpointsHint` ("Add these as DIRECT rules in your proxy
+        // app so its own traffic doesn't loop through olcrtc."). Written for
+        // someone who already knew what it meant, on the main screen, with
+        // nothing saying who needs it. The row now opens with the question that
+        // selects its audience; the sheet explains itself before the list.
+        .carrierEndpointsRowTitle:   "Using another proxy app?",
+        .carrierEndpointsRowHint:    "A second proxy or VPN app that routes everything on this phone will also capture the video call olcrtc itself rides on, and the tunnel stalls. This lists the addresses to let out directly.",
+        .carrierEndpointsRowConnectHint: "Connect first — the addresses depend on the server in use.",
+        .carrierEndpointsShowAction: "Show",
+        .carrierEndpointsScreenTitle: "Send these direct",
+        // "DIRECT" stays capitalised: it is the literal name of the rule in the
+        // proxy apps this screen exists for, and the word the reader must find.
+        .carrierEndpointsLead:       "Only needed if another proxy or VPN app is handling this phone's traffic. Add every address below to that app's DIRECT (bypass) list, so it lets olcrtc's own video call out untouched — otherwise it captures the call the tunnel is built on and nothing connects.",
+        .carrierEndpointsFootnote:   "These belong to the conferencing service, and were looked up when this screen opened. They rotate — open it again after a reconnect.",
         .carrierEndpointHost:        "Host",
         .carrierEndpointResolvedIPs: "Resolved IPs",
         .carrierEndpointResolving:   "Resolving…",
@@ -610,9 +665,9 @@ enum L10nTable {
         .carrierEndpointNoHost:      "This carrier's room ID isn't a host — nothing to exclude.",
         .carrierEndpointCopied_fmt:  "📋 Copied: %@",
         .carrierEndpointRefresh:     "Re-resolve",
-        .carrierEndpointsCheckAction: "Check",
-        .carrierEndpointsConnectHint: "Connect to a server to inspect its carrier endpoints.",
-        .carrierEndpointsReadyHint:  "Endpoints to route DIRECT in your proxy app.",
+        // #460 was: `.carrierEndpointsCheckAction` ("Check" — it read as "check
+        // whether these endpoints are healthy", which the button does not do),
+        // plus `.carrierEndpointsConnectHint` / `.carrierEndpointsReadyHint`.
         .carrierEndpointCopyAll:     "Copy host & IPs",
 
         // #359: accessibility for the hero connect toggle + icon toolbar buttons
@@ -700,7 +755,10 @@ enum L10nTable {
         .removeProtocolConfirmTitle_fmt: "Remove %@ from this server?",
         .removeProtocolConfirmBody:   "Stops and deletes this protocol's container and its config on the VPS. The matching connection is removed from your list too. The other protocols keep running.",
         .protocolConnectAction:       "Connect via this protocol",
-        .protocolConnectedBadge:      "Connected",
+        // #460 (findings 7 / 16) was: `.protocolConnectedBadge` ("Connected") —
+        // the longest word on a title line too narrow for it, which SwiftUI
+        // hyphenated into "Connec-ted". Keep any translation short.
+        .protocolLiveBadge:           "Live",
         .protocolPrimaryBadge:        "primary",
         .protocolRecordMissing:       "No saved connection matches this protocol — use «Recover connection» in the row menu.",
         .protocolAdded_fmt:           "Added %@/%@ — connection saved",
@@ -779,8 +837,9 @@ enum L10nTable {
         .healthReasonTimedOutShort:    "Timed out",
         // #458 was: "The Logs tab has the raw details." — #457 deleted the Logs
         // TAB (five tabs became Connect / Servers / Settings). The log lives at
-        // Settings → `settingsOpenLogsRow`, so that is what this must name.
-        .healthReasonUnknown:          "The check came back with no clear answer. Settings → Diagnostics and logs has the raw details.",
+        // Settings → `settingsViewLogsRow`, so that is what this must name.
+        // #460: that row was renamed, so this sentence was renamed with it.
+        .healthReasonUnknown:          "The check came back with no clear answer. Settings → View all logs has the raw details.",
         .healthReasonUnknownShort:     "No clear answer",
 
         // #456: health actions — same wording as the same action elsewhere.
@@ -828,7 +887,10 @@ enum L10nTable {
 
         // #457: Logs is a detail view of the thing it explains, so its title
         // names that subject instead of saying "Logs" four times over.
-        .settingsOpenLogsRow:        "Diagnostics and logs",
+        // #460 (finding 21c) was: `.settingsOpenLogsRow` ("Diagnostics and
+        // logs") — the third thing in the app called "Diagnostics", and the
+        // only one of the three that opens a log reader. It says so now.
+        .settingsViewLogsRow:        "View all logs",
         .logsSubjectConnection:      "Connection log",
         .logsSubjectProvisioning:    "Server operations log",
         .logsSubjectContainer_fmt:   "Server log · %@",
@@ -886,7 +948,20 @@ enum L10nTable {
         .diagToolsHeader:            "Checks",
         // #459: the owner asked, of the exit country and IP, "where do they even
         // come from?". Both hints name the service that answers.
-        .diagExitSourceHint:         "Asked ipinfo.io through the tunnel",
+        // #460 (findings 3 / 22) was: `.diagExitSourceHint` — "Asked ipinfo.io
+        // through the tunnel", three words squeezed into the row's narrow
+        // right-hand value column, where they wrapped into a ragged stack. The
+        // note is full width now and says what was measured, not only who
+        // answered — the city and the country are read off that one answer.
+        .diagExitNote:               "Your exit IP address, looked up with ipinfo.io through the tunnel — the city and country come from that same answer.",
+        // #460 (findings 2 / 15): the screen showed 1109 ms in red here and
+        // 133 ms on a connection's chip, and called both "the latency". This
+        // row times a WHOLE fresh request — open a connection through the live
+        // tunnel, then wait for the answer — so most of it is setup, and it is
+        // several times a connection check's round-trip by construction. The
+        // reconciliation is printed at the one place the two numbers meet.
+        .diagResponseLabel:          "Response time",
+        .diagResponseNote:           "Time to open a fresh connection through the live tunnel and get an answer. The per-connection checks elsewhere in the app time a round-trip on a connection that is already open, so their numbers are much smaller. The two are not comparable.",
         // The count is enabled sources, which the user can set to 1 — hence the
         // colon rather than "%d services", which would read "1 services".
         .diagIPSourceHint_fmt:       "Asks public services for your address, over the current route. Sources: %d.",
@@ -902,6 +977,15 @@ enum L10nTable {
         .vpsAdvancedUninstallFooter:   "Deletes the olcrtc container on this server. The connection saved for it stops working.",
         .vpsAdvancedDeepUninstallFooter: "Deletes every olcrtc container, image and deploy directory on the server.",
         .vpsAdvancedRemoveHostFooter:  "Forgets this server in the app. Nothing on the machine itself changes.",
+
+        // #460: screenshot rounds 2–4.
+        // The hero is the most prominent place the app prints a country, so it
+        // is also where it has to say where that country came from.
+        .heroExitSourceNote:         "Where your traffic comes out — from a location lookup of the exit IP, made through the tunnel.",
+        // Instruction 26: auto-switch moved off Settings and onto the screen
+        // holding the protocols it switches between, so its explainer had to
+        // shrink from a settings paragraph to one line on a card.
+        .connectAutoSwitchHint:      "If the protocol in use stops answering, switch to another one on the same server.",
     ]
 
     // MARK: Russian
@@ -936,12 +1020,16 @@ enum L10nTable {
         .vpnSettingsEntryName:      "OlcRTC",
         .vpnCapabilityUnavailable_fmt: "Система отклонила конфигурацию VPN (%@). Так бывает, если доступ к VPN был отклонён или приложение подписано бесплатным Apple ID — для Network Extension нужна платная команда Apple Developer. Режим прокси продолжает работать.",
 
-        // #453: auto-failover
+        // #453: auto-failover. #460: элемент управления переехал на экран
+        // «Подключения», к тем самым протоколам, между которыми он переключает,
+        // поэтому это теперь заголовок карточки и строка условия под ней.
+        // #460 было: `.configFailoverExplainer` — длинная фраза для страницы
+        // настроек; на карточке её заменил однострочный `connectAutoSwitchHint`.
         .configFailoverToggle:       "Авто-переключение протоколов",
-        .configFailoverExplainer:    "Если активный протокол перестаёт отвечать, автоматически переключиться на другой протокол того же сервера.",
         .configFailoverProxyOnlyFooter: "Работает в режиме прокси.",
         .settingsRefreshOnEntryToggle:  "Проверять при открытии",
-        .settingsRefreshOnEntryExplainer: "При открытии приложения заново проверять серверы и все протоколы на них, чтобы вы видели актуальное состояние. То, что проверялось пару минут назад, не трогается.",
+        // #460: «чтобы вы видели» → безличная форма; остальная таблица на «ты».
+        .settingsRefreshOnEntryExplainer: "При открытии приложения заново проверять серверы и все протоколы на них, чтобы на экране было актуальное состояние. То, что проверялось пару минут назад, не трогается.",
         .failoverSwitching_fmt:      "Протокол %@ не отвечает — переключаюсь на %@",
         .failoverAllFailed:          "Все протоколы этого сервера недоступны",
         // #454/#459: карточка здоровья стала блоком «Текущая сессия» внутри
@@ -949,12 +1037,13 @@ enum L10nTable {
         // у неё больше нет.
         .healthProtocolLabel:        "Протокол",
         .healthExitLabel:            "Выход",
-        .healthLatencyLabel:         "Задержка",
+        // #460 было: `.healthLatencyLabel` («Задержка») — см. `diagResponseLabel`.
         .healthLatencyMs_fmt:        "%d мс",
         .healthLocationUnknown:      "Местоположение неизвестно",
         // #455: premium redesign editorial additions
         .carrierChoiceFooter:        "Telemost сложнее всего заблокировать (только vp8channel). Jitsi с datachannel — самый быстрый и стабильный. WBStream требует токен аккаунта.",
-        .configReliabilityHeader:    "Надёжность",
+        // #460 было: `.configReliabilityHeader` («Надёжность») — в этом разделе
+        // настроек остался только переключатель авто-переключения, а он переехал.
         .unitSeconds:                "с",
         .sshTestInvalidPort:         "Некорректный порт",
         .sshTestReachable_fmt:       "Доступен (%@)",
@@ -1034,7 +1123,7 @@ enum L10nTable {
         .socksPassLabel:             "Пароль SOCKS",
         .socksUserPlaceholder:       "пусто = без auth",
         .vp8FpsLabel:                "FPS",
-        .vp8BatchLabel:              "Batch size",
+        .vp8BatchLabel:              "Размер пачки",
         .globalDefault_fmt:          "глобальный (%d)",
         .overrideHint:               "Переопределяют глобальные настройки только для этого подключения. «×» сбрасывает к глобальному.",
         // #365: параметры seichannel для соединения
@@ -1201,13 +1290,24 @@ enum L10nTable {
         .settingsTitle:              "Настройки",
         .sectionSOCKS5:              "SOCKS5",
         .sectionDNS:                 "DNS",
-        .sectionVP8:                 "vp8channel",
-        .sectionConnection:          "Подключение",
+        // #460 (finding 12, проверка) было: «vp8channel» — сырой
+        // идентификатор транспорта. Везде в приложении он называется «VP8».
+        .sectionVP8:                 "Видеотранспорт VP8",
+        // #460 было: `.sectionConnection` («Подключение») — один заголовок над
+        // восемью строками и как минимум четырьмя разными темами. Теперь один
+        // заголовок = одна тема, и подпись под разделом относится только к ней.
+        .settingsSectionOnOpen:      "При открытии приложения",
+        .settingsSectionStart:       "Запуск подключения",
+        .settingsSectionStayConnected: "Удержание подключения",
+        .settingsSectionSpeedTest:   "Тест скорости",
+        .settingsSectionUpdates:     "Обновления",
         .sectionLogs:                "Логи",
         .sectionIPSources:           "Источники проверки IP",
         .ipSourcesFooter:            "Сервисы, опрашиваемые при проверке IP. Варианты из ru-зоны остаются доступны, когда публичные резолверы заблокированы. Если ничего не выбрано, используются значения по умолчанию.",
-        .sectionSpeedProvider:       "Провайдер спидтеста",
-        .speedProviderFooter:        "Сервер, против которого идёт тест скорости. Смени, если Cloudflare медленный или заблокирован в твоей сети.",
+        // #460 было: «Провайдер спидтеста» — раздел над ним называется «Тест
+        // скорости», а одна вещь должна называться одним словом.
+        .sectionSpeedProvider:       "Провайдер теста скорости",
+        .speedProviderFooter:        "Сервер, против которого идёт тест скорости. Смени, если выбранный медленный или заблокирован в твоей сети.",
         .speedAllFailed:             "Все измерения не удались",
         // #458: name the control that does it («Сменить комнату / транспорт»),
         // matching the English entry.
@@ -1223,26 +1323,40 @@ enum L10nTable {
         .socksPortChangeNote:        "Изменение порта применится при следующем подключении.",
         .dnsFreeFormPlaceholder:     "IP:port",
         .dnsFooter:                  "Передаётся в Go-рантайм и в скрипт установки сервера. Формат: IP:port. Пресеты RU-операторов резолвят только внутри сети соответствующего оператора.",
-        .vp8Footer:                  "MobileSetVP8Options применяется только если transport=vp8channel. Для wbstream это дефолтный канал. Значения по умолчанию (60/64) — для Telemost.",
+        // #460 (finding 12) было: `.vp8Footer` — «MobileSetVP8Options
+        // применяется только если transport=vp8channel…»: символ gomobile и
+        // строка конфига в подписи к настройке. Само слово «vp8channel»
+        // остаётся — это транспорт, который пользователь выбирает на вкладке
+        // «Серверы», а не внутреннее имя.
+        .vp8Note:                    "Эти два параметра важны, только когда сервер передаёт трафик видео — транспорт VP8, который WB Stream использует по умолчанию. Больше кадров и крупнее пачки — больше данных, но меньше похоже на обычный видеозвонок. Значения по умолчанию, 60 и 64, подобраны для Telemost.",
         .startTimeoutLabel:          "Таймаут готовности",
+        .startTimeoutNote:           "Сколько ждать, пока подключение поднимется, прежде чем прекратить попытку и сообщить об ошибке.",
         .autoConnectOnLaunchLabel:   "Авто-подключение при запуске",
+        .autoConnectOnLaunchNote:    "Запускает подключение, показанное на вкладке «Подключения», сразу при открытии приложения.",
         .autoRemoveConnectionOnUninstallLabel: "Удалять связанное соединение при удалении VPS",
+        .autoRemoveOnUninstallNote:  "При удалении сервера на вкладке «Серверы» созданное им подключение удаляется и из списка на вкладке «Подключения».",
         .tunnelCheckLabel:           "Проверка туннеля",
         .keepAliveOff:               "выкл",
-        .backgroundAudioLabel:       "Фоновая работа (audio)",
+        .backgroundAudioLabel:       "Фоновая работа (через аудио)",
+        .backgroundAudioNote:        "Держит туннель живым, пока приложение в фоне, проигрывая беззвучную аудиодорожку. Расходует больше батареи.",
+        .earlyRestartWedgeNote:      "Перезапускает сессию, как только она перестаёт пропускать трафик, не дожидаясь разрыва. По умолчанию выключено.",
         .localSocksAuthLabel:        "Требовать аутентификацию прокси",
         .logLevelLabel:              "Уровень логирования",
-        .footerKeepAlive:            "Раз в N секунд делает end-to-end запрос через SOCKS5. При неудаче туннель переподключается. 0 — отключить.",
+        .logLevelNote:               "Насколько подробно вести запись. Высокие уровни помогают разобраться с проблемой, но лог заполняется быстрее.",
+        .footerKeepAlive:            "С заданным здесь интервалом делает сквозную проверку через SOCKS5. При неудаче туннель переподключается. 0 — отключить.",
         .footerLogBuffer:            "Максимальное количество строк в памяти для каждой категории логов.",
         .logBufferLabel:             "Буфер логов",
-        .containerLogsTailLabel:     "Логи контейнера (tail)",
+        .containerLogsTailLabel:     "Строк из лога контейнера",
+        .containerLogsTailNote:      "Сколько последних строк подтягивать из лога контейнера сервера.",
         .clearAllLogsAction:         "Очистить все логи",
         .copyAllAction:              "Копировать всё",
         .clearCategoryAction:        "Очистить категорию",
         .fontSizeLabel:              "Размер шрифта",
         .fontSizeSystem:             "Системный",
         .fontPreviewText:            "Превью текста — так будут выглядеть подписи и заголовки в приложении.",
-        .fontFooter:                 "Применяется ко всему приложению (через SwiftUI dynamicTypeSize). Меньше = плотнее, больше = удобнее читать.",
+        // #460 (finding 18) было: `.fontFooter` — «(через SwiftUI
+        // dynamicTypeSize)»: имя фреймворка в подписи к настройке.
+        .fontNote:                   "Задаёт размер текста во всём приложении. Меньше — помещается больше, больше — легче читать. «Системный» следует размеру текста из настроек iOS.",
         .languageLabel:              "Язык",
         .themeLabel:                 "Тема",
 
@@ -1399,7 +1513,7 @@ enum L10nTable {
 
         // ConnectionsView misc
         .diagnosticsTitle:           "Диагностика",
-        .ipCheckTitle:               "IP проверка",
+        .ipCheckTitle:               "Проверка IP",   // #460 было: «IP проверка» — не по-русски
         .ipCheckRun:                 "Проверить IP",
         .speedTestRun:               "Запустить тест",
 
@@ -1474,11 +1588,25 @@ enum L10nTable {
 
         // #337: безопасный для скриншотов режим — скрытие IP
         .maskIPsLabel:               "Скрывать IP-адреса",
-        .maskIPsFooter:              "Скрывает IP-адреса в диагностике на вкладке «Соединения» и на карточках VPS для безопасных скриншотов. Только отображение — копирование и сохранённые значения остаются настоящими. Логи не скрываются.",
+        // #460 было: «на вкладке «Соединения»» — вкладка называется
+        // «Подключения» (`.tabConnections`); одно место — одно имя.
+        .maskIPsFooter:              "Скрывает IP-адреса в диагностике на вкладке «Подключения» и на карточках VPS для безопасных скриншотов. Только отображение — копирование и сохранённые значения остаются настоящими. В логах адреса остаются настоящими.",
 
         // #328: конечные точки активного оператора с копированием в один тап
-        .carrierEndpointsTitle:      "Точки оператора",
-        .carrierEndpointsHint:       "Добавь их как DIRECT-правила в прокси-приложении, чтобы его собственный трафик не зациклился через olcrtc.",
+        // #460 (finding 23) было: `.carrierEndpointsTitle` («Точки оператора»)
+        // и `.carrierEndpointsHint` — язык того, кто это сделал, на главном
+        // экране и без единого слова о том, кому это вообще нужно. Строка
+        // начинается с вопроса, который отбирает читателя, а экран объясняет
+        // себя до списка адресов.
+        .carrierEndpointsRowTitle:   "Пользуешься другим прокси-приложением?",
+        .carrierEndpointsRowHint:    "Второе прокси- или VPN-приложение, которое заворачивает весь трафик телефона, перехватит и сам видеозвонок, внутри которого работает olcrtc, — туннель встанет. Здесь адреса, которые надо выпускать напрямую.",
+        .carrierEndpointsRowConnectHint: "Сначала подключись — адреса зависят от используемого сервера.",
+        .carrierEndpointsShowAction: "Показать",
+        .carrierEndpointsScreenTitle: "Отправлять напрямую",
+        // «DIRECT» остаётся латиницей и заглавными: так это правило называется
+        // в самих прокси-приложениях, и именно это слово надо там найти.
+        .carrierEndpointsLead:       "Нужно, только если трафиком телефона управляет другое прокси- или VPN-приложение. Добавь все адреса ниже в его список DIRECT (исключений), чтобы оно выпускало видеозвонок olcrtc без изменений — иначе оно перехватит звонок, на котором держится туннель, и подключения не будет.",
+        .carrierEndpointsFootnote:   "Это адреса самого сервиса видеозвонков, они определены при открытии экрана. Адреса меняются — открой экран заново после переподключения.",
         .carrierEndpointHost:        "Хост",
         .carrierEndpointResolvedIPs: "Найденные IP",
         .carrierEndpointResolving:   "Разрешение…",
@@ -1486,9 +1614,9 @@ enum L10nTable {
         .carrierEndpointNoHost:      "ID комнаты этого оператора не является хостом — исключать нечего.",
         .carrierEndpointCopied_fmt:  "📋 Скопировано: %@",
         .carrierEndpointRefresh:     "Разрешить заново",
-        .carrierEndpointsCheckAction: "Проверить",
-        .carrierEndpointsConnectHint: "Подключись к серверу, чтобы посмотреть точки оператора.",
-        .carrierEndpointsReadyHint:  "Точки для DIRECT-правил в прокси-приложении.",
+        // #460 было: `.carrierEndpointsCheckAction` («Проверить» — читалось как
+        // «проверить, живы ли эти адреса», чего кнопка не делает), а также
+        // `.carrierEndpointsConnectHint` / `.carrierEndpointsReadyHint`.
         .carrierEndpointCopyAll:     "Скопировать хост и IP",
 
         // #359: доступность переключателя подключения и кнопок-иконок в тулбаре
@@ -1576,7 +1704,10 @@ enum L10nTable {
         .removeProtocolConfirmTitle_fmt: "Удалить %@ с этого сервера?",
         .removeProtocolConfirmBody:   "Останавливает и удаляет контейнер этого протокола и его конфиг на VPS. Соответствующее подключение тоже удаляется из списка. Остальные протоколы продолжают работать.",
         .protocolConnectAction:       "Подключиться через этот протокол",
-        .protocolConnectedBadge:      "Подключено",
+        // #460 (findings 7 / 16) было: `.protocolConnectedBadge` («Подключено»)
+        // — самое длинное слово в строке заголовка, которой не хватало ширины,
+        // и SwiftUI переносил его посреди слова. Держать перевод коротким.
+        .protocolLiveBadge:           "Активен",
         .protocolPrimaryBadge:        "основной",
         .protocolRecordMissing:       "Нет сохранённого подключения для этого протокола — используйте «Восстановить подключение» в меню строки.",
         .protocolAdded_fmt:           "Добавлен %@/%@ — подключение сохранено",
@@ -1614,7 +1745,8 @@ enum L10nTable {
         .healthChipStale_fmt:         "последний раз %@",
         .healthChipFaded_fmt:        "было %@ · %@",
         .healthChipFadedNoRTT_fmt:   "работало %@",
-        .healthChipFailed_fmt:        "сбой %@",
+        // #460: «сбой только что» без двоеточия читалось как обрывок фразы.
+        .healthChipFailed_fmt:        "сбой: %@",
         .healthChipHandshake_fmt:     "нет данных · %@",
         .healthChipUnchecked:         "не удалось проверить",
         // #459: две формы. `phrase` — законченный оборот, к нему нельзя ничего
@@ -1653,8 +1785,9 @@ enum L10nTable {
         .healthReasonTimedOut:         "Проверка не уложилась во время — данные так и не пришли.",
         .healthReasonTimedOutShort:    "Истекло время",
         // #458 was: "… на вкладке «Логи»." — the Logs tab is gone (#457); the log
-        // is reached from Settings → «Диагностика и логи» (settingsOpenLogsRow).
-        .healthReasonUnknown:          "Проверка не дала ясного ответа. Подробности — в «Настройки → Диагностика и логи».",
+        // is reached from Settings → «Смотреть все логи» (settingsViewLogsRow).
+        // #460: строку переименовали — переименована и эта фраза.
+        .healthReasonUnknown:          "Проверка не дала ясного ответа. Подробности — в «Настройки → Смотреть все логи».",
         .healthReasonUnknownShort:     "Нет ясного ответа",
 
         // #456: действия — те же формулировки, что и у этих действий в других местах.
@@ -1702,7 +1835,10 @@ enum L10nTable {
 
         // #457: лог — это подробности того, что его породило, поэтому в
         // заголовке стоит сам предмет, а не слово «Логи».
-        .settingsOpenLogsRow:        "Диагностика и логи",
+        // #460 (finding 21c) было: `.settingsOpenLogsRow` («Диагностика и
+        // логи») — третье место в приложении со словом «Диагностика», и
+        // единственное из трёх, которое открывает лог. Теперь так и написано.
+        .settingsViewLogsRow:        "Смотреть все логи",
         .logsSubjectConnection:      "Лог подключения",
         .logsSubjectProvisioning:    "Лог операций с сервером",
         .logsSubjectContainer_fmt:   "Лог сервера · %@",
@@ -1756,7 +1892,19 @@ enum L10nTable {
         .diagToolsHeader:            "Проверки",
         // #459: владелец спросил про страну и IP выхода — «откуда они вообще
         // берутся?». Обе подсказки называют сервис, который отвечает.
-        .diagExitSourceHint:         "Запрошено у ipinfo.io через туннель",
+        // #460 (findings 3 / 22) было: `.diagExitSourceHint` — «Запрошено у
+        // ipinfo.io через туннель»: три слова в узкой правой колонке строки,
+        // где они разваливались в рваный столбик. Теперь подпись во всю ширину
+        // и говорит, что именно измерено, а не только кто ответил.
+        .diagExitNote:               "Твой выходной IP-адрес, определён через ipinfo.io по туннелю — город и страна берутся из того же ответа.",
+        // #460 (findings 2 / 15): на экране одновременно были 1109 мс красным
+        // здесь и 133 мс на плашке подключения, и то и другое называлось
+        // «задержкой». Здесь измеряется ЦЕЛЫЙ новый запрос — открыть соединение
+        // через живой туннель и дождаться ответа, — поэтому большую часть числа
+        // занимает установка связи, и оно заведомо в разы больше, чем
+        // круговая задержка в проверке подключения.
+        .diagResponseLabel:          "Время ответа",
+        .diagResponseNote:           "Время открыть новое соединение через работающий туннель и получить ответ. Проверки отдельных подключений в других местах приложения измеряют задержку по уже открытому соединению, поэтому их числа заметно меньше. Сравнивать их с этим нельзя.",
         // Число — это включённые источники, их может быть и один, поэтому
         // двоеточие, а не «%d сервисов».
         // #459 (audit): «ваш» → «твой» — вся остальная таблица на «ты».
@@ -1773,5 +1921,14 @@ enum L10nTable {
         .vpsAdvancedUninstallFooter:   "Удаляет контейнер olcrtc с этого сервера. Сохранённое для него подключение перестанет работать.",
         .vpsAdvancedDeepUninstallFooter: "Удаляет с сервера все контейнеры, образы и каталоги olcrtc.",
         .vpsAdvancedRemoveHostFooter:  "Забывает этот сервер в приложении. На самой машине ничего не меняется.",
+
+        // #460: раунды скриншотов 2–4.
+        // Главный экран — самое заметное место, где приложение печатает страну,
+        // поэтому именно здесь оно и говорит, откуда эта страна взялась.
+        .heroExitSourceNote:         "Где твой трафик выходит наружу — по геолокации выходного IP, запрошенной через туннель.",
+        // Инструкция 26: авто-переключение уехало из настроек на экран с теми
+        // самыми протоколами, между которыми оно переключает, и объяснение
+        // ужалось с абзаца настроек до одной строки на карточке.
+        .connectAutoSwitchHint:      "Если работающий протокол перестал отвечать — переключиться на другой на том же сервере.",
     ]
 }

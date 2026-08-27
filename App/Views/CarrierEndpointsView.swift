@@ -2,8 +2,10 @@ import SwiftUI
 
 // MARK: - CarrierEndpointsView (#406 — was #328's inline Connections card)
 //
-// Opened from Connections → Diagnostics → "Carrier endpoints" while a tunnel is
-// up. Shows the carrier base host (derived from the connection params) plus its
+// Opened from Connections → Diagnostics → "Using another proxy app?" while a
+// tunnel is up (#460 was: a row titled "Carrier endpoints", which named the
+// mechanism rather than the situation, so nobody could tell whether it applied
+// to them). Shows the carrier base host (derived from the connection params) plus its
 // freshly-resolved IP(s) — the endpoints an external proxy app (Shadowrocket
 // etc.) must route DIRECT so the olcrtc tunnel's own carrier traffic doesn't
 // loop back through the SOCKS port. Copy the host, an IP, or host + all IPs.
@@ -32,6 +34,12 @@ struct CarrierEndpointsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    // #460 (finding 23): say WHO this screen is for and WHAT
+                    // breaks without it, before showing a list of addresses.
+                    // Reached from a row on the main screen, it previously
+                    // opened straight onto raw hosts and IPs with one line of
+                    // insider shorthand underneath them.
+                    leadIn
                     if let host {
                         OlcCard {
                             VStack(alignment: .leading, spacing: 12) {
@@ -56,15 +64,25 @@ struct CarrierEndpointsView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    Text(L10n.carrierEndpointsHint.localized())
+                    // #460 was: `carrierEndpointsHint` — "Add these as DIRECT
+                    // rules in your proxy app so its own traffic doesn't loop
+                    // through olcrtc." The instruction survives (it moved up
+                    // into `leadIn`, where it can be read before the list); the
+                    // footnote now carries the thing the list itself cannot say
+                    // — that these addresses expire.
+                    Text(L10n.carrierEndpointsFootnote.localized())
                         .font(.caption)
                         .foregroundStyle(Theme.Palette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 4)
                 }
                 .padding(16)
             }
             .background(Theme.Palette.bg)
-            .navigationTitle(L10n.carrierEndpointsTitle.localized())
+            // #460 was: `carrierEndpointsTitle` ("Carrier endpoints") — the
+            // vocabulary of the person who built it, not of the person who needs
+            // it. The title now names the action the screen exists to support.
+            .navigationTitle(L10n.carrierEndpointsScreenTitle.localized())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -75,6 +93,17 @@ struct CarrierEndpointsView: View {
         }
         // IPs rotate, so resolve on appear; the row offers a re-resolve too.
         .task { if let host, ips.isEmpty { await resolve(host) } }
+    }
+
+    /// #460: the "is this screen for me?" paragraph. Plain prose, no card — it is
+    /// read once and then ignored by everyone whose phone has only olcrtc on it.
+    private var leadIn: some View {
+        Text(L10n.carrierEndpointsLead.localized())
+            .font(.subheadline)
+            .foregroundStyle(Theme.Palette.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
     }
 
     /// One copyable endpoint: label + monospaced value + a copy button.
