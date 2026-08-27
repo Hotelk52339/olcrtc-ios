@@ -58,15 +58,14 @@ enum L10nTable {
         .settingsRefreshOnEntryExplainer: "When you open the app, re-check your servers and every protocol on them, so what you see is current. Anything checked in the last couple of minutes is left alone.",
         .failoverSwitching_fmt:      "Protocol %@ is failing — switching to %@",
         .failoverAllFailed:          "All protocols on this server failed",
-        // #454: connection-health card
-        .healthTitle:                "Connection health",
+        // #454/#459: the health card is now the "This session" block of the
+        // Diagnostics card, so it no longer has a title, a throughput row or a
+        // refresh glyph of its own.
         .healthProtocolLabel:        "Protocol",
         .healthExitLabel:            "Exit",
         .healthLatencyLabel:         "Latency",
-        .healthThroughputLabel:      "Speed",
         .healthLatencyMs_fmt:        "%d ms",
         .healthLocationUnknown:      "Location unknown",
-        .healthRefresh:              "Refresh",
         // #455: premium redesign editorial additions
         .carrierChoiceFooter:        "Telemost is the hardest to block (vp8channel only). Jitsi with datachannel is the fastest and most stable. WBStream needs an account token.",
         .configReliabilityHeader:    "Reliability",
@@ -529,13 +528,10 @@ enum L10nTable {
         .speedTestRun:               "Run test",
 
         // #311 — speed-tile metric labels/units + upload-fallback log line
-        .speedLabelPing:             "Ping",
         .speedLabelDL:               "DL",
         .speedLabelUL:               "UL",
         // #342 was: "%.0f ms" / "%.1f Mbps" — unit moved to OlcMetric(unit:)
-        .speedPingValue_fmt:         "%.0f",
         .speedRateValue_fmt:         "%.1f",
-        .speedUnitMs:                "ms",
         .speedUnitMbps:              "Mbps",
         .speedUploadFallback_fmt:    "  upload: %@ has no upload endpoint — using %@",
 
@@ -592,7 +588,6 @@ enum L10nTable {
         .subMetaUsed:                "Used",
         .subMetaAvailable:           "Available",
         .subMetaMultipleSources_fmt: "%d sources",   // #396
-        .pullToRefreshSubscriptions: "Pull to refresh subscriptions",   // #411
 
         // #346: VPS-card mini-stat labels (abbreviations; ru = en per operator)
         .vpsStatPing:                "Ping",
@@ -719,27 +714,42 @@ enum L10nTable {
         // without a probe behind it; "Working" is granted only by an
         // end-to-end result that is still inside the freshness window.
         .healthNeverChecked:          "Not checked yet",
-        .healthNeverCheckedHint:      "Tap Verify to push a real request through this connection.",
+        // #459 was: "Tap Verify to push a real request through this connection."
+        // — the row's Verify menu item is gone (its chip is the affordance), so
+        // the sentence named a control that is not on that screen. It now just
+        // states the fact, which is what `healthNeverProbedHint` was added for.
+        .healthNeverCheckedHint:      "No request has been pushed through this connection yet.",
         .healthChecking:              "Checking…",
         .healthCheckingHint:          "Joining the room and loading a test page",
         .healthVerified:              "Working",
-        .healthVerifiedHint_fmt:      "Verified %@ ago · %d ms",
-        .healthVerifiedNoRTTHint_fmt: "Verified %@ ago",
+        // #459 was: "Verified %@ ago · %d ms" — with an age of "just now" that
+        // read "Verified just now ago". `HealthAge.phrase` now carries the
+        // preposition, so no sentence here may add one.
+        .healthVerifiedHint_fmt:      "Verified %@ · %d ms",
+        .healthVerifiedNoRTTHint_fmt: "Verified %@",
         .healthFading:                "Worked recently",
         .healthHandshake:             "Connects, but no data",
-        .healthHandshakeHint_fmt:     "Joined the room %@ ago, but no traffic passed",
+        .healthHandshakeHint_fmt:     "Joined the room %@, but no traffic passed",
         .healthStale:                 "Out of date",
-        .healthStaleHint_fmt:         "Last checked %@ ago — too old to trust",
+        .healthStaleHint_fmt:         "Last checked %@ — too old to trust",
         .healthInconclusive:          "Couldn't check",
-        .healthCheckedAgo_fmt:        "checked %@ ago",
+        .healthCheckedAgo_fmt:        "checked %@",
         .healthChipNever:             "not checked",
-        .healthChipStale_fmt:         "%@ old",
+        // #459 was: "%@ old" — which rendered "just now old".
+        .healthChipStale_fmt:         "last seen %@",
         .healthChipFaded_fmt:        "was %@ · %@",
-        .healthChipFadedNoRTT_fmt:   "worked %@ ago",
-        .healthChipFailed_fmt:        "failed %@ ago",
+        .healthChipFadedNoRTT_fmt:   "worked %@",
+        .healthChipFailed_fmt:        "failed %@",
         .healthChipHandshake_fmt:     "no data · %@",
         .healthChipUnchecked:         "couldn't check",
+        // #459: two forms. `phrase` is a whole fragment — nothing may append
+        // "ago" to it. `short` is a bare duration for a chip that already has a
+        // value beside it ("215 ms · 2m"). Both are plural-safe at 1.
         .ageJustNow:                  "just now",
+        .ageMinutesAgo_fmt:           "%d min ago",
+        .ageHoursAgo_fmt:             "%d hr ago",
+        .ageDaysAgo_fmt:              "%d d ago",
+        .ageNowShort:                 "now",
         .ageMinutes_fmt:              "%dm",
         .ageHours_fmt:                "%dh",
         .ageDays_fmt:                 "%dd",
@@ -780,15 +790,13 @@ enum L10nTable {
         .healthActionPortSettings:    "Open port settings",
         .healthActionRetry:           "Retry",
         .healthActionVerify:          "Verify",
-        .healthVerifyAllAction:       "Verify all",
         .healthShowReasonAction:      "What's wrong?",
         .healthLatencyNotMeasured:    "not measured",
-        .healthSweepSkipped_fmt:      "%d more not checked — tap Verify all",
 
         // #456: VPS card headlines. "Couldn't check" is not "stopped".
         .vpsHeadlineOpFailed:            "Last action failed",
         .vpsHeadlineUnreachable:         "Can't reach the server",
-        .vpsHeadlineUnreachableHint_fmt: "SSH didn't answer (%@ ago)",
+        .vpsHeadlineUnreachableHint_fmt: "SSH didn't answer (%@)",
         .vpsHeadlineUnreachableHintNever: "SSH didn't answer",
         .vpsHeadlineNotChecked:          "Not checked yet",
         .vpsHeadlineNotCheckedHint:      "Checking the server…",
@@ -831,15 +839,19 @@ enum L10nTable {
         .actionDisconnect:           "Disconnect",
         .heroSubjectNone:            "No connection yet",
         .heroLastUsedLabel:          "Last used",
-        .heroPickAConnection:        "Pick a connection below.",
+        // #459 (audit): was "Pick a connection below." — this line renders ONLY
+        // when `subject == nil`, and `ConnectionStore.primary` falls back to the
+        // first record, so nil means the list is EMPTY. It pointed at a list that
+        // was not there; the empty state below offers the one real next step.
+        .heroPickAConnection:        "Add a connection first.",
         .heroEvidenceStarting_fmt:   "starting… %d s",
         .heroEvidenceUnverified:     "connected · no data checked through it yet",
         .heroEvidenceNoNetwork:      "holding the session until the network returns",
         .heroScopeProxy_fmt:         "Proxy · only apps you point at 127.0.0.1:%@",
         .heroScopeVPN:               "VPN · everything on this device",
 
-        // #457: connection rows.
-        .connectRowLive:             "Live",
+        // #457/#459: connection rows. The live connection is the hero's subject
+        // and is not drawn in the list, so no row needs a "Live" badge.
         .connectRowTapHint:          "Connects through this connection",
         .connectRowRemove:           "Remove connection",
         .connectGroupFailing_fmt:    "%d of %d not working",
@@ -849,15 +861,11 @@ enum L10nTable {
         .healthActionInSettings_fmt:   "%@ — in Settings",
         .healthNeverMeasured:        "never measured",
 
-        // #457: the server card. The process caption states what was READ from
-        // the server, with its age — it is never a claim about a connection.
+        // #457/#459: the server card. The headline says what the server is
+        // doing; all the caption adds is WHEN that was read (`vpsReadAge_fmt`),
+        // or that it never has been.
         .vpsProtocolsFailing_fmt:    "%d of %d protocols are not working",
-        .vpsProcessRunning:          "Server process is running",
-        .vpsProcessStopped:          "Server process is stopped",
-        .vpsProcessNothingInstalled: "Nothing is installed on this server",
-        .vpsProcessNotSetUp:         "This server can't run olcrtc yet",
         .vpsProcessUnread:           "Nothing has been read from this server yet",
-        .vpsProcessAge_fmt:          "%@ · read %@ ago",
         .protocolStoppedNote:        "Not running on the server",
         .vpsScanBeforeInstall:       "Looking for an existing install…",
         .vpsScanFailed_fmt:          "Couldn't look at what's on this server. %@",
@@ -868,6 +876,32 @@ enum L10nTable {
         .addProtocolAllInstalled:    "Every supported protocol is already installed on this server.",
         .healthNeverProbedHint:      "No request has been pushed through this connection yet",
         .connectRowVerifyHint:       "Checks this connection with a real request",
+
+        // #459: the one-window redesign. The hero owns the live connection, the
+        // list under it is a switcher, Health and Diagnostics are one card, and
+        // the server card's thirteen-item menu is five safe items plus a pushed
+        // "Manage server" screen.
+        .connectListOtherHeader:     "Switch to",
+        .diagSessionHeader:          "This session",
+        .diagToolsHeader:            "Checks",
+        // #459: the owner asked, of the exit country and IP, "where do they even
+        // come from?". Both hints name the service that answers.
+        .diagExitSourceHint:         "Asked ipinfo.io through the tunnel",
+        // The count is enabled sources, which the user can set to 1 — hence the
+        // colon rather than "%d services", which would read "1 services".
+        .diagIPSourceHint_fmt:       "Asks public services for your address, over the current route. Sources: %d.",
+        .vpsReadAge_fmt:             "read %@",
+        .vpsManageServer:            "Manage server",
+        .vpsAdvancedTitle_fmt:       "Manage %@",
+        .vpsAdvancedConnectionHeader:  "Connection",
+        .vpsAdvancedMaintenanceHeader: "Maintenance",
+        .vpsAdvancedRemoveHeader:      "Remove",
+        // Every destructive row says what it destroys — the sentence a menu row
+        // could not carry, and the reason this screen exists.
+        .vpsAdvancedRebootFooter:      "Restarts the whole server. Everything running on it stops until it comes back.",
+        .vpsAdvancedUninstallFooter:   "Deletes the olcrtc container on this server. The connection saved for it stops working.",
+        .vpsAdvancedDeepUninstallFooter: "Deletes every olcrtc container, image and deploy directory on the server.",
+        .vpsAdvancedRemoveHostFooter:  "Forgets this server in the app. Nothing on the machine itself changes.",
     ]
 
     // MARK: Russian
@@ -910,15 +944,14 @@ enum L10nTable {
         .settingsRefreshOnEntryExplainer: "При открытии приложения заново проверять серверы и все протоколы на них, чтобы вы видели актуальное состояние. То, что проверялось пару минут назад, не трогается.",
         .failoverSwitching_fmt:      "Протокол %@ не отвечает — переключаюсь на %@",
         .failoverAllFailed:          "Все протоколы этого сервера недоступны",
-        // #454: connection-health card
-        .healthTitle:                "Состояние соединения",
+        // #454/#459: карточка здоровья стала блоком «Текущая сессия» внутри
+        // «Диагностики» — своего заголовка, строки скорости и кнопки обновления
+        // у неё больше нет.
         .healthProtocolLabel:        "Протокол",
         .healthExitLabel:            "Выход",
         .healthLatencyLabel:         "Задержка",
-        .healthThroughputLabel:      "Скорость",
         .healthLatencyMs_fmt:        "%d мс",
-        .healthLocationUnknown:      "Локация неизвестна",
-        .healthRefresh:              "Обновить",
+        .healthLocationUnknown:      "Местоположение неизвестно",
         // #455: premium redesign editorial additions
         .carrierChoiceFooter:        "Telemost сложнее всего заблокировать (только vp8channel). Jitsi с datachannel — самый быстрый и стабильный. WBStream требует токен аккаунта.",
         .configReliabilityHeader:    "Надёжность",
@@ -1029,7 +1062,7 @@ enum L10nTable {
         .actionUninstall:            "Удалить контейнер с сервера",
         // (audit) was: "… (git pull + rebuild)" — see the English entry.
         .actionUpdate:               "Обновить бинарник (закреплённая сборка + пересборка)",
-        .actionReboot:               "Reboot",
+        .actionReboot:               "Перезагрузить",
         .actionChangeRoomTransport:  "Сменить комнату / транспорт",
         .actionContainerLogs:        "Логи контейнера",
         .actionDone:                 "Готово",
@@ -1371,13 +1404,10 @@ enum L10nTable {
         .speedTestRun:               "Запустить тест",
 
         // #311 — speed-tile metric labels/units + upload-fallback log line (ru = en, see L10n.swift)
-        .speedLabelPing:             "Ping",
         .speedLabelDL:               "DL",
         .speedLabelUL:               "UL",
         // #342 was: "%.0f ms" / "%.1f Mbps" — unit moved to OlcMetric(unit:)
-        .speedPingValue_fmt:         "%.0f",
         .speedRateValue_fmt:         "%.1f",
-        .speedUnitMs:                "ms",
         .speedUnitMbps:              "Mbps",
         .speedUploadFallback_fmt:    "  upload: %@ has no upload endpoint — using %@",
 
@@ -1434,7 +1464,6 @@ enum L10nTable {
         .subMetaUsed:                "Использовано",
         .subMetaAvailable:           "Доступно",
         .subMetaMultipleSources_fmt: "%d источников",   // #396
-        .pullToRefreshSubscriptions: "Потяните вниз, чтобы обновить подписки",   // #411
 
         // #346: подписи мини-статистики карточки VPS (аббревиатуры; ru = en по решению оператора)
         .vpsStatPing:                "Ping",
@@ -1561,27 +1590,41 @@ enum L10nTable {
         // успех без реальной проверки; «Работает» даёт только сквозной
         // результат, который ещё не устарел.
         .healthNeverChecked:          "Ещё не проверено",
-        .healthNeverCheckedHint:      "Нажми «Проверить», чтобы пропустить настоящий запрос через это подключение.",
+        // #459 было: «Нажми «Проверить»…» — пункта «Проверить» в меню
+        // строки больше нет (его роль играет сама плашка), так что фраза
+        // называла контрол, которого на экране нет. Теперь она просто констатирует факт.
+        .healthNeverCheckedHint:      "Через это подключение ещё не проходил ни один запрос.",
         .healthChecking:              "Проверяем…",
         .healthCheckingHint:          "Заходим в комнату и загружаем тестовую страницу",
         .healthVerified:              "Работает",
-        .healthVerifiedHint_fmt:      "Проверено %@ назад · %d мс",
-        .healthVerifiedNoRTTHint_fmt: "Проверено %@ назад",
+        // #459 было: «Проверено %@ назад · %d мс» — с возрастом «только что»
+        // это читалось как «Проверено только что назад». Предлог теперь внутри
+        // `HealthAge.phrase`, и ни одна фраза здесь не добавляет свой.
+        .healthVerifiedHint_fmt:      "Проверено %@ · %d мс",
+        .healthVerifiedNoRTTHint_fmt: "Проверено %@",
         .healthFading:                "Недавно работало",
         .healthHandshake:             "Соединяется, но данные не идут",
-        .healthHandshakeHint_fmt:     "Вошли в комнату %@ назад, но трафик не прошёл",
+        .healthHandshakeHint_fmt:     "Вошли в комнату %@, но трафик не прошёл",
         .healthStale:                 "Устарело",
-        .healthStaleHint_fmt:         "Последняя проверка %@ назад — слишком давно, чтобы на неё полагаться",
+        .healthStaleHint_fmt:         "Последняя проверка %@ — слишком давно, чтобы на неё полагаться",
         .healthInconclusive:          "Не удалось проверить",
-        .healthCheckedAgo_fmt:        "проверено %@ назад",
+        .healthCheckedAgo_fmt:        "проверено %@",
         .healthChipNever:             "не проверено",
-        .healthChipStale_fmt:         "давность %@",
+        // #459 было: «давность %@» → «давность только что».
+        .healthChipStale_fmt:         "последний раз %@",
         .healthChipFaded_fmt:        "было %@ · %@",
-        .healthChipFadedNoRTT_fmt:   "работало %@ назад",
-        .healthChipFailed_fmt:        "сбой %@ назад",
+        .healthChipFadedNoRTT_fmt:   "работало %@",
+        .healthChipFailed_fmt:        "сбой %@",
         .healthChipHandshake_fmt:     "нет данных · %@",
         .healthChipUnchecked:         "не удалось проверить",
+        // #459: две формы. `phrase` — законченный оборот, к нему нельзя ничего
+        // приписывать. `short` — голая длительность для плашки, рядом с которой
+        // уже стоит значение («215 мс · 2 мин»). Обе безопасны при 1.
         .ageJustNow:                  "только что",
+        .ageMinutesAgo_fmt:           "%d мин назад",
+        .ageHoursAgo_fmt:             "%d ч назад",
+        .ageDaysAgo_fmt:              "%d дн. назад",
+        .ageNowShort:                 "сейчас",
         .ageMinutes_fmt:              "%d мин",
         .ageHours_fmt:                "%d ч",
         .ageDays_fmt:                 "%d д",
@@ -1621,15 +1664,13 @@ enum L10nTable {
         .healthActionPortSettings:    "Открыть настройки порта",
         .healthActionRetry:           "Повторить",
         .healthActionVerify:          "Проверить",
-        .healthVerifyAllAction:       "Проверить все",
         .healthShowReasonAction:      "Что не так?",
         .healthLatencyNotMeasured:    "не измерено",
-        .healthSweepSkipped_fmt:      "Ещё %d не проверено — нажми «Проверить все»",
 
         // #456: заголовки карточки VPS. «Не удалось проверить» — это не «остановлен».
         .vpsHeadlineOpFailed:            "Последнее действие не удалось",
         .vpsHeadlineUnreachable:         "Сервер недоступен",
-        .vpsHeadlineUnreachableHint_fmt: "SSH не ответил (%@ назад)",
+        .vpsHeadlineUnreachableHint_fmt: "SSH не ответил (%@)",
         .vpsHeadlineUnreachableHintNever: "SSH не ответил",
         .vpsHeadlineNotChecked:          "Ещё не проверено",
         .vpsHeadlineNotCheckedHint:      "Проверяем сервер…",
@@ -1672,15 +1713,16 @@ enum L10nTable {
         .actionDisconnect:           "Отключить",
         .heroSubjectNone:            "Пока нет подключений",
         .heroLastUsedLabel:          "Последнее",
-        .heroPickAConnection:        "Выбери подключение ниже.",
+        // #459 (audit): было «Выбери подключение ниже.» — списка в этот момент нет.
+        .heroPickAConnection:        "Сначала добавь подключение.",
         .heroEvidenceStarting_fmt:   "запуск… %d с",
         .heroEvidenceUnverified:     "подключено · данные через него ещё не проверяли",
         .heroEvidenceNoNetwork:      "держим сессию, пока не вернётся сеть",
         .heroScopeProxy_fmt:         "Прокси · только приложения, которые смотрят на 127.0.0.1:%@",
         .heroScopeVPN:               "VPN · весь трафик устройства",
 
-        // #457: строки подключений.
-        .connectRowLive:             "Активно",
+        // #457/#459: строки подключений. Активное подключение — это герой
+        // экрана, в списке его нет, поэтому плашка «Активно» не нужна.
         .connectRowTapHint:          "Подключиться через это подключение",
         .connectRowRemove:           "Удалить подключение",
         .connectGroupFailing_fmt:    "%d из %d не работает",
@@ -1693,12 +1735,7 @@ enum L10nTable {
         // #457: карточка сервера. Подпись про процесс говорит только о том, что
         // считано с сервера, и всегда с возрастом — это не проверка подключения.
         .vpsProtocolsFailing_fmt:    "Не работает протоколов: %d из %d",
-        .vpsProcessRunning:          "Серверный процесс запущен",
-        .vpsProcessStopped:          "Серверный процесс остановлен",
-        .vpsProcessNothingInstalled: "На этом сервере ничего не установлено",
-        .vpsProcessNotSetUp:         "Этот сервер пока не может запускать olcrtc",
         .vpsProcessUnread:           "С этого сервера пока ничего не считано",
-        .vpsProcessAge_fmt:          "%@ · считано %@ назад",
         .protocolStoppedNote:        "На сервере не запущен",
         .vpsScanBeforeInstall:       "Ищем уже установленное…",
         .vpsScanFailed_fmt:          "Не удалось посмотреть, что на сервере. %@",
@@ -1709,5 +1746,32 @@ enum L10nTable {
         .addProtocolAllInstalled:    "Все поддерживаемые протоколы уже установлены на этом сервере.",
         .healthNeverProbedHint:      "Через это подключение ещё не проходил ни один запрос",
         .connectRowVerifyHint:       "Проверить это подключение настоящим запросом",
+
+        // #459: редизайн «одного окна». Герой владеет активным подключением,
+        // список под ним — переключатель, «Здоровье» и «Диагностика» слились в
+        // одну карточку, а меню из тринадцати пунктов на карточке сервера стало
+        // пятью безопасными пунктами плюс экран «Управление сервером».
+        .connectListOtherHeader:     "Переключиться",
+        .diagSessionHeader:          "Текущая сессия",
+        .diagToolsHeader:            "Проверки",
+        // #459: владелец спросил про страну и IP выхода — «откуда они вообще
+        // берутся?». Обе подсказки называют сервис, который отвечает.
+        .diagExitSourceHint:         "Запрошено у ipinfo.io через туннель",
+        // Число — это включённые источники, их может быть и один, поэтому
+        // двоеточие, а не «%d сервисов».
+        // #459 (audit): «ваш» → «твой» — вся остальная таблица на «ты».
+        .diagIPSourceHint_fmt:       "Спрашивает твой адрес у публичных сервисов по текущему маршруту. Источников: %d.",
+        .vpsReadAge_fmt:             "считано %@",
+        .vpsManageServer:            "Управление сервером",
+        .vpsAdvancedTitle_fmt:       "Управление: %@",
+        .vpsAdvancedConnectionHeader:  "Подключение",
+        .vpsAdvancedMaintenanceHeader: "Обслуживание",
+        .vpsAdvancedRemoveHeader:      "Удаление",
+        // Каждая опасная строка говорит, что именно она уничтожит, — этого не
+        // умеет пункт меню, и ради этого экран и появился.
+        .vpsAdvancedRebootFooter:      "Перезагружает сервер целиком. Всё, что на нём работает, остановится, пока он не поднимется.",
+        .vpsAdvancedUninstallFooter:   "Удаляет контейнер olcrtc с этого сервера. Сохранённое для него подключение перестанет работать.",
+        .vpsAdvancedDeepUninstallFooter: "Удаляет с сервера все контейнеры, образы и каталоги olcrtc.",
+        .vpsAdvancedRemoveHostFooter:  "Забывает этот сервер в приложении. На самой машине ничего не меняется.",
     ]
 }

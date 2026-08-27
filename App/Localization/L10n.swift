@@ -66,15 +66,16 @@ enum L10n: String, CaseIterable {
     case settingsRefreshOnEntryExplainer
     case failoverSwitching_fmt              // "%@ failing — switching to %@" (2 carrier labels)
     case failoverAllFailed                  // every protocol on the server failed
-    // #454: connection-health card
-    case healthTitle                        // card title
+    // #454: connection-health card — merged into the Diagnostics card (#459).
+    // #459 was: `healthTitle` ("Connection health"), `healthThroughputLabel`
+    // ("Speed") and `healthRefresh` ("Refresh"). The card lost its own title to
+    // `diagSessionHeader`, its throughput row moved into the speed test it
+    // belongs to, and its refresh glyph was replaced by pull-to-refresh.
     case healthProtocolLabel                // row: protocol
     case healthExitLabel                    // row: exit ip/geo
     case healthLatencyLabel                 // row: latency
-    case healthThroughputLabel              // row: speed
     case healthLatencyMs_fmt                // "%d ms"
     case healthLocationUnknown              // geo lookup empty/failed
-    case healthRefresh                      // refresh button a11y
     // #455: premium redesign — editorial-consistency additions
     case carrierChoiceFooter                // install/reconfigure carrier guidance footer
     case configReliabilityHeader            // failover section header
@@ -495,12 +496,12 @@ enum L10n: String, CaseIterable {
     case speedTestRun                       // "Run test"
 
     // MARK: #311 — speed-tile metric labels/units + upload-fallback log line
-    case speedLabelPing, speedLabelDL, speedLabelUL  // "Ping"/"DL"/"UL" — universal abbreviations, ru = en
+    // #459 was: `speedLabelPing` — the speed test's one-off PING metric is gone;
+    // "This session" measures latency every 8 s and dates each measurement.
+    case speedLabelDL, speedLabelUL         // "DL"/"UL" — universal abbreviations, ru = en
     // #342 was: units baked into the formats ("%.0f ms"/"%.1f Mbps") — now
     // number-only, the unit renders separately via OlcMetric(unit:).
-    case speedPingValue_fmt                  // "%.0f"
     case speedRateValue_fmt                  // "%.1f"
-    case speedUnitMs                         // "ms" — Latin in both languages
     case speedUnitMbps                       // "Mbps" — Latin in both languages
     case speedUploadFallback_fmt             // "  upload: %@ has no upload endpoint — using %@" — diagnostic log line, deliberately English (ru = en)
 
@@ -553,7 +554,8 @@ enum L10n: String, CaseIterable {
     case subMetaUsed                        // "Used"
     case subMetaAvailable                   // "Available"
     case subMetaMultipleSources_fmt         // "%d sources" — #396: group sharing a #name across sources
-    case pullToRefreshSubscriptions         // #411: hint that the Connections pull-to-refresh re-fetches subscriptions
+    // #459 was: `pullToRefreshSubscriptions` — a caption instructing the user to
+    // perform a standard gesture. The pull now refreshes everything, silently.
 
     // MARK: #346 — VPS-card mini-stat labels (abbreviations; ru = en per operator)
     case vpsStatPing, vpsStatDisk, vpsStatRAM, vpsStatUp
@@ -660,29 +662,38 @@ enum L10n: String, CaseIterable {
     case healthChecking                     // "Checking…" — a probe is in flight
     case healthCheckingHint                 // what the probe is doing right now
     case healthVerified                     // "Working" — the ONLY green
-    case healthVerifiedHint_fmt             // "Verified %@ ago · %d ms" (age, rtt)
-    case healthVerifiedNoRTTHint_fmt        // "Verified %@ ago" (age; no rtt measured)
+    case healthVerifiedHint_fmt             // #459: "Verified %@ · %d ms" (age phrase, rtt)
+    case healthVerifiedNoRTTHint_fmt        // #459: "Verified %@" (age phrase; no rtt)
     case healthFading                       // past tense: it worked, but not just now
     case healthHandshake                    // handshake only — data path unproven
-    case healthHandshakeHint_fmt            // "Joined the room %@ ago, but…" (age)
+    case healthHandshakeHint_fmt            // #459: "Joined the room %@, but…" (age phrase)
     case healthStale                        // older than HealthPolicy.staleSeconds
-    case healthStaleHint_fmt                // "Last checked %@ ago — …" (age)
+    case healthStaleHint_fmt                // #459: "Last checked %@ — …" (age phrase)
     case healthInconclusive                 // "Couldn't check" — NOT a failure verdict
-    case healthCheckedAgo_fmt               // "checked %@ ago" — trailing age clause (age)
+    case healthCheckedAgo_fmt               // #459: "checked %@" — trailing age clause (age phrase)
     // Chip labels: lower case, no final period — they sit inside a pill.
     case healthChipNever                    // "not checked"
-    case healthChipStale_fmt                // "%@ old" (age)
+    case healthChipStale_fmt                // #459: "last seen %@" (age phrase)
     // #456 (audit fix): `.fading` must not share `.verified`'s words — past tense
-    case healthChipFaded_fmt                // "was %@ · %@" (rtt, age)
-    case healthChipFadedNoRTT_fmt           // "worked %@ ago" (age)
-    case healthChipFailed_fmt               // "failed %@ ago" (age)
-    case healthChipHandshake_fmt            // "no data · %@" (age)
+    case healthChipFaded_fmt                // "was %@ · %@" (rtt, age SHORT)
+    case healthChipFadedNoRTT_fmt           // #459: "worked %@" (age phrase)
+    case healthChipFailed_fmt               // #459: "failed %@" (age phrase)
+    case healthChipHandshake_fmt            // "no data · %@" (age SHORT)
     case healthChipUnchecked                // "couldn't check"
-    // Compact relative age (HealthAge.label) — every verdict carries its age.
-    case ageJustNow                         // "just now" (< 1 min)
-    case ageMinutes_fmt                     // "%dm" (minutes)
-    case ageHours_fmt                       // "%dh" (hours)
-    case ageDays_fmt                        // "%dd" (days)
+    // Relative age (HealthAge.phrase / HealthAge.short) — every verdict carries
+    // its age. TWO forms, because one form produced "Verified just now ago":
+    //   • phrase — a SELF-CONTAINED fragment ("just now", "2 min ago"). No format
+    //     string that takes it may append "ago"/«назад» of its own.
+    //   • short  — a bare DURATION for a chip where the value beside it supplies
+    //     the grammar ("215 ms · 2m").
+    case ageJustNow                         // phrase, < 1 min: "just now"
+    case ageMinutesAgo_fmt                  // #459: phrase, "%d min ago" (minutes)
+    case ageHoursAgo_fmt                    // #459: phrase, "%d hr ago" (hours)
+    case ageDaysAgo_fmt                     // #459: phrase, "%d d ago" (days)
+    case ageNowShort                        // #459: short, < 1 min: "now"
+    case ageMinutes_fmt                     // short, "%dm" (minutes)
+    case ageHours_fmt                       // short, "%dh" (hours)
+    case ageDays_fmt                        // short, "%dd" (days)
 
     // MARK: #456 Failure reasons — plain words, never core log lines
     // Each reason has a long `message` (what happened + what to do) and a
@@ -711,16 +722,17 @@ enum L10n: String, CaseIterable {
     case healthActionPortSettings           // "Open port settings"
     case healthActionRetry                  // "Retry"
     case healthActionVerify                 // "Verify" — run the end-to-end probe
-    case healthVerifyAllAction              // "Verify all" — sweep every node here
+    // #459 was: `healthVerifyAllAction` ("Verify all") — a button inside a
+    // section header, replaced by pull-to-refresh, which checks the whole screen.
     case healthShowReasonAction             // "What's wrong?" — reveals the full reason
     case healthLatencyNotMeasured           // nil rtt AFTER an attempt finished
-    case healthSweepSkipped_fmt             // "%d more not checked — …" (count)
+    // #459 was: `healthSweepSkipped_fmt` — it named the deleted "Verify all".
 
     // MARK: #456 VPS card headlines (HostDisplay)
     // "Couldn't check" and "stopped" are different claims — requirement 2.
     case vpsHeadlineOpFailed                // last action failed; detail in subtitle
     case vpsHeadlineUnreachable             // SSH did not answer — NOT "stopped"
-    case vpsHeadlineUnreachableHint_fmt     // "SSH didn't answer (%@ ago)" (age)
+    case vpsHeadlineUnreachableHint_fmt     // #459: "SSH didn't answer (%@)" (age phrase)
     case vpsHeadlineUnreachableHintNever    // same, with no age on record
     case vpsHeadlineNotChecked              // no probe yet this session
     case vpsHeadlineNotCheckedHint          // the auto-refresh is running
@@ -754,7 +766,7 @@ enum L10n: String, CaseIterable {
     case actionDisconnect                   // mirrors actionConnect
     case heroSubjectNone                    // no connection saved yet
     case heroLastUsedLabel                  // label above the remembered connection
-    case heroPickAConnection                // what to do when nothing is selected
+    case heroPickAConnection                // what to do when there is nothing to connect to
     case heroEvidenceStarting_fmt           // "starting… %d s" (elapsed seconds)
     case heroEvidenceUnverified             // live, but nothing measured through it
     case heroEvidenceNoNetwork              // waitingForNetwork, session held
@@ -762,7 +774,8 @@ enum L10n: String, CaseIterable {
     case heroScopeVPN                       // what the tunnel covers, whole device
 
     // MARK: #457 Connection rows
-    case connectRowLive                     // badge on the row that is carrying traffic
+    // #459 was: `connectRowLive` — the live connection is the hero's subject and
+    // is no longer drawn in the list at all, so no row can need a "Live" badge.
     case connectRowTapHint                  // VoiceOver hint for the row
     case connectRowRemove                   // destructive row action
     case connectGroupFailing_fmt            // "%d of %d not working" (failing, total)
@@ -774,14 +787,13 @@ enum L10n: String, CaseIterable {
 
     // MARK: #457 Server card — the process caption and the protocol rows
     case vpsProtocolsFailing_fmt            // "%d of %d protocols…" (failing, total)
-    // The caption's own vocabulary: what a probe found, in plain words. These
-    // never colour anything — a running process is not a working connection.
-    case vpsProcessRunning
-    case vpsProcessStopped
-    case vpsProcessNothingInstalled
-    case vpsProcessNotSetUp
-    case vpsProcessUnread
-    case vpsProcessAge_fmt                  // "%@ · read %@ ago" (state word, age)
+    // #459 was: the process-caption vocabulary — `vpsProcessRunning`,
+    // `vpsProcessStopped`, `vpsProcessNothingInstalled`, `vpsProcessNotSetUp`
+    // and `vpsProcessAge_fmt` ("%@ · read %@ ago"). The card's headline already
+    // says what the server is doing; the caption repeated it and then dated it
+    // with a phrase that read "read just now ago". Only the never-read case and
+    // a bare dated stamp (`vpsReadAge_fmt`) survive.
+    case vpsProcessUnread                   // nothing has ever been read from this host
     case protocolStoppedNote                // protocol row: container isn't running
     case vpsScanBeforeInstall               // install pre-scan, in progress
     case vpsScanFailed_fmt                  // install pre-scan failed (%@ = reason)
@@ -798,6 +810,34 @@ enum L10n: String, CaseIterable {
     // button (ConnectionRowView draws the Verify affordance itself).
     case healthNeverProbedHint
     case connectRowVerifyHint               // VoiceOver hint for the row's verdict button
+
+    // MARK: #459 One-window redesign
+    // Every string here exists because the screen it sits on stopped repeating
+    // itself: the hero owns the live connection, the list below it became a
+    // switcher, Health and Diagnostics merged into one card, and the server
+    // card's thirteen-item ⋯ menu became five safe items plus a pushed screen.
+    case connectListOtherHeader             // header over the switcher list
+    // The Diagnostics card's two blocks, and the provenance of the numbers in
+    // them — the owner asked, of the exit country and IP, "where do they even
+    // come from?". Both hints name the service that actually answers.
+    case diagSessionHeader                  // block A: the live session
+    case diagToolsHeader                    // block B: the checks you can run
+    case diagExitSourceHint                 // where the exit country/IP is read from
+    case diagIPSourceHint_fmt               // what the IP check does (%d = sources)
+    // Server card: the read stamp, and the way into the pushed screen.
+    case vpsReadAge_fmt                     // "read %@" (age phrase)
+    case vpsManageServer                    // card row: opens ServerAdvancedView
+    // ServerAdvancedView. Each destructive row carries a sentence saying what it
+    // destroys — the thing a Menu cannot render, and the reason this is a pushed
+    // screen rather than a fourteenth menu item.
+    case vpsAdvancedTitle_fmt               // "Manage %@" (server label)
+    case vpsAdvancedConnectionHeader
+    case vpsAdvancedMaintenanceHeader
+    case vpsAdvancedRemoveHeader
+    case vpsAdvancedRebootFooter
+    case vpsAdvancedUninstallFooter
+    case vpsAdvancedDeepUninstallFooter
+    case vpsAdvancedRemoveHostFooter
 }
 
 extension L10n {

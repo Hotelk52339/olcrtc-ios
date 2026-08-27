@@ -53,7 +53,12 @@ struct ProtocolRowView: View {
             OlcOverflowMenu(items: menuItems)
                 .disabled(menuDisabled)
         }
-        .padding(.vertical, 7)
+        // #459: 7 → 10. The card now breathes at 20pt between blocks, and a row
+        // packed tighter than its neighbours read as a list crammed into a
+        // corner of a half-empty screen. Nothing is added — the same three
+        // channels just stop touching each other.
+        // #459 was: .padding(.vertical, 7)
+        .padding(.vertical, 10)
         .padding(.trailing, 8)
         .background(Theme.Palette.fill.opacity(0.5), in: rowShape)
     }
