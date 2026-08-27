@@ -32,10 +32,13 @@ enum LogLevel: Int, CaseIterable, Codable, Comparable {
 /// App appearance: System follows iOS, Light/Dark force a scheme. Replaces
 /// the Info.plist `UIUserInterfaceStyle = Dark` enforcement (project.yml);
 /// applied via `.preferredColorScheme` on the root in App.swift.
-/// #299: `.gray` is a real third colour scheme — it forces dark system chrome
-/// but swaps the pure-black grounds for neutral mid-gray (see `Theme.isGray`).
+/// #456 was: a fourth "gray" scheme (#299) that forced dark system chrome but
+/// swapped the pure-black grounds for neutral mid-gray. Removed — a fourth
+/// scheme diluted the palette and, producing no colorScheme trait change against
+/// Dark, forced a full TabView rebuild in App.swift to refresh Theme's tokens.
+/// A stored `"gray"` still decodes safely; see the `init` note below.
 enum AppearanceMode: String, CaseIterable, Identifiable {
-    case system, light, dark, gray
+    case system, light, dark
 
     var id: String { rawValue }
 
@@ -44,7 +47,6 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         case .system: return L10n.appearanceSystem.localized()
         case .light:  return L10n.appearanceLight.localized()
         case .dark:   return L10n.appearanceDark.localized()
-        case .gray:   return L10n.appearanceGray.localized()   // #299
         }
     }
 
@@ -53,8 +55,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         switch self {
         case .system: return nil
         case .light:  return .light
-        // #299: Gray keeps dark system chrome (the mid-gray grounds are dark-side).
-        case .dark, .gray: return .dark
+        case .dark:   return .dark   // #456 was: case .dark, .gray
         }
     }
 }
@@ -321,6 +322,12 @@ final class SettingsStore: ObservableObject {
         localSocksAuthEnabled    = (d.object(forKey: Keys.localSocksAuthEnabled)    as? Bool)   ?? false
         localSocksUser           = (d.string(forKey: Keys.localSocksUser))                      ?? ""
         language                 = (d.string(forKey: Keys.language))                            ?? Self.defaultLanguage()
+        // #456: the Gray removal needs NO migration code — this line already
+        // handles it. A UserDefaults value of "gray" no longer matches a case, so
+        // `AppearanceMode(rawValue:)` returns nil and the `?? .dark` falls through
+        // to Dark: the scheme Gray was closest to, and a valid stored value from
+        // the next write onward. Deliberately left exactly as written (pinned by
+        // ThemeDirectionTests.testStoredGrayStillDecodesToSomethingValid).
         appearanceMode           = AppearanceMode(rawValue: d.string(forKey: Keys.appearanceMode) ?? "") ?? .dark   // #340
         tunnelMode               = TunnelMode(rawValue: d.string(forKey: Keys.tunnelMode) ?? "") ?? .proxy          // #vpn
         keepAliveSeconds    = (d.object(forKey: Keys.keepAlive)           as? Int)  .map { $0.clamped(to: Defaults.keepAliveRange) }         ?? Defaults.keepAliveSeconds

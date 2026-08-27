@@ -1,0 +1,457 @@
+import Foundation
+import SwiftUI
+
+// MARK: - HealthCoordinator (#456)
+//
+// #456: the ONE owner of verified-health evidence. Nothing else in the app is
+// allowed to run a health probe, and nothing else writes `NodeHealth`.
+//
+// WHY A SINGLETON (a deliberate deviation from CLAUDE.md's "app-wide stores are
+// @StateObject on MainTabView, passed by initializer"):
+//   • it is read by views on TWO tabs (Manage VPS + Connections) AND written by
+//     NON-view code (`TunnelManager`, from `runEngine` and the keep-alive loop),
+//     so there is no single view that could own it;
+//   • threading it through four initializers would couple every screen to one
+//     memberwise-init argument order — the exact class of bug that has broken
+//     CI in this repo before.
+// It follows the existing precedent of `SettingsStore.shared` and
+// `LogStore.shared`: views observe it with
+// `@ObservedObject private var health = HealthCoordinator.shared`.
+//
+// PROBE DISCIPLINE (all of it deliberate, none of it decoration):
+//   • STRICTLY SEQUENTIAL — one shared chain (`tail`). The Go side has real
+//     shared-state races (providerToken pinning on the shared runtime defaults,
+//     ephemeral-port TOCTOU) and `pingGroup`'s own comment forbids parallel
+//     native clients.
+//   • DEBOUNCED — `shouldProbe` refuses a re-probe inside `minRecheckSeconds`
+//     unless the user forced it.
+//   • STALENESS-DRIVEN — an automatic sweep only touches `.never`/`.stale`
+//     nodes and is capped at `autoSweepMaxNodes`.
+//   • NEVER the live room — reuses `TunnelManager.shouldSkipBatchPing` verbatim,
+//     re-read on each probe (two peers sharing one identity in a carrier room
+//     break each other).
+//   • REFUSES to run under a live system VPN — a probe's carrier signalling
+//     would ride the very tunnel it is trying to measure while its ICE
+//     candidates deliberately exclude utun, so every node would read dead. That
+//     is `.inconclusive(.vpnActive)`, an honest "couldn't check".
+//   • OWN 20 s BUDGET — never the user's 60 s start timeout, so a hung carrier
+//     costs 20 s, not a minute per node.
+//
+// Nothing here runs at app launch and nothing runs automatically on the
+// Connections tab: each probe is a real conference join on a third-party
+// service costing ~5–15 s, cellular data and CPU. Persistence + a visible age
+// answer "what worked recently" at launch for free.
+
+@MainActor
+final class HealthCoordinator: ObservableObject {
+
+    static let shared = HealthCoordinator()
+
+    /// Bumped on every store/in-flight change. Views observe `$revision`; the map
+    /// itself is deliberately NOT @Published (same rule as LogStore.entries).
+    @Published private(set) var revision: Int = 0
+
+    // MARK: Persistence
+    //
+    // UserDefaults key: "olcrtc_health_v1" — BRAND NEW. Value: JSON
+    // [String: NodeHealth] keyed by ConnectionRecord.id.uuidString. A decode
+    // failure yields an EMPTY map and touches no other key, so it can never harm
+    // `olcrtc_records_v2` (whose decode failure wipes the user's connections).
+    private static let storeKey = "olcrtc_health_v1"
+    private static let writeQueue = DispatchQueue(label: "olcrtc.health.userdefaults")
+
+    private var store: [String: NodeHealth] = [:]
+    private var inFlight: Set<UUID> = []
+    /// The serial probe chain. Every `verify` links itself behind the previous
+    /// task, so two probes never run concurrently.
+    private var tail: Task<Void, Never>?
+    /// The current automatic/`verifyAll` sweep — cancelled by the next sweep and
+    /// by `cancelAll()`.
+    private var sweepTask: Task<Void, Never>?
+
+    /// #456 (audit fix): the ageing clock. `HealthDisplay` is derived from
+    /// `Date()` at render time, but the only redraw trigger is `$revision`, which
+    /// bumps on WRITES — so a verdict rendered green sat there green until some
+    /// unrelated probe happened to write. Freshness that never expires on screen
+    /// is the same lie as an undated claim. This ticks while anything is stored,
+    /// so `.verified` visibly demotes to "worked N ago" and then to stale on its
+    /// own. Cheap: one wake every 30 s, and it stops itself when the store empties.
+    private var ageTicker: Task<Void, Never>?
+    private static let ageTickSeconds: UInt64 = 30
+
+    private init() {
+        load()
+        startAgeTickerIfNeeded()
+    }
+
+    private func bump() { revision &+= 1 }
+
+    /// #456: run the ageing clock exactly while there is something to age.
+    private func startAgeTickerIfNeeded() {
+        guard ageTicker == nil, !store.isEmpty else { return }
+        ageTicker = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Double(Self.ageTickSeconds)))
+                guard let self, !Task.isCancelled else { return }
+                guard !self.store.isEmpty else {
+                    self.ageTicker = nil
+                    return
+                }
+                self.bump()   // re-render every dated verdict with its new age
+            }
+        }
+    }
+
+    // MARK: Reads
+
+    func health(for recordID: UUID) -> NodeHealth? { store[recordID.uuidString] }
+
+    func display(for recordID: UUID, now: Date = Date()) -> HealthDisplay {
+        Self.display(for: store[recordID.uuidString],
+                     checking: inFlight.contains(recordID),
+                     now: now)
+    }
+
+    func isChecking(_ recordID: UUID) -> Bool { inFlight.contains(recordID) }
+
+    /// Aggregated verdict for a set of nodes — the Manage VPS card headline.
+    func summary(for recordIDs: [UUID], now: Date = Date()) -> HealthDisplay {
+        Self.summarize(recordIDs.map { display(for: $0, now: now) })
+    }
+
+    /// #456 (audit fix): how many of these nodes are KNOWN to be failing, and how
+    /// many there are in total. `summary` deliberately reports the best evidence
+    /// ("at least one protocol works" is the useful headline), but on its own that
+    /// lets a host with one working and one dead protocol read as simply fine —
+    /// a known failure hidden behind an average. The card pairs the headline with
+    /// this count so a failure is never silent. `.inconclusive` is NOT counted:
+    /// couldn't-check is not a failure verdict.
+    func failingCount(for recordIDs: [UUID], now: Date = Date()) -> (failing: Int, total: Int) {
+        let failing = recordIDs.reduce(into: 0) { acc, id in
+            switch display(for: id, now: now) {
+            case .broken, .handshakeOnly: acc += 1
+            default: break
+            }
+        }
+        return (failing, recordIDs.count)
+    }
+
+    // MARK: Writes (free evidence — no probe required)
+
+    /// #456: the live tunnel just passed `verifyTunnel` (HTTP 200 through its own
+    /// SOCKS port). That is the strongest possible proof and costs nothing.
+    func noteLiveVerified(recordID: UUID, rttMs: Int?) {
+        store[recordID.uuidString] = NodeHealth(kind: .working, rttMs: rttMs, source: "live")
+        save(); bump()
+    }
+
+    /// #456: a raw failure string from the engine / a connect attempt. Mapped to a
+    /// stable reason; "couldn't check" reasons are stored as `.inconclusive`, never
+    /// as `.broken` (requirement 2).
+    /// `classified` — a reason already determined at the THROW site, where the
+    /// raw core text (always English) was still available. Prefer it: `raw` is
+    /// frequently the app's own LOCALIZED sentence by the time it arrives here,
+    /// and substring-matching English needles against Russian text resolved every
+    /// real failure to `.unknown` — i.e. filed as "couldn't check" (#456).
+    func noteFailure(recordID: UUID, raw: String, source: String,
+                     classified: HealthReason? = nil) {
+        let reason = classified ?? HealthFailureMapper.reason(forRaw: raw)
+        let kind: NodeHealthKind = HealthFailureMapper.isInconclusive(reason) ? .inconclusive : .broken
+        store[recordID.uuidString] = NodeHealth(kind: kind,
+                                                reason: reason,
+                                                detail: LogStore.redactSecrets(raw),
+                                                source: source)
+        save(); bump()
+    }
+
+    /// #456: we could NOT check (VPS unreachable, no network, system VPN on).
+    /// Explicitly not a failure verdict about the node.
+    func noteInconclusive(recordID: UUID, reason: HealthReason) {
+        store[recordID.uuidString] = NodeHealth(kind: .inconclusive, reason: reason, source: "probe")
+        save(); bump()
+    }
+
+    /// #456 (additive to the sketched three writers): the link came UP but no data
+    /// passed — the user's exact telemost incident (container Up, sessions opening,
+    /// `traffic: in=0 out=0`). `TunnelManager` reports it from the OLC-1009 verify
+    /// failure and from keep-alive loss. Routing those through `noteFailure` would
+    /// map their localized message to `.unknown` ⇒ grey "couldn't check", which is
+    /// dishonest: we DID check, and the answer was "connects but no data" (amber).
+    func noteHandshakeOnly(recordID: UUID, detail: String, source: String) {
+        // No `reason`: `.handshakeOnly` renders no reason, and asserting one here
+        // ("nobody answered") would be false — somebody DID answer.
+        store[recordID.uuidString] = NodeHealth(kind: .handshake,
+                                                detail: LogStore.redactSecrets(detail),
+                                                source: source)
+        save(); bump()
+    }
+
+    // MARK: Probing
+
+    /// Verifies ONE node end to end. Returns the resulting display. `force` skips
+    /// the debounce AND enables the `checkReady` fallback that distinguishes
+    /// "joined the room but no data passed" from a hard failure.
+    @discardableResult
+    func verify(_ record: ConnectionRecord, using tunnel: TunnelManager, force: Bool) async -> HealthDisplay {
+        let id = record.id
+        guard !inFlight.contains(id) else { return .checking }
+        guard Self.shouldProbe(existing: store[id.uuidString], force: force, now: Date()) else {
+            return display(for: id)
+        }
+        inFlight.insert(id); bump()
+        let previous = tail
+        // #456: `Task<Void, Never>` — the body returns Void and cannot throw,
+        // which is what lets `tail` hold it as the serial chain's link.
+        let task = Task { @MainActor [weak self] in
+            // #456 was (design sketch): `await previous?.value` — optional
+            // chaining across an async property is spelled out here so the
+            // effect is unambiguous to the compiler. Same semantics.
+            if let previous { await previous.value }
+            guard let self else { return }
+            await self.runProbe(record, using: tunnel, deep: force)
+        }
+        tail = task
+        await task.value
+        return display(for: id)
+    }
+
+    /// The actual probe. Ping (the only green) first; on failure, a forced check
+    /// additionally runs `checkReady` so "handshake ok, data path dead" — the
+    /// user's exact telemost case — is distinguishable from a hard failure.
+    private func runProbe(_ record: ConnectionRecord, using tunnel: TunnelManager, deep: Bool) async {
+        defer { inFlight.remove(record.id); bump() }
+
+        // #456: a probe under a live system VPN is a mixed-path measurement —
+        // its signalling rides the tunnel it is measuring. Honest answer: we
+        // could not check.
+        if tunnel.activeMode == .vpn && tunnel.state.isConnected {
+            noteInconclusive(recordID: record.id, reason: .vpnActive)
+            LogStore.shared.log(.connection,
+                "Health: skipped \(record.displayName) — can't probe while the system VPN is up")
+            return
+        }
+
+        // #456: REUSE the existing self-collision rule verbatim — never a second
+        // rule. The live session is continuously verified by verifyTunnel /
+        // keep-alive, which already writes `.working` for it.
+        if TunnelManager.shouldSkipBatchPing(record: record,
+                                             connectedNode: tunnel.connectedRecord,
+                                             state: tunnel.state) {
+            LogStore.shared.log(.connection,
+                "Health: skipped \(record.displayName) — the live tunnel holds this node")
+            return
+        }
+
+        let probe = TunnelManager.recordForBatchPing(
+            record, clientID: TunnelManager.batchPingClientID(recordID: record.id))
+        // #456 (audit fix): remember how long we actually waited. A probe gets a
+        // 20 s budget while a real connect gets the user's start timeout (60 s by
+        // default), so a slow-but-alive carrier can fail HERE and succeed THERE.
+        // Blaming the node for our own shorter deadline is a false negative — the
+        // honest verdict for "we ran out of our own time" is "couldn't check".
+        let probeStarted = Date()
+        let rtt = await tunnel.ping(probe.details, timeoutMs: HealthPolicy.probeTimeoutMs)
+        let hitOurCap = Date().timeIntervalSince(probeStarted)
+            >= Double(HealthPolicy.probeTimeoutMs) / 1000 * 0.95
+
+        switch rtt {
+        case .success(let ms):
+            store[record.id.uuidString] = NodeHealth(kind: .working, rttMs: ms, source: "probe")
+            save(); bump()
+            LogStore.shared.log(.connection,
+                "Health: \(record.displayName) verified end to end — \(ms) ms")
+        case .failure(let raw):
+            if deep {
+                let ready = await tunnel.checkReady(probe.details, timeoutMs: HealthPolicy.probeTimeoutMs)
+                if case .success = ready {
+                    store[record.id.uuidString] = NodeHealth(
+                        kind: .handshake,
+                        reason: HealthFailureMapper.reason(forRaw: raw),
+                        detail: LogStore.redactSecrets(raw),
+                        source: "probe")
+                    save(); bump()
+                    LogStore.shared.log(.connection,
+                        "Health: \(record.displayName) joined the room but no data passed")
+                    return
+                }
+            }
+            // #456 (audit fix): our own deadline expiring is not evidence the
+            // node is broken.
+            if hitOurCap {
+                noteInconclusive(recordID: record.id, reason: .timedOut)
+                LogStore.shared.log(.connection,
+                    "Health: \(record.displayName) — no answer within the \(HealthPolicy.probeTimeoutMs / 1000)s check budget; not treating that as a failure")
+                return
+            }
+            noteFailure(recordID: record.id, raw: raw, source: "probe")
+            LogStore.shared.log(.connection,
+                "Health: \(record.displayName) failed — \(LogStore.redactSecrets(raw))")
+        }
+    }
+
+    /// #456: the automatic pass (entering Manage VPS). Only touches nodes whose
+    /// verdict is `.never` or `.stale`, capped at `limit`, and returns IMMEDIATELY
+    /// — it must never block the UI.
+    func verifyStale(_ records: [ConnectionRecord], using tunnel: TunnelManager,
+                     limit: Int = HealthPolicy.autoSweepMaxNodes) {
+        let now = Date()
+        let due: [ConnectionRecord] = records.filter { r in
+            guard !inFlight.contains(r.id) else { return false }
+            switch display(for: r.id, now: now) {
+            case .never, .stale: return true
+            default:             return false
+            }
+        }
+        let batch = Array(due.prefix(limit))
+        guard !batch.isEmpty else { return }
+        sweepTask?.cancel()
+        sweepTask = Task { @MainActor in
+            for r in batch {
+                if Task.isCancelled { return }
+                await self.verify(r, using: tunnel, force: false)
+            }
+        }
+    }
+
+    /// #456: the user asked for everything ("Check all"). No staleness filter, no
+    /// limit, and forced — the debounce is a cost guard for AUTOMATIC passes only.
+    func verifyAll(_ records: [ConnectionRecord], using tunnel: TunnelManager) {
+        let batch = records.filter { !inFlight.contains($0.id) }
+        guard !batch.isEmpty else { return }
+        sweepTask?.cancel()
+        sweepTask = Task { @MainActor in
+            for r in batch {
+                if Task.isCancelled { return }
+                await self.verify(r, using: tunnel, force: true)
+            }
+        }
+    }
+
+    /// #456: stop probing (view disappeared, tab switched away).
+    ///
+    /// An in-flight NATIVE probe cannot be interrupted — `MobilePing` blocks in Go
+    /// until its own timeout. Cancellation therefore only stops the SWEEP; the
+    /// in-flight probe runs to completion, keeps its `inFlight` slot (the row goes
+    /// on saying "Checking…", which is true) and still writes its verdict.
+    ///
+    // boc #456 (audit): `tail = nil` + `inFlight.removeAll()` used to be here.
+    // Both are bookkeeping for a probe that is STILL RUNNING in Go, and dropping
+    // them let the very next `verify` start a SECOND native probe concurrently:
+    //   • `TunnelManager.batchPingClientID` is DETERMINISTIC per record
+    //     ("olc-ping-" + the record uuid's first 8 chars), so re-verifying the
+    //     same node put two peers with ONE device id in one carrier room — the
+    //     identity collision that breaks both of them;
+    //   • it also raced the Go shared-runtime state (provider-token pinning on
+    //     the shared defaults, ephemeral-port TOCTOU) that is the whole reason
+    //     probes are strictly sequential.
+    // Reproducer: tap a row's chip → switch tabs (`.onDisappear` → cancelAll)
+    // → switch back → tap the same chip.
+    // #456 was: sweepTask?.cancel(); sweepTask = nil
+    //           tail?.cancel(); tail = nil
+    //           inFlight.removeAll()
+    func cancelAll() {
+        sweepTask?.cancel(); sweepTask = nil
+        tail?.cancel()          // stops a QUEUED link; the chain's tail is kept
+        bump()
+    }
+    // eoc #456 (audit)
+
+    /// #456: test hook. Deliberately NOT `#if DEBUG`-gated — the test bundle is
+    /// built in the same configuration as the app here (TEST_HOST), and gating it
+    /// would make the suite fail to compile in Release. Clears the in-memory map,
+    /// the in-flight set and the persisted key.
+    func _resetForTesting() {
+        cancelAll()
+        tail = nil                 // #456 (audit): cancelAll no longer drops these
+        inFlight.removeAll()       // — a test starts from a clean slate regardless
+        store.removeAll()
+        save()
+        bump()
+    }
+
+    // MARK: Persistence internals
+
+    private func load() {
+        store = Self.decodeStore(UserDefaults.standard.data(forKey: Self.storeKey), now: Date())
+    }
+
+    /// #456: pure decode + forget-window filter, factored out of `load()` so the
+    /// "corrupt data ⇒ empty map, never throws" rule is directly unit-testable.
+    nonisolated static func decodeStore(_ data: Data?, now: Date) -> [String: NodeHealth] {
+        guard let data,
+              let decoded = try? JSONDecoder().decode([String: NodeHealth].self, from: data)
+        else { return [:] }                              // corrupt ⇒ start empty, never throw
+        let cutoff = now.addingTimeInterval(-HealthPolicy.forgetSeconds)
+        return decoded.filter { $0.value.checkedAt > cutoff }
+    }
+
+    private func save() {
+        // #456 (audit fix): the store just became non-empty on a fresh install /
+        // after a reset — start the ageing clock so the first verdict can expire
+        // on screen without waiting for a second write.
+        startAgeTickerIfNeeded()
+        var out = store
+        if out.count > HealthPolicy.maxEntries {
+            let keep = out.sorted { $0.value.checkedAt > $1.value.checkedAt }
+                          .prefix(HealthPolicy.maxEntries)
+            out = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        }
+        guard let data = try? JSONEncoder().encode(out) else { return }
+        let key = Self.storeKey
+        Self.writeQueue.async { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    /// #456: test hook — drains the async UserDefaults write, mirroring
+    /// `SettingsStore.flushPendingWrites()`.
+    static func flushPendingWrites() {
+        writeQueue.sync { }
+    }
+
+    // MARK: Pure rules (unit-tested in Tests/HealthModelTests.swift)
+
+    /// The staleness rule. Pure → tested. `checking` wins over everything so a
+    /// re-check never briefly shows an old verdict as current.
+    nonisolated static func display(for health: NodeHealth?, checking: Bool, now: Date) -> HealthDisplay {
+        if checking { return .checking }
+        guard let h = health else { return .never }
+        let age = max(0, now.timeIntervalSince(h.checkedAt))
+        if age >= HealthPolicy.staleSeconds { return .stale(age: age) }
+        switch h.resolvedKind {
+        case .working:
+            return age < HealthPolicy.freshSeconds ? .verified(ms: h.rttMs, age: age)
+                                                   : .fading(ms: h.rttMs, age: age)
+        case .handshake:    return .handshakeOnly(age: age)
+        case .broken:       return .broken(h.resolvedReason, age: age)
+        case .inconclusive: return .inconclusive(h.resolvedReason, age: age)
+        case .unknown:      return .stale(age: age)
+        }
+    }
+
+    /// The debounce rule. Pure → tested. A forced (user-initiated) check ignores
+    /// the debounce; an automatic sweep additionally only touches STALE nodes —
+    /// see `verifyStale`, which filters on `.stale`/`.never` before calling this.
+    nonisolated static func shouldProbe(existing: NodeHealth?, force: Bool, now: Date) -> Bool {
+        guard let e = existing else { return true }
+        if force { return true }
+        return now.timeIntervalSince(e.checkedAt) >= HealthPolicy.minRecheckSeconds
+    }
+
+    /// Aggregate several nodes into ONE headline (the VPS card). Best evidence
+    /// wins, but "we could not check" never masquerades as "broken".
+    /// Precedence: checking > verified > fading > handshakeOnly > broken > inconclusive > stale > never.
+    nonisolated static func summarize(_ displays: [HealthDisplay]) -> HealthDisplay {
+        func rank(_ d: HealthDisplay) -> Int {
+            switch d {
+            case .checking: return 0
+            case .verified: return 1
+            case .fading: return 2
+            case .handshakeOnly: return 3
+            case .broken: return 4
+            case .inconclusive: return 5
+            case .stale: return 6
+            case .never: return 7
+            }
+        }
+        return displays.min { rank($0) < rank($1) } ?? .never
+    }
+}

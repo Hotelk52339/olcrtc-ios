@@ -34,9 +34,20 @@ final class HostDisplayTests: XCTestCase {
         XCTAssertEqual(HostBase.unknown.tone, .unknown)
         XCTAssertEqual(HostBase.noPodman.tone, .unknown)
         XCTAssertEqual(HostBase.noImage.tone, .progress)   // amber: podman ok, image pending
-        XCTAssertEqual(HostBase.imageReady.tone, .ok)
-        XCTAssertEqual(HostBase.running.tone, .ok)
+        // #456 was: .ok for both. Green is now reserved for an end-to-end VERIFIED
+        // result; podman "Up" only proves the process exists, and "image cached"
+        // is not a success at all.
+        XCTAssertEqual(HostBase.imageReady.tone, .unknown)
+        XCTAssertEqual(HostBase.running.tone, .unknown)
         XCTAssertEqual(HostBase.stopped.tone, .warn)
+    }
+
+    /// #456: the honesty invariant behind the change above — NO podman-derived
+    /// base may be green. Green must be earned by a probe.
+    func testNoContainerStateEverClaimsGreen() {
+        for b in [HostBase.unknown, .noPodman, .noImage, .imageReady, .stopped, .running] {
+            XCTAssertNotEqual(b.tone, .ok, "\(b): podman status must never render as verified green")
+        }
     }
 
     // MARK: HostBase.seed (pre-probe — never asserts running)
@@ -165,5 +176,104 @@ final class HostDisplayTests: XCTestCase {
     func testFailedOnNonRunningIsNoOp() {
         let base = HostDisplay.base(.stopped)
         XCTAssertEqual(base.failed(message: "x"), base)
+    }
+
+    // MARK: HostHeadline (#456) — the ONE VPS-card verdict
+
+    private func busyDisplay(_ op: HostOp, from base: HostBase) -> HostDisplay {
+        HostDisplay.start(op, from: base)
+    }
+
+    func testHeadlineBusyWinsOverEverything() {
+        let h = HostHeadline.reduce(display: busyDisplay(.install, from: .running),
+                                    reachable: false,
+                                    lastProbeAge: nil,
+                                    health: .broken(.keyMismatch, age: 1))
+        // #456: `.busy` now carries the live note + step so the pill can show
+        // progress instead of repeating its own title. `HostDisplay.start` seeds
+        // phase 0 with the "connecting" note.
+        XCTAssertEqual(h, .busy(verb: HostOp.install.verb,
+                                note: L10n.vpsConnecting.localized(),
+                                step: 0, of: HostOp.install.stepCount))
+        XCTAssertEqual(h.tone, .progress)
+    }
+
+    func testHeadlineOpFailureBeatsEveryStateReading() {
+        let failed = busyDisplay(.start, from: .stopped).failed(message: "container exited")
+        let h = HostHeadline.reduce(display: failed, reachable: true,
+                                    lastProbeAge: 10, health: .verified(ms: 20, age: 5))
+        // #456: `.opFailed` now names the operation, so the headline can say
+        // WHICH action failed rather than a generic "last action failed".
+        XCTAssertEqual(h, .opFailed(verb: HostOp.start.verb, message: "container exited"))
+        XCTAssertEqual(h.tone, .error)
+        XCTAssertEqual(h.subtitle, "container exited")
+    }
+
+    // The requirement-2 test: an unreachable VPS must NEVER be reported as
+    // stopped or failed, however old the last container reading is.
+    func testUnreachableNeverReadsAsStopped() {
+        let h = HostHeadline.reduce(display: .base(.stopped), reachable: false,
+                                    lastProbeAge: 900, health: .never)
+        XCTAssertEqual(h, .unreachable(age: 900))
+        XCTAssertEqual(h.tone, .unknown, "couldn't check is GREY, never red/amber")
+        XCTAssertNotEqual(h, .containerStopped)
+        XCTAssertEqual(h.title, L10n.vpsHeadlineUnreachable.localized())
+    }
+
+    func testUnreachableWithNoProbeAgeStillSaysCannotReach() {
+        let h = HostHeadline.reduce(display: .base(.running), reachable: false,
+                                    lastProbeAge: nil, health: .verified(ms: 10, age: 1))
+        XCTAssertEqual(h, .unreachable(age: nil))
+        XCTAssertEqual(h.subtitle, L10n.vpsHeadlineUnreachableHintNever.localized())
+    }
+
+    func testNeverProbedIsNotCheckedNotAVerdict() {
+        // A persisted/seeded base must not be presented as present-tense fact
+        // before anything has probed this launch (the stale-"stopped" bug).
+        let h = HostHeadline.reduce(display: .base(.stopped), reachable: nil,
+                                    lastProbeAge: nil, health: .never)
+        XCTAssertEqual(h, .notChecked)
+        XCTAssertEqual(h.tone, .unknown)
+    }
+
+    func testStoppedContainerIsAmberOnceActuallyProbed() {
+        let h = HostHeadline.reduce(display: .base(.stopped), reachable: true,
+                                    lastProbeAge: 5, health: .never)
+        XCTAssertEqual(h, .containerStopped)
+        XCTAssertEqual(h.tone, .warn)
+    }
+
+    func testNothingInstalledDefersToTheBase() {
+        for b in [HostBase.unknown, .noPodman, .noImage, .imageReady] {
+            let h = HostHeadline.reduce(display: .base(b), reachable: true,
+                                        lastProbeAge: 5, health: .verified(ms: 1, age: 1))
+            XCTAssertEqual(h, .noContainer(b))
+            XCTAssertEqual(h.tone, b.tone)
+            XCTAssertEqual(h.title, b.title)
+        }
+    }
+
+    func testHealthIsTheHeadlineWhenNothingElseIsInTheWay() {
+        let verified = HealthDisplay.verified(ms: 42, age: 30)
+        let h = HostHeadline.reduce(display: .base(.running), reachable: true,
+                                    lastProbeAge: 5, health: verified)
+        XCTAssertEqual(h, .health(verified))
+        XCTAssertEqual(h.tone, .ok)          // the ONLY route to green on the card
+        XCTAssertEqual(h.title, verified.title)
+    }
+
+    func testRunningContainerWithNoProbeEvidenceIsNotGreen() {
+        // The exact fake-green: podman says Up, nothing has verified anything.
+        let h = HostHeadline.reduce(display: .base(.running), reachable: true,
+                                    lastProbeAge: 5, health: .never)
+        XCTAssertEqual(h, .health(.never))
+        XCTAssertNotEqual(h.tone, .ok)
+    }
+
+    func testRunningContainerWithABrokenProtocolIsRed() {
+        let h = HostHeadline.reduce(display: .base(.running), reachable: true,
+                                    lastProbeAge: 5, health: .broken(.keyMismatch, age: 60))
+        XCTAssertEqual(h.tone, .error)
+        XCTAssertEqual(h.title, HealthReason.keyMismatch.headline)
     }
 }

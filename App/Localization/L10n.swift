@@ -174,7 +174,6 @@ enum L10n: String, CaseIterable {
     case deepUninstallConfirmBody          // explanation for deep uninstall confirmation
     case rebootConfirmTitle               // "Reboot server?"
     case rebootConfirmBody                // explanation that the entire VPS will reboot
-    case carrierTransportMatrix             // "Carrier × Transport"
 
     // MARK: #303 Recover connection from server
     case actionRecoverConnection           // "Recover connection" (host overflow menu)
@@ -345,7 +344,6 @@ enum L10n: String, CaseIterable {
     case appearanceSystem                   // "System"
     case appearanceLight                    // "Light"
     case appearanceDark                     // "Dark"
-    case appearanceGray                     // "Gray" (#299)
     // #342 — fixed-footprint hero footer
     case heroDisconnectedHint_fmt           // "Flip the switch to connect via %@."
 
@@ -368,8 +366,6 @@ enum L10n: String, CaseIterable {
     case matrixUnknown_fmt                  // "No compatibility data for %@."
     case carrierFooter                      // "client-id=ios-<random>..."
     case transportUsesServerDefaults_fmt    // "Server defaults will be used for %@ — advanced parameters are not yet exposed in the iOS settings UI."
-    case matrixStatusRecommended, matrixStatusOK, matrixStatusQuestion
-    case matrixStatusFail, matrixStatusUnknown
     case transportSectionHeader, roomIDSectionHeader
     case seiSettingsHeader, seiSettingsFooter
     case jitsiServerHeader, jitsiServerFooter   // #256: Jitsi base-URL field
@@ -470,9 +466,6 @@ enum L10n: String, CaseIterable {
     // MARK: ConnectionsView per-connection health check (#274 — merges #234 + #242)
     case pingNoFreePort                     // "No free local port available for ping"
     case pingFailed                         // "Ping failed"
-    case healthCheckAction                  // "Health check" — menu item + chip a11y (#274)
-    case healthResult_fmt                   // "🩺 Health %@ — ready %@ · RTT %@" (#274)
-    case healthResultRTT_fmt                // #407: "🩺 Health %@ — RTT %@" (RTT-only fast path)
 
     // MARK: ServersView alerts
     case alertPasswordMissingShort          // "Password not found"
@@ -564,10 +557,6 @@ enum L10n: String, CaseIterable {
     case subMetaAvailable                   // "Available"
     case subMetaMultipleSources_fmt         // "%d sources" — #396: group sharing a #name across sources
     case pullToRefreshSubscriptions         // #411: hint that the Connections pull-to-refresh re-fetches subscriptions
-
-    // MARK: #364 — batch "ping group"
-    case pingGroupAction                    // "Ping all"
-    case pingGroupResult_fmt                // "📡 Pinged %@: %d ok, %d failed"
 
     // MARK: #346 — VPS-card mini-stat labels (abbreviations; ru = en per operator)
     case vpsStatPing, vpsStatDisk, vpsStatRAM, vpsStatUp
@@ -664,6 +653,95 @@ enum L10n: String, CaseIterable {
     case installExtrasFooter               // extras share the key; one connection each
     case installExtraToggle_fmt            // "Also install %@"
     case installExtrasPartialFail_fmt      // "Some protocols failed to install: %@"
+
+    // MARK: #456 Verified health vocabulary (NodeHealth / HealthDisplay)
+    // One vocabulary for "is this node OK". Nothing here may claim success
+    // without a probe behind it — `healthVerified` is granted ONLY by an
+    // end-to-end result inside HealthPolicy.freshSeconds.
+    case healthNeverChecked                 // "Not checked yet" — no probe on record
+    case healthNeverCheckedHint             // what Verify actually does
+    case healthChecking                     // "Checking…" — a probe is in flight
+    case healthCheckingHint                 // what the probe is doing right now
+    case healthVerified                     // "Working" — the ONLY green
+    case healthVerifiedHint_fmt             // "Verified %@ ago · %d ms" (age, rtt)
+    case healthVerifiedNoRTTHint_fmt        // "Verified %@ ago" (age; no rtt measured)
+    case healthFading                       // past tense: it worked, but not just now
+    case healthHandshake                    // handshake only — data path unproven
+    case healthHandshakeHint_fmt            // "Joined the room %@ ago, but…" (age)
+    case healthStale                        // older than HealthPolicy.staleSeconds
+    case healthStaleHint_fmt                // "Last checked %@ ago — …" (age)
+    case healthInconclusive                 // "Couldn't check" — NOT a failure verdict
+    case healthCheckedAgo_fmt               // "checked %@ ago" — trailing age clause (age)
+    // Chip labels: lower case, no final period — they sit inside a pill.
+    case healthChipNever                    // "not checked"
+    case healthChipStale_fmt                // "%@ old" (age)
+    // #456 (audit fix): `.fading` must not share `.verified`'s words — past tense
+    case healthChipFaded_fmt                // "was %@ · %@" (rtt, age)
+    case healthChipFadedNoRTT_fmt           // "worked %@ ago" (age)
+    case healthChipFailed_fmt               // "failed %@ ago" (age)
+    case healthChipHandshake_fmt            // "no data · %@" (age)
+    case healthChipUnchecked                // "couldn't check"
+    // Compact relative age (HealthAge.label) — every verdict carries its age.
+    case ageJustNow                         // "just now" (< 1 min)
+    case ageMinutes_fmt                     // "%dm" (minutes)
+    case ageHours_fmt                       // "%dh" (hours)
+    case ageDays_fmt                        // "%dd" (days)
+
+    // MARK: #456 Failure reasons — plain words, never core log lines
+    // Each reason has a long `message` (what happened + what to do) and a
+    // `…Short` headline. HealthFailure.swift maps HealthReason → these.
+    case healthReasonKeyMismatch, healthReasonKeyMismatchShort
+    case healthReasonNoPeer, healthReasonNoPeerShort
+    case healthReasonRoomInvalid, healthReasonRoomInvalidShort
+    case healthReasonCarrierRejected, healthReasonCarrierRejectedShort
+    case healthReasonNetworkDown, healthReasonNetworkDownShort
+    case healthReasonHostUnreachable, healthReasonHostUnreachableShort
+    case healthReasonSSHAuth, healthReasonSSHAuthShort
+    case healthReasonPortBusy, healthReasonPortBusyShort
+    case healthReasonVPNActive, healthReasonVPNActiveShort
+    case healthReasonContainerStopped, healthReasonContainerStoppedShort
+    case healthReasonTimedOut, healthReasonTimedOutShort
+    case healthReasonUnknown, healthReasonUnknownShort
+
+    // MARK: #456 Health actions (HealthAction.title)
+    // Same wording as the equivalent action elsewhere in the app, on purpose:
+    // healthActionRecover == actionRecoverConnection, healthActionStart ==
+    // actionStart, healthActionCheckRoom == actionChangeRoomTransport,
+    // healthActionRetry == actionRetry.
+    case healthActionRecover                // "Recover connection"
+    case healthActionCheckRoom              // "Change room / transport"
+    case healthActionStart                  // "Start server"
+    case healthActionPortSettings           // "Open port settings"
+    case healthActionRetry                  // "Retry"
+    case healthActionVerify                 // "Verify" — run the end-to-end probe
+    case healthVerifyAllAction              // "Verify all" — sweep every node here
+    case healthShowReasonAction             // "What's wrong?" — reveals the full reason
+    case healthWhyTitle                     // title of the explanation alert (matches the action)
+    case healthLatencyNotMeasured           // nil rtt AFTER an attempt finished
+    case healthSweepSkipped_fmt             // "%d more not checked — …" (count)
+
+    // MARK: #456 VPS card headlines (HostDisplay)
+    // "Couldn't check" and "stopped" are different claims — requirement 2.
+    case vpsHeadlineOpFailed                // last action failed; detail in subtitle
+    case vpsHeadlineUnreachable             // SSH did not answer — NOT "stopped"
+    case vpsHeadlineUnreachableHint_fmt     // "SSH didn't answer (%@ ago)" (age)
+    case vpsHeadlineUnreachableHintNever    // same, with no age on record
+    case vpsHeadlineNotChecked              // no probe yet this session
+    case vpsHeadlineNotCheckedHint          // the auto-refresh is running
+    case vpsHeadlineStopped                 // container exists, is not running
+    case vpsHeadlineStoppedHint             // what to do about it
+    case vpsProcessCaption_fmt              // "Server process: %@ · checked %@ ago"
+    case vpsProcessCaptionNever_fmt         // "Server process: %@ · not checked"
+
+    // MARK: #456 Misc UI copy
+    case shareConnectionOnlyBadge           // scope of a plain olcrtc:// link
+    case shareConnectionOnlySub             // what that link can and cannot do
+    case heroSelectedNotLive_fmt            // "Selected: %@ — reconnect to switch"
+    case roomIDLastUsed_fmt                 // "Use last room: %@" — remembered per carrier
+    case installExistingFoundTitle_fmt      // "This VPS already runs %@"
+    case installExistingFoundBody           // what a reinstall would destroy
+    case installUseExistingAction           // adopt the existing container
+    case installReinstallAction             // destructive: wipe and reinstall
 }
 
 extension L10n {

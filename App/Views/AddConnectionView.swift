@@ -233,6 +233,7 @@ struct AddConnectionView: View {
                     let stripped = new.filter { !$0.isWhitespace }
                     if stripped != new { roomID = stripped }
                 }
+            roomSuggestion()   // #456: stop asking for a room the app already knows
             FormField(label: L10n.clientIDLabel.localized(), placeholder: "default", text: $clientID)
             Text(L10n.clientIDFooter.localized())
                 .font(.caption2)
@@ -249,6 +250,28 @@ struct AddConnectionView: View {
         }
         // SOCKS auth (socksUser/socksPass) is configured globally in Settings,
         // not per-connection — removed from here to avoid confusion.
+    }
+
+    /// #456: one tappable row offering the last room used with THIS carrier, so a
+    /// new connection to a room the user already joined isn't typed out again.
+    /// Shown only while CREATING and only while the field is still empty — it never
+    /// competes with a pasted URI's value or an existing record's. Its own
+    /// `@ViewBuilder` (this Form's section is already long).
+    @ViewBuilder
+    private func roomSuggestion() -> some View {
+        if isCreate, roomID.isEmpty,
+           let last = RoomMemory.lastRoom(forCarrier: carrier), !last.isEmpty {
+            Button {
+                roomID = last
+            } label: {
+                Text(L10n.roomIDLastUsed_fmt.formatted(last))
+                    .font(.caption)
+                    .foregroundStyle(Theme.Palette.accent)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     /// Group: freeform TextField + Menu of existing groups. Tap the menu
@@ -449,6 +472,10 @@ struct AddConnectionView: View {
             groupName: resolvedGroup,
             details:   .olcrtc(params)
         )
+        // #456: seed the per-carrier room suggestion that the install / reconfigure
+        // sheets (and `roomSuggestion()` above) read, so the app stops asking for a
+        // value it has already been told once.
+        RoomMemory.remember(carrier: carrier, room: roomID)
         onSave(record)
         Haptics.success()   // #455: a saved/edited connection lands with a success tap
         dismiss()

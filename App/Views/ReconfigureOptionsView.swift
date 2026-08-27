@@ -33,6 +33,15 @@ struct ReconfigureOptionsView: View {
     init(initialCarrier: String? = nil,
          initialTransport: String? = nil,
          initialRoom: String? = nil,
+         // boc #456: these two used to seed BLANK. Confirming a wbstream
+         // reconfigure therefore DELETED the server's auth.token (an empty
+         // OLCRTC_WB_TOKEN removes the token line), and a self-hosted jitsi
+         // instance silently reverted to the shared public default. Both values
+         // are already on the record the row resolves to — seed them. Kept LAST
+         // with defaults so every existing call site still compiles.
+         initialWbToken: String? = nil,
+         initialJitsiBase: String? = nil,
+         // eoc #456
          onConfirm: @escaping (InstallOptions) -> Void) {
         self.onConfirm = onConfirm
         if let c = initialCarrier {
@@ -42,6 +51,14 @@ struct ReconfigureOptionsView: View {
         if let r = initialRoom {
             _roomID = State(initialValue: r)
         }
+        // boc #456
+        if let t = initialWbToken, !t.isEmpty {
+            _wbToken = State(initialValue: t)
+        }
+        if let j = initialJitsiBase, !j.isEmpty {
+            _jitsiBaseURL = State(initialValue: j)
+        }
+        // eoc #456
     }
     // eoc #452
     // #451: jitsi rendezvous base URL — mirrors InstallOptionsView (#256);
@@ -126,6 +143,18 @@ struct ReconfigureOptionsView: View {
         }
     }
 
+    /// #456: offer the last room used with this carrier instead of asking for a
+    /// value the app already has (requirement 8). Only while the field is empty.
+    @ViewBuilder
+    private var roomSuggestion: some View {
+        if roomID.trimmingCharacters(in: .whitespaces).isEmpty,
+           let last = RoomMemory.lastRoom(forCarrier: carrier) {
+            Button(L10n.roomIDLastUsed_fmt.formatted(last)) { roomID = last }
+                .font(.caption)
+                .foregroundStyle(Theme.Palette.accent)
+        }
+    }
+
     @ViewBuilder
     private var roomIDSection: some View {
         if requiresRoomID {
@@ -134,6 +163,7 @@ struct ReconfigureOptionsView: View {
                     .font(.system(.body, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                roomSuggestion   // #456
             } header: {
                 Text(L10n.roomIDSectionHeader.localized())
             } footer: {

@@ -56,6 +56,23 @@ struct ServersView: View {
     // hosts whose last ping is older than the interval (instead of every host
     // every tick). Absent → never pinged → due immediately.
     @State private var lastPing       : [UUID: Date] = [:]
+    // boc #456: when each host was last SSH-probed for readiness. Stamped on
+    // BOTH the success and the failure path, so a dead host isn't hammered.
+    @State private var lastProbe      : [UUID: Date] = [:]
+    // #456 (audit): when a readiness probe last actually RETURNED a container
+    // reading. Split from `lastProbe` (the attempt clock) because a FAILED probe
+    // stamped `lastProbe` too — which told the card "checked just now" over the
+    // previous, possibly hours-old, base, and suppressed the honest
+    // "not checked yet" headline. This is the clock the card displays
+    // (requirement 3: an age the user sees must be the age of the reading).
+    @State private var lastProbeOK    : [UUID: Date] = [:]
+    /// #456: re-entrancy guard for the on-entry refresh pass (requirement 4).
+    @State private var entryRefreshing = false
+    /// #456: an install about to run on a host that already carries olcrtc
+    /// containers — scripts/srv.sh force-removes EVERY `olcrtc-server-*` before
+    /// installing, so the user gets a choice instead of a silent wipe.
+    @State private var installChoice  : InstallChoiceRequest?
+    // eoc #456
     @State private var scanFor        : ServerHost?
     @State private var foundContainers: [SSHRunner.FoundContainer] = []
     @State private var shareConn      : ConnectionRecord?   // #304: share the host's linked connection
@@ -91,11 +108,18 @@ struct ServersView: View {
     // disappear (no manual invalidate needed) and only re-pings stale hosts.
 
     @ObservedObject private var settings = SettingsStore.shared
+    /// #456: the ONE owner of measured evidence. Every green on this tab now
+    /// traces back to a recent end-to-end probe recorded here — podman "Up"
+    /// proves a process exists, nothing more (the user's telemost container was
+    /// Up while its own logs read "session closed reason=liveness", in=0 out=0).
+    /// Observed exactly like `settings`, so a probe result redraws the rows.
+    @ObservedObject private var health = HealthCoordinator.shared
 
     private var coreStack: some View {
         NavigationStack {
             List {
-                matrixSection
+                // #456 was: matrixSection — a build-time lab table shown as if it
+                // described today. Deleted: the card carries measured evidence now.
 
                 if serverStore.hosts.isEmpty {
                     emptyState
@@ -118,6 +142,16 @@ struct ServersView: View {
             // cancels it when the view disappears, replacing the old
             // onAppear-start / onDisappear-invalidate Timer pair.
             .task { await autoPingLoop() }
+            // boc #456: requirement 4 — entering Manage VPS re-checks by itself,
+            // so the user never has to press a button to learn the truth. A
+            // TabView child reliably gets `onAppear` per tab entry (LogsView's
+            // #332 visibility gate relies on exactly that), so no selectedTab
+            // plumbing from MainTabView is needed.
+            .onAppear { Task { await refreshOnEntry() } }
+            // Leaving the tab stops further probes; an in-flight native call
+            // can't be interrupted, its result is simply discarded.
+            .onDisappear { health.cancelAll() }
+            // eoc #456
             // #258: route the provisioner's progress stream into the running host's
             // phase/subtitle ONLY — never the base state or the dot colour.
             .onChange(of: provisioner.status) { _, status in
@@ -154,9 +188,14 @@ struct ServersView: View {
             .sheet(item: $reconfigureRequest) { req in
                 // #452: targeted at one protocol's container (value snapshot,
                 // #330 rule) and seeded from its current carrier/transport/room.
+                // #456: also seeded with the wbstream token and the jitsi
+                // instance the record already carries — a blank field here used
+                // to DELETE the server's auth.token on confirm.
                 ReconfigureOptionsView(initialCarrier: req.initialCarrier,
                                        initialTransport: req.initialTransport,
-                                       initialRoom: req.initialRoom) { options in
+                                       initialRoom: req.initialRoom,
+                                       initialWbToken: req.initialWbToken,
+                                       initialJitsiBase: req.initialJitsiBase) { options in
                     Task {
                         await reconfigure(req.host, containerName: req.containerName,
                                           recordID: req.recordID, options: options)
@@ -358,6 +397,35 @@ struct ServersView: View {
             } message: { _ in
                 Text(L10n.recoverConfirmBody.localized())
             }
+            // boc #456: requirement 8 — installing over an existing deployment
+            // offers "use the existing one" instead of destroying it (and then
+            // re-asking for the room ID the server already knows). Lives here,
+            // with the other carrier modals, so `coreStack`'s modifier chain
+            // stays inside the type-checker's budget.
+            .confirmationDialog(
+                installChoice.map {
+                    L10n.installExistingFoundTitle_fmt.formatted($0.found.first?.name ?? "")
+                } ?? "",
+                isPresented: Binding(
+                    get: { installChoice != nil },
+                    set: { if !$0 { installChoice = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: installChoice
+            ) { req in
+                Button(L10n.installUseExistingAction.localized()) {
+                    installChoice = nil
+                    adoptExisting(req)
+                }
+                Button(L10n.installReinstallAction.localized(), role: .destructive) {
+                    installChoice = nil
+                    installFor = req.host
+                }
+                Button(L10n.cancel.localized(), role: .cancel) { installChoice = nil }
+            } message: { _ in
+                Text(L10n.installExistingFoundBody.localized())
+            }
+            // eoc #456
     }
 
     private func removeFromList(_ host: ServerHost) {
@@ -366,16 +434,11 @@ struct ServersView: View {
         }
     }
 
-    // MARK: Compatibility matrix
-
-    private var matrixSection: some View {
-        Section {
-            OlcCard { MatrixView() }
-                .olcCardRow()
-        } header: {
-            Text(L10n.carrierTransportMatrix.localized())
-        }
-    }
+    // #456 was: `matrixSection` — a Section wrapping MatrixView under the
+    // "Carrier × Transport" header. Deleted with its call site above: the table
+    // is a hand-synced snapshot of an upstream lab run at pin time, rendered as
+    // if it described today's carriers. CarrierTransportMatrix itself stays —
+    // the pickers still use it to gate impossible combos.
 
     // MARK: Empty state
 
@@ -408,6 +471,63 @@ struct ServersView: View {
 
     private func hasContainer(_ host: ServerHost) -> Bool { currentBase(host).hasContainer }
     private func isRunning(_ host: ServerHost)   -> Bool { currentBase(host) == .running }
+
+    // MARK: #456 — verified health (the ONE vocabulary for "is this OK?")
+    //
+    // podman "Up" only proves a process exists. It proved nothing about the
+    // telemost node that shipped this task: Up-and-green while its own container
+    // logs read "control unhealthy" → "session closed reason=liveness" and
+    // "traffic: addr=www.google.com:443 in=0 out=0". Green here comes from
+    // HealthCoordinator alone — a recent end-to-end probe through that node's own
+    // SOCKS listener. Everything weaker renders neutral, never good.
+
+    /// #456: every ConnectionRecord this host's protocol rows resolve to.
+    private func hostRecords(_ host: ServerHost) -> [ConnectionRecord] {
+        (carrierRows[host.id] ?? []).compactMap { connectionRecord(host, row: $0) }
+    }
+
+    /// #456: this host's protocols aggregated into one verdict (best evidence
+    /// wins, but "couldn't check" never masquerades as "broken").
+    private func hostHealth(_ host: ServerHost) -> HealthDisplay {
+        health.summary(for: hostRecords(host).map(\.id))
+    }
+
+    /// #456: one protocol row's verdict. No record → nothing has ever been
+    /// measured for it, which must LOOK like nothing, not like good.
+    private func rowHealth(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> HealthDisplay {
+        guard let rec = connectionRecord(host, row: row) else { return .never }
+        return health.display(for: rec.id)
+    }
+
+    /// #456: the card headline. `reachable` is the TCP-22 verdict — ABSENT means
+    /// "never pinged", which is not the same as unreachable, and neither is the
+    /// same as "stopped" (requirement 2).
+    private func headline(_ host: ServerHost, state: HostDisplay) -> HostHeadline {
+        let reachable: Bool? = {
+            switch pingLatencies[host.id] {
+            case .some(.some): return true
+            case .some(.none): return false
+            case .none:        return nil
+            }
+        }()
+        // #456 (audit) was: `lastProbe` — the ATTEMPT clock, stamped even when the
+        // probe threw, so a failed auto-check made an hours-old base read as a
+        // present-tense reading and skipped the honest `.notChecked` headline.
+        let age = lastProbeOK[host.id].map { Date().timeIntervalSince($0) }
+        return HostHeadline.reduce(display: state, reachable: reachable,
+                                   lastProbeAge: age, health: hostHealth(host))
+    }
+
+    /// #456: protocol rows on this host with no usable evidence — never probed,
+    /// or too old to be worth anything. Drives the "Check all" footer.
+    private func unverifiedCount(_ host: ServerHost) -> Int {
+        hostRecords(host).reduce(into: 0) { acc, rec in
+            switch health.display(for: rec.id) {
+            case .never, .stale: acc += 1
+            default:             break
+            }
+        }
+    }
 
     /// #304: the ConnectionRecord this host installed/owns (by `lastConnectionID`),
     /// if still present — drives the "Share connection" item on the server card.
@@ -598,42 +718,12 @@ struct ServersView: View {
         let state = displayState(host)
         return Section {
             OlcCard {
+                // #456: split into two halves. Adding the process caption made
+                // this VStack seven children deep, and this file has already hit
+                // the Swift type-checker's limit once (see `carrierModals`).
                 VStack(alignment: .leading, spacing: 12) {
-                    // Header: label + connection + the single complete action menu
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(host.label)
-                                .font(.headline)
-                                .foregroundStyle(Theme.Palette.textPrimary)
-                            // #337: mask the host for display when screenshot-safe
-                            // mode is on (IP literals → •••.•••.•••.x; hostnames
-                            // pass through). Display-only: host.host stays real.
-                            Text("\(host.username)@\(IPMask.display(host.host, masked: settings.maskIPs)):\(String(host.port))")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(Theme.Palette.textSecondary)
-                        }
-                        Spacer()
-                        OlcOverflowMenu(items: menuItems(host))
-                            .disabled(actionsDisabled)
-                    }
-
-                    // #334: container-log fetch runs on the Logs tab (#339), so it
-                    // isn't a HostOp and never reaches `statusRegion`. Surface its
-                    // progress here from the router's published in-flight host.
-                    containerLogBusyStrip(host)
-
-                    statusRegion(host, state: state)
-
-                    // #341 was: metrics only when idle on a container-bearing
-                    // base — the card changed height with every state flip.
-                    // Fixed footprint now: the strip is ALWAYS rendered ("—"
-                    // placeholders, dimmed while an op runs).
-                    metricsStrip(host, state: state)
-
-                    // #452: per-protocol rows (multi-carrier host).
-                    protocolsSection(host, state: state)
-
-                    actionBar(host, state: state)
+                    hostCardTop(host, state: state)
+                    hostCardBottom(host, state: state)
                 }
                 .animation(.easeInOut(duration: 0.35), value: state)
                 // #334: fade the container-log busy strip in/out smoothly.
@@ -647,6 +737,77 @@ struct ServersView: View {
                 Task { await refreshCarriers(host.id) }
             }
             .olcCardRow()
+        } footer: {
+            healthSweepFooter(host)   // #456
+        }
+    }
+
+    /// #456: identity + what is TRUE right now (headline pill, progress, and the
+    /// demoted podman caption). The top half answers "what is the state?".
+    @ViewBuilder
+    private func hostCardTop(_ host: ServerHost, state: HostDisplay) -> some View {
+        // Header: label + connection + the single complete action menu
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(host.label)
+                    .font(.headline)
+                    .foregroundStyle(Theme.Palette.textPrimary)
+                // #337: mask the host for display when screenshot-safe
+                // mode is on (IP literals → •••.•••.•••.x; hostnames
+                // pass through). Display-only: host.host stays real.
+                Text("\(host.username)@\(IPMask.display(host.host, masked: settings.maskIPs)):\(String(host.port))")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(Theme.Palette.textSecondary)
+            }
+            Spacer()
+            OlcOverflowMenu(items: menuItems(host))
+                .disabled(actionsDisabled)
+        }
+
+        // #334: container-log fetch runs on the Logs tab (#339), so it
+        // isn't a HostOp and never reaches `statusRegion`. Surface its
+        // progress here from the router's published in-flight host.
+        containerLogBusyStrip(host)
+
+        statusRegion(host, state: state)
+
+        // #456: podman's own verdict, demoted to a caption directly under the
+        // pill — text, with its own age, never a green light.
+        processCaption(host, state: state)
+    }
+
+    /// #456: numbers, protocols and actions — the bottom half answers "what can
+    /// I do next?".
+    @ViewBuilder
+    private func hostCardBottom(_ host: ServerHost, state: HostDisplay) -> some View {
+        // #341 was: metrics only when idle on a container-bearing
+        // base — the card changed height with every state flip.
+        // Fixed footprint now: the strip is ALWAYS rendered ("—"
+        // placeholders, dimmed while an op runs).
+        metricsStrip(host, state: state)
+
+        // #452: per-protocol rows (multi-carrier host).
+        protocolsSection(host, state: state)
+
+        actionBar(host, state: state)
+    }
+
+    /// #456: an automatic pass is capped and only touches nodes with no usable
+    /// evidence, so the rest must SAY they were skipped rather than look fine.
+    @ViewBuilder
+    private func healthSweepFooter(_ host: ServerHost) -> some View {
+        let pending = unverifiedCount(host)
+        if pending > 0 {
+            HStack(spacing: 8) {
+                Text(L10n.healthSweepSkipped_fmt.formatted(pending))
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                Button(L10n.healthVerifyAllAction.localized()) {
+                    health.verifyAll(hostRecords(host), using: tunnel)
+                }
+                .font(.caption2)
+                .disabled(actionsDisabled)
+            }
         }
     }
 
@@ -681,13 +842,18 @@ struct ServersView: View {
     // pill, so when the op started the crossfade animated the pill from one
     // vertical anchor to another, overlapping the text for ~0.5s. One stable
     // pill position kills the overlap.
+    // #456: the pill no longer reports podman. `HostHeadline` decides
+    // busy → op-failed → unreachable → not-checked-yet → container stopped →
+    // nothing installed → the aggregated VERIFIED health of this host's
+    // protocols. An unreachable VPS therefore reads "can't reach the server",
+    // never a fabricated "stopped" (requirement 2), and "Running" can no longer
+    // be the whole story (requirement 1).
     @ViewBuilder
     private func statusRegion(_ host: ServerHost, state: HostDisplay) -> some View {
         let bar = statusBarFraction(state)
+        let h = headline(host, state: state)
         VStack(alignment: .leading, spacing: 8) {
-            OlcStatusPill(tone: statusTone(state),
-                          title: statusTitle(state),
-                          subtitle: statusSubtitle(state)) {
+            OlcStatusPill(tone: h.tone, title: h.title, subtitle: h.subtitle) {
                 if state.isRunning { ProgressView().controlSize(.small) }
             }
             // #338 was: ProgressView(value:total:).tint(amber) — extracted into
@@ -700,32 +866,34 @@ struct ServersView: View {
         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
     }
 
-    // #335: per-state pill content, split out so the ONE pill above can render
-    // any state without changing its position.
-    private func statusTone(_ state: HostDisplay) -> OlcStatusTone {
-        switch state {
-        case .running:        return .progress
-        case .failed:         return .error
-        case .base(let b):    return b.tone
-        }
+    // #456 was: statusTone / statusTitle / statusSubtitle — three per-state
+    // helpers that read the pill straight off `HostDisplay`, i.e. straight off
+    // podman. They now live in the pure `HostHeadline` reducer, which also knows
+    // about reachability, probe age and measured health.
+
+    /// #456: podman's verdict as PLAIN TEXT with its own age — no coloured dot,
+    /// because "the process exists" is not a health claim. This is where the old
+    /// green "Running" pill's content went.
+    @ViewBuilder
+    private func processCaption(_ host: ServerHost, state: HostDisplay) -> some View {
+        Text(processCaptionText(host, state: state))
+            .font(.caption2)
+            .foregroundStyle(Theme.Palette.textTertiary)
     }
-    private func statusTitle(_ state: HostDisplay) -> String {
-        switch state {
-        case .running(let op, _, _, _): return "\(op.verb)…"
-        case .failed(let op, _, _, _):  return L10n.vpsOpFailed_fmt.formatted(op.verb)
-        case .base(let b):              return b.title
+
+    /// #456: split out as a pure String so the caption view above stays a
+    /// two-modifier expression (type-checker budget — see `carrierModals`).
+    private func processCaptionText(_ host: ServerHost, state: HostDisplay) -> String {
+        let base = state.base.title
+        // #456 (audit) was: `lastProbe` — the attempt clock. A failed probe stamped
+        // it, so the caption dated the PREVIOUS reading to "just now".
+        guard let probed = lastProbeOK[host.id] else {
+            return L10n.vpsProcessCaptionNever_fmt.formatted(base)
         }
+        return L10n.vpsProcessCaption_fmt.formatted(
+            base, HealthAge.label(Date().timeIntervalSince(probed)))
     }
-    private func statusSubtitle(_ state: HostDisplay) -> String {
-        switch state {
-        case .running(let op, let phase, let note, _):
-            return "\(note) · \(min(phase + 1, op.stepCount))/\(op.stepCount)"
-        case .failed(_, let phase, let message, _):
-            return "\(phase.replacingOccurrences(of: "…", with: "")) · \(message)"
-        case .base(let b):
-            return b.subtitle
-        }
-    }
+
     /// The progress fraction while running; nil when the bar slot is empty.
     private func statusBarFraction(_ state: HostDisplay) -> Double? {
         guard case .running(let op, let phase, _, _) = state else { return nil }
@@ -762,9 +930,12 @@ struct ServersView: View {
         switch pingLatencies[host.id] {
         case .some(.some(let ms)):
             // #346: "Ping" label through L10n (ru = en); "ms" stays English.
+            // #456 was: tone: ms < 100 ? green : ms < 300 ? orange : red — an SSH
+            // round-trip says NOTHING about whether the tunnel passes traffic, and
+            // that green was one of the loudest false-green sources on this card.
+            // A reachable value is now neutral; only the honest negative stays red.
             return OlcMiniStat(label: L10n.vpsStatPing.localized(), value: String(format: "%.0fms", ms),
-                               tone: ms < 100 ? Theme.Palette.green
-                                   : ms < 300 ? Theme.Palette.orange : Theme.Palette.red)
+                               tone: Theme.Palette.textPrimary)
         case .some(.none):
             return OlcMiniStat(label: L10n.vpsStatPing.localized(), value: "✕", tone: Theme.Palette.red)
         case .none:
@@ -873,7 +1044,10 @@ struct ServersView: View {
             } else {
                 OlcButton(L10n.actionInstall.localized(), systemImage: "arrow.down.app",
                           role: .primary, fillWidth: true) {
-                    installFor = host
+                    // #456 was: installFor = host — Install is the primary CTA
+                    // whenever no container is KNOWN, which includes "never
+                    // probed", and srv.sh wipes every olcrtc container. Scan first.
+                    Task { await beginInstall(host) }
                 }
                 .disabled(actionsDisabled)
             }
@@ -928,12 +1102,17 @@ struct ServersView: View {
             })
         } else {
             items.append(.action(L10n.actionInstall.localized(), systemImage: "arrow.down.app") {
-                installFor = host
-            })
-            items.append(.action(L10n.actionScanVPS.localized(), systemImage: "magnifyingglass") {
-                Task { await scanContainers(host) }
+                // #456 was: installFor = host — scan first, then offer a choice.
+                Task { await beginInstall(host) }
             })
         }
+        // #456 was: the Scan item lived inside the `else` branch above, so it
+        // vanished for good the moment a container was adopted — exactly when a
+        // user wants to look for siblings created outside the app, or after the
+        // recorded name went stale.
+        items.append(.action(L10n.actionScanVPS.localized(), systemImage: "magnifyingglass") {
+            Task { await scanContainers(host) }
+        })
 
         // #419: bot settings — available whether or not a container is installed.
         items.append(.divider)
@@ -1000,6 +1179,113 @@ struct ServersView: View {
             : L10n.alertPasswordMissingShort.localized()
     }
 
+    // MARK: #456 — auto-refresh on tab entry (requirements 2, 3 and 4)
+    //
+    // The card used to show whatever the last manual Check left behind: an
+    // hours-old "Running", or the pre-probe seed ("stopped") for a server that
+    // was in fact up. Entering the tab now re-probes on its own, and a probe that
+    // FAILS records "couldn't check" instead of inventing a stopped state.
+
+    /// #456: how stale a host's SSH probe must be before entering the tab re-runs it.
+    private static let entryProbeStaleSeconds: TimeInterval = 120
+
+    private func refreshOnEntry() async {
+        guard !entryRefreshing, !actionsDisabled else { return }
+        entryRefreshing = true
+        defer { entryRefreshing = false }
+        let now = Date()
+        let due = serverStore.hosts.filter {
+            now.timeIntervalSince(lastProbe[$0.id] ?? .distantPast) >= Self.entryProbeStaleSeconds
+        }
+        for host in due {
+            if Task.isCancelled { return }
+            await silentProbe(host)
+            await refreshCarriers(host.id)
+        }
+        // Returns immediately: the coordinator serialises the probes, caps the
+        // pass and skips the room the live tunnel holds. Nodes it doesn't reach
+        // stay honestly "not checked" (see `healthSweepFooter`).
+        health.verifyStale(serverStore.hosts.flatMap { hostRecords($0) }, using: tunnel)
+    }
+
+    /// #456: a readiness probe that NEVER lies. On success it sets the base, the
+    /// stats and the display clock; on ANY failure it leaves ALL THREE alone, so
+    /// the card keeps showing the last real reading WITH its true age and the
+    /// TCP-22 verdict `doPing` just recorded — a network or SSH error must never
+    /// be rendered as "stopped", nor as a fresh reading (requirements 2 and 3).
+    /// Status-silent (`probeReadiness`, not `checkReadiness`), so it neither
+    /// locks the card's buttons nor paints a progress bar.
+    private func silentProbe(_ host: ServerHost) async {
+        guard let secret = secret(for: host) else { return }
+        await doPing(host)                       // refreshes pingLatencies + lastPing
+        do {
+            let (rstate, stats) = try await provisioner.probeReadiness(
+                on: host, secret: secret, containerName: host.lastContainerName)
+            if let stats { vpsStats[host.id] = stats }
+            // Never clobber an op that started while we were awaiting the probe.
+            if !(display[host.id]?.isRunning ?? false) {
+                display[host.id] = .base(HostBase(rstate))
+            }
+            lastProbeOK[host.id] = Date()       // #456 (audit): a REAL container reading
+        } catch {
+            LogStore.shared.log(.provisioning, "⚠ auto-check failed: \(error.localizedDescription)")
+            // boc #456 (audit)
+            // #456 was: `pingLatencies[host.id] = nil` with the comment
+            // «"couldn't check", NOT "stopped"». `pingLatencies` is
+            // `[UUID: Double?]`, so assigning a bare `nil` REMOVES the key
+            // (Swift's dictionary-of-optionals trap) — the opposite of the
+            // intent. It (a) erased the honest TCP verdict `doPing` had just
+            // recorded one line above, including the `.some(nil)` that is the
+            // ONLY input producing `HostHeadline.unreachable`, so a VPS that was
+            // genuinely unreachable stopped saying so, and (b) left `reachable`
+            // as "never pinged". Nothing is written here now: `doPing` already
+            // recorded the truth, and `lastProbeOK` is deliberately NOT stamped
+            // so the card keeps saying how old the last REAL reading is.
+            // eoc #456 (audit)
+        }
+        // Stamped on BOTH paths — the attempt clock (no hammering). The DISPLAY
+        // clock is `lastProbeOK`, written only where a reading actually came back.
+        lastProbe[host.id] = Date()
+    }
+
+    // MARK: #456 — ops must prove themselves
+    //
+    // "Installed" used to mean "the script printed a URI and podman says Up".
+    // Every op that creates or changes a deployment now ends with a forced,
+    // end-to-end verification of the record it produced. The op's terminal
+    // HostBase is NOT blocked on it: the base stays the honest podman-level
+    // fact, and health is the separate, honest claim beside it.
+
+    /// #456: forced verification of ONE record, if it still exists.
+    private func verifyRecord(_ id: UUID?) async {
+        guard let id, let rec = connections.connections.first(where: { $0.id == id }) else { return }
+        await health.verify(rec, using: tunnel, force: true)
+    }
+
+    /// #456: forced verification of every record this host links to (primary +
+    /// extras), read back from the store so a just-finished install is included.
+    /// The coordinator runs them one at a time.
+    private func verifyLinked(_ hostID: UUID) async {
+        guard let host = serverStore.hosts.first(where: { $0.id == hostID }) else { return }
+        let ids = [host.lastConnectionID].compactMap { $0 } + (host.extraConnectionIDs ?? [])
+        for id in ids { await verifyRecord(id) }
+    }
+
+    /// #456: the record this host's PRIMARY container serves, read fresh from
+    /// the store (an op may have just linked it).
+    private func primaryRecordID(_ hostID: UUID) -> UUID? {
+        serverStore.hosts.first(where: { $0.id == hostID })?.lastConnectionID
+    }
+
+    /// #456: remember a room per carrier so install / reconfigure stop asking
+    /// for what the app already knows (requirement 8). Auto-generated (empty)
+    /// rooms are never stored.
+    private func rememberRoom(_ options: InstallOptions) {
+        let room = options.roomID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !room.isEmpty else { return }
+        RoomMemory.remember(carrier: options.carrier, room: room)
+    }
+
     /// SSH status probe + TCP ping. The probe is the authoritative base setter.
     private func checkServer(_ host: ServerHost) async {
         Task { await doPing(host) }  // parallel TCP ping; updates the Ping metric
@@ -1007,6 +1293,11 @@ struct ServersView: View {
             let (rstate, stats) = try await provisioner.checkReadiness(
                 on: host, secret: secret, containerName: host.lastContainerName)
             if let stats { vpsStats[host.id] = stats }
+            // #456: stamp the probe so the process caption can say how old this
+            // verdict is, and so the on-entry refresh skips a freshly-checked host.
+            // Both clocks: `checkReadiness` RETURNED, so this is a real reading.
+            lastProbe[host.id]   = Date()
+            lastProbeOK[host.id] = Date()   // #456 (audit)
             var base = HostBase(rstate)
             // #302: a check on a host with no *known* container reports "image
             // cached, ready for reinstall" even when an olcrtc container already
@@ -1025,6 +1316,36 @@ struct ServersView: View {
         }
         await refreshCarriers(host.id)   // #452
     }
+
+    // boc #456: requirement 8 — never blow away a working deployment silently.
+    // scripts/srv.sh force-removes EVERY `olcrtc-server-*` container (and every
+    // superseded deploy dir) before installing, and Install is the primary CTA
+    // whenever no container is on record — which includes "never probed". So a
+    // host we don't know is scanned first, and anything found becomes a choice.
+
+    private func beginInstall(_ host: ServerHost) async {
+        guard !currentBase(host).hasContainer, let secret = secret(for: host) else {
+            installFor = host; return
+        }
+        guard let found = try? await provisioner.scanContainers(on: host, secret: secret),
+              !found.isEmpty else {
+            installFor = host; return
+        }
+        installChoice = InstallChoiceRequest(host: host, found: found)
+    }
+
+    /// #456: adopt what is already running — link the container, then recover its
+    /// connection (room + key) from the deployed server.yaml. Nothing is
+    /// destroyed and nothing is re-asked that the server already knows.
+    private func adoptExisting(_ req: InstallChoiceRequest) {
+        guard let container = req.found.first else { return }
+        restoreContainer(container, on: req.host)
+        Task {
+            await recoverConnection(req.host, containerName: container.name,
+                                    configFile: "server.yaml", asExtra: false)
+        }
+    }
+    // eoc #456
 
     // #452 was: install(_ host:options:) — single protocol. Now installs the
     // primary via srv.sh, then each additional protocol via add-carrier.sh
@@ -1094,6 +1415,12 @@ struct ServersView: View {
             return HostBase(rstate)
         }
         await refreshCarriers(host.id)   // #452
+        // boc #456: the install must PROVE itself — "installed" stops meaning
+        // "the script printed a URI". Also remember the rooms it used.
+        rememberRoom(primary)
+        for extra in extras { rememberRoom(extra) }
+        await verifyLinked(host.id)
+        // eoc #456
     }
 
     private func uninstall(_ host: ServerHost) async {
@@ -1146,6 +1473,9 @@ struct ServersView: View {
             return HostBase(rstate)
         }
         await refreshCarriers(host.id)   // #452
+        // #456: a started container is a running PROCESS — prove it carries
+        // traffic before anything on this card turns green.
+        await verifyRecord(primaryRecordID(host.id))
     }
 
     private func stop(_ host: ServerHost) async {
@@ -1237,6 +1567,11 @@ struct ServersView: View {
             return HostBase(rstate)
         }
         await refreshCarriers(host.id)   // #452
+        // boc #456: a reconfigure rewrites room/transport server-side — the row's
+        // old verdict describes a deployment that no longer exists, so re-measure.
+        rememberRoom(options)
+        await verifyRecord(recordID)
+        // eoc #456
     }
 
     // MARK: #452 — Protocols on the host card (multi-carrier)
@@ -1331,24 +1666,9 @@ struct ServersView: View {
         // primary CTA — everything else on the card is quiet.
         let live = isLiveRow(row)
         return HStack(spacing: 10) {
-            Circle()
-                .fill(carrierStatusColor(row))
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(CarrierTransportMatrix.carrierLabel(row.provider))
-                        .font(.subheadline.weight(live ? .semibold : .regular))
-                        .foregroundStyle(Theme.Palette.textPrimary)
-                    if row.isPrimary {
-                        Text(L10n.protocolPrimaryBadge.localized())
-                            .font(.caption2)
-                            .foregroundStyle(Theme.Palette.textTertiary)
-                    }
-                }
-                Text(CarrierTransportMatrix.transportLabel(row.transport))
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.textSecondary)
-            }
+            // #456: the leading block moved into its own builder — the row gained
+            // an evidence chip and this file has already hit the type-checker once.
+            carrierRowLead(host, row: row)
             Spacer()
             if live {
                 Image(systemName: "checkmark.circle.fill")
@@ -1356,6 +1676,10 @@ struct ServersView: View {
                     .foregroundStyle(Theme.Palette.signalCyan)   // #455: aurora, not plain green
                     .accessibilityLabel(L10n.protocolConnectedBadge.localized())
             }
+            // #456: the evidence — "48 ms · 2m" / "not checked" / "failed 5m ago".
+            // Tapping it runs a real end-to-end probe for THIS protocol.
+            OlcHealthChip(display: rowHealth(host, row: row),
+                          onTap: { verifyRow(host, row: row) })
             OlcOverflowMenu(items: carrierMenuItems(host, row: row))
                 .disabled(actionsDisabled || carrierBusyHostID != nil)
         }
@@ -1372,15 +1696,54 @@ struct ServersView: View {
         }
     }
 
-    /// Same status→colour rule the container scan sheet uses (shortLabel-based,
-    /// so it needs no knowledge of ContainerStatus's case payloads).
-    private func carrierStatusColor(_ row: SSHRunner.CarrierInfo) -> Color {
-        if row.status == .notFound { return Theme.Palette.textTertiary }
-        return row.status.shortLabel.hasPrefix("Up") ? Theme.Palette.green : Theme.Palette.orange
+    /// #456: the row's leading block — the health dot and the labels. The dot is
+    /// the VERIFIED tone (green only for a fresh end-to-end pass); podman keeps
+    /// its say as text on the subtitle line, next to the transport.
+    @ViewBuilder
+    private func carrierRowLead(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> some View {
+        // #456 was: Circle().fill(carrierStatusColor(row)) — green iff
+        // `row.status.shortLabel.hasPrefix("Up")`, i.e. green from `podman ps`.
+        OlcStatusDot(tone: rowHealth(host, row: row).tone)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 4) {
+                Text(CarrierTransportMatrix.carrierLabel(row.provider))
+                    .font(.subheadline.weight(isLiveRow(row) ? .semibold : .regular))
+                    .foregroundStyle(Theme.Palette.textPrimary)
+                if row.isPrimary {
+                    Text(L10n.protocolPrimaryBadge.localized())
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Palette.textTertiary)
+                }
+            }
+            // #456 was: the transport label alone — the container's status now
+            // rides along as plain text, demoted from a coloured dot.
+            Text("\(CarrierTransportMatrix.transportLabel(row.transport)) · \(row.status.shortLabel)")
+                .font(.caption2)
+                .foregroundStyle(Theme.Palette.textSecondary)
+        }
+    }
+
+    // #456 was: carrierStatusColor(_:) — the podman-"Up"→green rule that painted
+    // the user's dead telemost row green. Deleted; the dot is health-driven now.
+
+    /// #456: probe THIS row end-to-end and stamp the result. Forced — the user
+    /// asked, so the coordinator's 2-minute debounce doesn't apply.
+    private func verifyRow(_ host: ServerHost, row: SSHRunner.CarrierInfo) {
+        guard let rec = connectionRecord(host, row: row) else {
+            alertText = L10n.protocolRecordMissing.localized()
+            return
+        }
+        Task { await health.verify(rec, using: tunnel, force: true) }
     }
 
     private func carrierMenuItems(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> [OlcMenuItem] {
+        let rowState = rowHealth(host, row: row)   // #456
+        // #456: Verify goes FIRST — the honest answer to "can I use this?" is one
+        // tap away, instead of buried under actions that assume it already works.
         var items: [OlcMenuItem] = [
+            .action(L10n.healthActionVerify.localized(), systemImage: "checkmark.shield") {
+                verifyRow(host, row: row)
+            },
             .action(L10n.protocolConnectAction.localized(), systemImage: "personalhotspot") {
                 connectVia(host, row: row)
             }
@@ -1397,17 +1760,30 @@ struct ServersView: View {
             })
         }
         items.append(.action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
-            reconfigureRequest = ReconfigureRequest(
-                host: host, containerName: row.container,
-                recordID: connectionRecord(host, row: row)?.id,
-                initialCarrier: row.provider, initialTransport: row.transport,
-                initialRoom: row.room)
+            // #456: seeded through the shared builder, so the wbstream token and
+            // the jitsi instance the record already holds are carried in.
+            reconfigureRequest = rowReconfigureRequest(host, row: row)
         })
-        if connectionRecord(host, row: row) == nil {
+        // #456 was: `if connectionRecord(host, row: row) == nil` — the user's actual
+        // incident was the opposite case: they reinstalled the server, so its key
+        // changed, their stored key stopped matching, and the handshake failed with
+        // "read welcome / handshake client". A row whose probe reported a key
+        // mismatch now offers Recover right here, stale record and all.
+        if connectionRecord(host, row: row) == nil || rowState.suggestedAction == .recoverConnection {
             items.append(.action(L10n.actionRecoverConnection.localized(), systemImage: "arrow.counterclockwise.circle") {
                 recoverRowRequest = CarrierRecoverRequest(
                     host: host, container: row.container, file: row.file, isPrimary: row.isPrimary)
             })
+        }
+        // #456: explain a failure in human terms, in place — never raw core log
+        // lines. "Couldn't check" gets the same item; it is a different sentence.
+        switch rowState {
+        case .broken, .inconclusive:
+            items.append(.action(L10n.healthShowReasonAction.localized(), systemImage: "questionmark.circle") {
+                alertText = "\(rowState.title)\n\n\(rowState.subtitle)"
+            })
+        default:
+            break
         }
         if !row.isPrimary {
             items.append(.divider)
@@ -1460,6 +1836,15 @@ struct ServersView: View {
                 "＋ protocol \(cfg.carrier)/\(cfg.transport) added → \(result.containerName)")
             alertText = L10n.protocolAdded_fmt.formatted(cfg.carrier, cfg.transport)
             await refreshCarriers(host.id)
+            // boc #456: prove the protocol we just added actually carries
+            // traffic, and remember the room it used. Fire-and-forget: this
+            // function holds `carrierBusyHostID` until it returns (its `defer`),
+            // and a ~10 s probe must not keep the row's menus locked — the chip
+            // renders `.checking` on its own while the coordinator works.
+            rememberRoom(options)
+            let addedID = record.id
+            Task { await verifyRecord(addedID) }
+            // eoc #456
         } catch {
             alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
         }
@@ -1503,6 +1888,11 @@ struct ServersView: View {
         do {
             try await provisioner.start(on: host, secret: secret, containerName: row.container)
             await refreshCarriers(host.id)
+            // #456: same rule as the primary Start — a running process is not
+            // yet a working protocol, so measure it before anything turns green.
+            // Fire-and-forget for the same reason as addCarrier (busy flag).
+            let startedID = connectionRecord(host, row: row)?.id
+            Task { await verifyRecord(startedID) }
         } catch {
             alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
         }
@@ -1551,14 +1941,58 @@ struct ServersView: View {
 
     /// Primary reconfigure entry (action bar / host menu / retry): targets the
     /// primary container, seeded from its row when the rows are loaded.
+    /// #456: when the rows are NOT loaded yet the seeds used to be nil — the
+    /// sheet opened blank and confirming it rewrote the server with defaults.
+    /// Fall back to the host's linked record, which carries the same values.
     private func primaryReconfigureRequest(_ host: ServerHost) -> ReconfigureRequest? {
         guard let cname = host.lastContainerName else { return nil }
         let row = carrierRows[host.id]?.first(where: { $0.isPrimary })
+        let rec = linkedConnection(host)
+        var carrier   = row?.provider
+        var transport = row?.transport
+        var room      = row?.room
+        if carrier == nil, let rec, case .olcrtc(let p) = rec.details {
+            carrier = p.carrier; transport = p.transport; room = p.roomID
+        }
         return ReconfigureRequest(host: host, containerName: cname,
                                   recordID: host.lastConnectionID,
-                                  initialCarrier: row?.provider,
-                                  initialTransport: row?.transport,
-                                  initialRoom: row?.room)
+                                  initialCarrier: carrier,
+                                  initialTransport: transport,
+                                  initialRoom: room,
+                                  initialWbToken: Self.wbToken(of: rec),
+                                  initialJitsiBase: Self.jitsiBase(of: rec))
+    }
+
+    /// #456: reconfigure targeted at ONE protocol row, seeded with everything
+    /// the app already knows about it.
+    private func rowReconfigureRequest(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> ReconfigureRequest {
+        let rec = connectionRecord(host, row: row)
+        return ReconfigureRequest(host: host, containerName: row.container,
+                                  recordID: rec?.id,
+                                  initialCarrier: row.provider,
+                                  initialTransport: row.transport,
+                                  initialRoom: row.room,
+                                  initialWbToken: Self.wbToken(of: rec),
+                                  initialJitsiBase: Self.jitsiBase(of: rec))
+    }
+
+    /// #456: the wbstream token the record already holds (Keychain-hydrated by
+    /// ConnectionStore). Seeding it is what stops a reconfigure from deleting
+    /// the server's `auth.token` line just because the field started blank.
+    private static func wbToken(of rec: ConnectionRecord?) -> String? {
+        guard let rec, case .olcrtc(let p) = rec.details, !p.wbToken.isEmpty else { return nil }
+        return p.wbToken
+    }
+
+    /// #456: the jitsi instance behind a full room URL ("https://host/room" →
+    /// "https://host"), so reconfiguring a self-hosted Jitsi doesn't silently
+    /// fall back to the shared public default.
+    private static func jitsiBase(of rec: ConnectionRecord?) -> String? {
+        guard let rec, case .olcrtc(let p) = rec.details, p.carrier == "jitsi",
+              let url = URL(string: p.roomID), let scheme = url.scheme,
+              let h = url.host, !h.isEmpty else { return nil }
+        if let port = url.port { return "\(scheme)://\(h):\(port)" }
+        return "\(scheme)://\(h)"
     }
 
     // MARK: Container scan (no base change → outside `run`)
@@ -1738,8 +2172,14 @@ struct ServersView: View {
                                 HStack(spacing: 8) {
                                     Circle()
                                         // #350 was: Color.green / Color.orange — route through Theme.Palette.
+                                        // #456 (audit) was: `hasPrefix("Up") ? Theme.Palette.green`
+                                        // — the LAST podman-"Up"→green rule left in the app, the
+                                        // same one deleted from `carrierRowLead`. Nothing here has
+                                        // probed anything: these are container names scraped off
+                                        // the VPS. Neutral; the status text beside it still says
+                                        // "Up 3 hours", and green stays reserved for a verified probe.
                                         .fill(container.status == .notFound ? Color.secondary :
-                                              container.status.shortLabel.hasPrefix("Up") ? Theme.Palette.green : Theme.Palette.orange)
+                                              container.status.shortLabel.hasPrefix("Up") ? Theme.Palette.textTertiary : Theme.Palette.orange)
                                         .frame(width: 8, height: 8)
                                     Text(container.status.shortLabel)
                                         .font(.caption)
@@ -1784,7 +2224,14 @@ struct ServersView: View {
         var updated = host
         updated.lastContainerName = container.name
         serverStore.update(updated, password: nil)
-        display[host.id] = .base(.stopped)   // container present; Check confirms run-state
+        // #456 was: display[host.id] = .base(.stopped) — the scan had ALREADY
+        // told us whether the container is Up; seeding "stopped" for a running
+        // one was a present-tense claim we held evidence against.
+        let base: HostBase = container.status.shortLabel.hasPrefix("Up") ? .running : .stopped
+        display[host.id] = .base(base)
+        // #456: the scan IS a fresh SSH observation — both clocks.
+        lastProbe[host.id]   = Date()
+        lastProbeOK[host.id] = Date()   // #456 (audit)
         alertText = L10n.scanRestored_fmt.formatted(container.name)   // #346 was: "Restored: \(container.name)"
         Task { await refreshCarriers(host.id) }   // #452
     }
@@ -1811,7 +2258,24 @@ struct ReconfigureRequest: Identifiable {
     let initialCarrier: String?
     let initialTransport: String?
     let initialRoom: String?
+    // boc #456: the sheet used to seed these blank, so confirming a wbstream
+    // reconfigure DELETED the server's auth.token and a self-hosted jitsi
+    // silently fell back to the shared public default. Defaulted + last, so
+    // every pre-#456 construction still compiles.
+    var initialWbToken: String? = nil
+    var initialJitsiBase: String? = nil
+    // eoc #456
     var id: String { containerName }
+}
+
+/// #456: an install about to run on a host that already carries olcrtc
+/// containers. `scripts/srv.sh` force-removes EVERY `olcrtc-server-*` container
+/// (and its rooms and keys) before installing, so the user chooses between
+/// adopting what is there and a deliberate, warned reinstall.
+struct InstallChoiceRequest: Identifiable {
+    let id = UUID()
+    let host: ServerHost
+    let found: [SSHRunner.FoundContainer]
 }
 
 struct CarrierRemoveRequest: Identifiable {

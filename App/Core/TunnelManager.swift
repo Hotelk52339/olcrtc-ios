@@ -39,6 +39,19 @@ import os   // #372: OSAllocatedUnfairLock guards `lastTunnelActivityDate`
 // Background: BackgroundRuntimeKeeper plays a silent AVAudio loop while
 // the tunnel is connected so iOS doesn't suspend the app. Requires the
 // `audio` UIBackgroundModes entitlement in Info.plist.
+//
+// #456 (verified health): this type is one of the app's evidence SOURCES. It
+// records measured node health into `HealthCoordinator.shared` from exactly
+// three chokepoints, and nowhere else:
+//   1. `runEngine` — verifyTunnel returned 200 → `.working`; the engine threw →
+//      a mapped failure; verifyTunnel found no data path → `.handshake`;
+//   2. the keep-alive loop — every OK tick re-stamps `.working` (so the live
+//      node never ages), 3 consecutive misses record `.handshake`;
+//   3. `computeFailoverCandidates` — READS that evidence to order candidates,
+//      so a node just watched fail is no longer tried first.
+// Everything else about the state machine (epochs, supersede guards, backoff,
+// cancellation) is unchanged: health is recorded alongside, never consulted by,
+// the connect path.
 
 enum ConnectionState: Equatable, CustomStringConvertible {
     case disconnected
@@ -931,6 +944,12 @@ final class TunnelManager: ObservableObject {
                     failCount = 0
                     TunnelManager.lastTunnelActivityDate = Date()
                     LogStore.shared.log(.connection, L10n.keepAliveOK.localized(), code: .keepAliveOK)  // OLC-1010
+                    // #456: free end-to-end evidence — verifyTunnel just returned
+                    // HTTP 200 through the live node's own SOCKS port. Re-stamped
+                    // every tick, so the live node never goes stale while up.
+                    if let id = self.lastRecord?.id {
+                        HealthCoordinator.shared.noteLiveVerified(recordID: id, rttMs: nil)
+                    }
                 } else {
                     failCount += 1
                     if failCount < 3 {
@@ -942,6 +961,16 @@ final class TunnelManager: ObservableObject {
                             code: .keepAliveRetry)  // OLC-1011
                     } else {
                         LogStore.shared.log(.connection, L10n.keepAliveLost.localized(), code: .keepAliveLost)  // OLC-1012
+                        // #456: 3 consecutive verify misses with the engine still
+                        // running and the path still satisfied = the link is up but
+                        // no data passes. Recorded as `.handshake` ("connects but no
+                        // data"), NOT as a grey "couldn't check" — we did check.
+                        if let id = self.lastRecord?.id {
+                            HealthCoordinator.shared.noteHandshakeOnly(
+                                recordID: id,
+                                detail: "keep-alive: no response through the tunnel",
+                                source: "live")
+                        }
                         // #445 was: engine.stop() ON the MainActor (froze the UI up
                         // to 5 s), then `.failed` BEFORE requestReconnect (whose
                         // didSet stopped the bg keeper before a recovery was
@@ -1118,6 +1147,22 @@ final class TunnelManager: ObservableObject {
         }
     }
 
+    // boc #456: observed evidence outranks the static matrix
+    /// #456: observed-evidence rank — MEASURED proof beats the compile-time
+    /// compatibility table. A node the user just watched fail must stop being
+    /// tried first (the exact defect: a field-dead but `.recommended`
+    /// telemost/vp8 burned its whole budget ahead of a probe-verified sibling).
+    /// 0 fresh verified · 1 aging verified · 2 unknown/inconclusive · 3 recently broken.
+    nonisolated static func observedRank(_ display: HealthDisplay) -> Int {
+        switch display {
+        case .verified:                     return 0
+        case .fading:                       return 1
+        case .never, .checking, .stale, .inconclusive, .handshakeOnly: return 2
+        case .broken:                       return 3
+        }
+    }
+    // eoc #456
+
     /// Ordered failover alternatives for `current`: the OTHER `.olcrtc` records
     /// on the SAME VPS (the ServerHost whose primary/extra connection ids
     /// include `current.id`), best-first by `failoverRank`. Empty when the
@@ -1133,14 +1178,32 @@ final class TunnelManager: ObservableObject {
         }) else { return [] }
         let ids = [host.lastConnectionID].compactMap { $0 } + (host.extraConnectionIDs ?? [])
         let records = ids.compactMap { id in store.connections.first(where: { $0.id == id }) }
-        return records
+        let siblings = records
             .filter { $0.id != current.id }
             .filter { if case .olcrtc = $0.details { return true } else { return false } }
-            .sorted { a, b in
-                let ra = rank(of: a), rb = rank(of: b)
-                if ra != rb { return ra < rb }
-                return a.displayName < b.displayName   // stable, deterministic
-            }
+        // boc #456: (observed, matrix, name) lexicographic — ordering ONLY.
+        // The reconnect loop, its budget, its epochs and its cancellation guards
+        // are untouched; only WHICH sibling is tried first changes.
+        // The observed ranks are snapshotted against ONE `now` before sorting:
+        // re-reading the clock inside the comparator could flip a node across the
+        // fresh/stale boundary mid-sort and yield an inconsistent ordering.
+        // #456 was: .sorted by `rank(of:)` (the static matrix) then displayName.
+        let now = Date()
+        // `uniquingKeysWith`, never `uniqueKeysWithValues`: a host whose
+        // extraConnectionIDs happen to repeat an id would trap the app otherwise.
+        let observed: [UUID: Int] = Dictionary(
+            siblings.map {
+                ($0.id, observedRank(HealthCoordinator.shared.display(for: $0.id, now: now)))
+            },
+            uniquingKeysWith: { first, _ in first })
+        return siblings.sorted { a, b in
+            let oa = observed[a.id] ?? 2, ob = observed[b.id] ?? 2
+            if oa != ob { return oa < ob }
+            let ra = rank(of: a), rb = rank(of: b)
+            if ra != rb { return ra < rb }
+            return a.displayName < b.displayName   // stable, deterministic
+        }
+        // eoc #456
     }
 
     /// #453: failoverRank for a record's olcrtc params (worst rank for a
@@ -1474,12 +1537,27 @@ final class TunnelManager: ObservableObject {
         } catch let e as TunnelEngineError {
             await MainActor.run {
                 guard manager?.isLiveAttempt(epoch) == true else { return }
+                // #456: a real connect attempt failed — record it as measured
+                // evidence for this node (mapped to a human reason at display time).
+                if let id = manager?.lastRecord?.id {
+                    // #456: `e.message` is already localized — pass the engine's
+                    // own stable classification so a Russian UI still resolves
+                    // "the key no longer matches" instead of "couldn't check".
+                    HealthCoordinator.shared.noteFailure(recordID: id, raw: e.message,
+                                                         source: "connect", classified: e.reason)
+                }
                 manager?.state = .failed(e.message)
             }
             return false
         } catch {
             await MainActor.run {
                 guard manager?.isLiveAttempt(epoch) == true else { return }
+                // #456: same as above for a non-typed engine error.
+                if let id = manager?.lastRecord?.id {
+                    HealthCoordinator.shared.noteFailure(recordID: id,
+                                                         raw: error.localizedDescription,
+                                                         source: "connect")
+                }
                 manager?.state = .failed(error.localizedDescription)
             }
             return false
@@ -1500,10 +1578,28 @@ final class TunnelManager: ObservableObject {
             if tunnelOK {
                 LogStore.shared.log(.connection, L10n.tunnelOK.localized(), code: .tunnelWorks)  // OLC-1007
                 manager?.state = .connected
+                // #456: verifyTunnel just proved HTTP 200 through this node's own
+                // SOCKS port — the strongest evidence there is, and free. No rtt:
+                // verifyTunnel races several URLs and reports a boolean only.
+                if let id = manager?.lastRecord?.id {
+                    HealthCoordinator.shared.noteLiveVerified(recordID: id, rttMs: nil)
+                }
                 return true
             } else {
                 LogStore.shared.log(.connection, L10n.tunnelFailed.localized(), code: .tunnelDown)  // OLC-1009
                 engine.stop()
+                // #456: the transport came up (start + waitReady succeeded) but
+                // verifyTunnel got no HTTP 200 — this is EXACTLY "connects but no
+                // data", the user's telemost incident, so it is recorded as
+                // `.handshake` (amber) rather than routed through `noteFailure`.
+                // A localized reason string would also map to `.unknown` (grey
+                // "couldn't check"), which would be dishonest: we DID check.
+                if let id = manager?.lastRecord?.id {
+                    HealthCoordinator.shared.noteHandshakeOnly(
+                        recordID: id,
+                        detail: "connect: tunnel came up but verifyTunnel got no response",
+                        source: "connect")
+                }
                 manager?.state = .failed(L10n.serverNotResponding.localized())
                 return false
             }
@@ -1696,6 +1792,24 @@ final class TunnelManager: ObservableObject {
         return await engine.checkReady(details, settings: probeSettings())
     }
 
+    // boc #456: budgeted probe overloads for the auto-verifier
+    /// #456: one-shot probe with an EXPLICIT budget. The auto-verifier
+    /// (`HealthCoordinator`) must not ride the user's 60 s start timeout — a hung
+    /// carrier would otherwise cost a full minute per node, sequentially.
+    func ping(_ details: ConnectionDetails, timeoutMs: Int) async -> PingOutcome {
+        let engine = details.engine
+        if let problem = engine.validate(details) { return .failure(problem) }
+        return await engine.ping(details, settings: probeSettings(timeoutMs: timeoutMs))
+    }
+
+    /// #456: budgeted `checkReady` — same reasoning as the budgeted `ping` above.
+    func checkReady(_ details: ConnectionDetails, timeoutMs: Int) async -> PingOutcome {
+        let engine = details.engine
+        if let problem = engine.validate(details) { return .failure(problem) }
+        return await engine.checkReady(details, settings: probeSettings(timeoutMs: timeoutMs))
+    }
+    // eoc #456
+
     // MARK: Batch ping a group (#364)
     //
     // Health-check every connection in a group at once. The single-node `ping`
@@ -1776,10 +1890,14 @@ final class TunnelManager: ObservableObject {
     }
 
     /// Snapshots the `SettingsStore` values the probes need, on MainActor.
-    private func probeSettings() -> EngineProbeSettings {
+    /// #456: `timeoutMs` is now overridable — nil keeps the historical behaviour
+    /// (ride the user's start timeout) for the manual per-row probes, while the
+    /// auto-verifier passes its own short budget (`HealthPolicy.probeTimeoutMs`).
+    // #456 was: private func probeSettings() -> EngineProbeSettings
+    private func probeSettings(timeoutMs: Int? = nil) -> EngineProbeSettings {
         let s = SettingsStore.shared
         return EngineProbeSettings(
-            timeoutMs: s.startTimeoutSeconds * 1000,
+            timeoutMs: timeoutMs ?? (s.startTimeoutSeconds * 1000),   // #456
             pingURL:   AppConstants.pingProbeURL,
             vp8FPS:    s.vp8FPS,
             vp8Batch:  s.vp8BatchSize)

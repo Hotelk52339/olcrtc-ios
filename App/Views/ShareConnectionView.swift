@@ -42,6 +42,16 @@ struct ShareConnectionView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    // #456: what this link grants must be the FIRST thing on
+                    // screen, not a conclusion the user draws from the absence of
+                    // a warning.
+                    // #456 (audit fix) was: rendered unconditionally — which put a
+                    // green "no server access" shield at the top of a sheet that,
+                    // in full-access mode, hands over SSH control. The badge is now
+                    // shown only in the genuinely connection-only case; the
+                    // full-access section below carries its own warning.
+                    connectionOnlyBadge
+
                     Text(L10n.shareConnectionExplanation.localized())
                         .font(.subheadline)
                         .foregroundStyle(Theme.Palette.textSecondary)
@@ -114,6 +124,37 @@ struct ShareConnectionView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    // MARK: - Connection-only badge (#456)
+
+    /// #456: states the scope of the `olcrtc://` URI in plain words — it lets
+    /// someone connect THROUGH the server and nothing else. Extracted into its
+    /// own @ViewBuilder because `body` is already a deep nest and this repo has
+    /// hit the SwiftUI type-checker timeout twice on large bodies.
+    @ViewBuilder
+    private var connectionOnlyBadge: some View {
+        // #456 (audit fix): show the reassurance ONLY when this sheet really is
+        // connection-only. When a full-access payload is present the sheet can
+        // hand over SSH control of the server, and leading with a green
+        // "no server access" shield is the most dangerous kind of untrue —
+        // a safety claim the screen itself contradicts further down.
+        if fullAccess == nil {
+        OlcCard {
+            HStack(spacing: 8) {
+                Image(systemName: "lock.shield")
+                    .foregroundStyle(Theme.Palette.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.shareConnectionOnlyBadge.localized())
+                        .font(Theme.Typography.statusTitle)
+                        .foregroundStyle(Theme.Palette.textPrimary)
+                    Text(L10n.shareConnectionOnlySub.localized())
+                        .font(.caption)
+                        .foregroundStyle(Theme.Palette.textSecondary)
+                }
+            }
+        }
+        }   // #456: end of the `fullAccess == nil` guard
     }
 
     // MARK: - Full-access (co-admin) section (#135)

@@ -15,16 +15,17 @@ import UIKit  // #340: UIColor trait closures back the dynamic light/dark tokens
 // in App.swift. Semantic system colors adapt for free; the handful of
 // hardcoded grounds are dynamic via UIColor traits.
 // #299 was: a runtime Refined/Console "design direction" (#267/#281) that only
-// changed radii/borders/fonts, never colours. Dropped in favour of a real
-// third *colour* scheme — Gray — alongside System/Light/Dark. The metric/type
-// tokens are now single (Refined) values; the grounds resolve to neutral
-// mid-gray when AppearanceMode is .gray.
+// changed radii/borders/fonts, never colours. Dropped; the metric/type tokens
+// are single (Refined) values.
+// #456 was: a fourth *colour* scheme — Gray (#299) — alongside System/Light/Dark,
+// whose grounds resolved to neutral mid-gray. Removed: a fourth scheme diluted
+// the palette (three different "dark" grounds to design against for zero user
+// benefit) and, because Dark↔Gray produced no colorScheme trait change, it
+// forced a full TabView rebuild in App.swift just to refresh these tokens.
+// Schemes are System / Light / Dark; the grounds are plain dark/light pairs
+// resolved by the trait, and Light is now tuned to be genuinely good.
 
 enum Theme {
-
-    /// #299: true when the user picked the Gray colour scheme. The hardcoded
-    /// grounds below read this so pure-black surfaces become neutral mid-gray.
-    fileprivate static var isGray: Bool { SettingsStore.shared.appearanceMode == .gray }
 
     /// #340: dark/light pair → one Color that resolves per the active trait.
     fileprivate static func dynamic(dark: UIColor, light: UIColor) -> Color {
@@ -34,27 +35,18 @@ enum Theme {
     // MARK: - Colors
     enum Palette {
         // Grounds & surfaces. #340: light values per the handoff §4 token table.
-        // #299: Gray uses neutral mid-gray grounds (systemGray6/5) instead of
-        // pure black so the whole app reads as a soft dark-gray, not OLED black.
+        // boc #456
+        // #456 was: bg / card / segActive each branched on `Theme.isGray` (#299)
+        // and were therefore `static var` — recomputed from a SettingsStore read
+        // on every body evaluation. With Gray gone they are plain dark/light
+        // pairs the trait resolves, so they can be `let` again.
         // #340 was: bg = .black (dark-only)
-        static var bg        : Color {
-            Theme.isGray
-                ? Theme.dynamic(dark: UIColor(hex: 0x1C1C1E), light: UIColor(hex: 0x1C1C1E))   // #299: systemGray6
-                : Theme.dynamic(dark: .black, light: .systemGroupedBackground)   // light = #F2F2F7
-        }
-        static var card      : Color {
-            Theme.isGray
-                ? Theme.dynamic(dark: UIColor(hex: 0x2C2C2E), light: UIColor(hex: 0x2C2C2E))   // #299: systemGray5
-                : Color(.secondarySystemGroupedBackground)
-        }
+        static let bg        = Theme.dynamic(dark: .black, light: .systemGroupedBackground)   // light = #F2F2F7
+        static let card      = Color(.secondarySystemGroupedBackground)
         static let fill      = Color(.tertiarySystemFill)                // rgba(118,118,128,0.22) — secondary-button / chip fill
         // #340 was: segActive = 0x48484A (dark-only); light = white (+ OlcSegmented's soft shadow)
-        // #299: Gray reuses the dark segmented fill on its mid-gray ground.
-        static var segActive : Color {
-            Theme.isGray
-                ? Theme.dynamic(dark: UIColor(hex: 0x48484A), light: UIColor(hex: 0x48484A))
-                : Theme.dynamic(dark: UIColor(hex: 0x48484A), light: .white)
-        }
+        static let segActive = Theme.dynamic(dark: UIColor(hex: 0x48484A), light: .white)
+        // eoc #456
         /// #340: Console card hairline — was hardcoded `Color.white.opacity(0.16)`
         /// in OlcCard (#281 bumped dark from the handoff's 8% for visibility);
         /// light uses the handoff's black 8%.
@@ -100,25 +92,46 @@ enum Theme {
         // neutral controls still use `accent` (system blue) — the aurora is
         // spent only on the connect moment and primary CTAs (frontend-design:
         // "spend your boldness in one place").
-        static let signalCyan   = Color(hex: 0x36D8F5)   // near-cyan, high-energy end
-        static let signalViolet = Color(hex: 0x8B7BFF)   // soft violet, calm end
-        static let signalMid    = Color(hex: 0x5EAEFF)   // blue midpoint (blends toward the system accent)
+        // boc #456
+        // #456 was: three STATIC, dark-tuned hexes (Color(hex: 0x36D8F5) …). They
+        // were authored on pure black and failed in Light: white text on
+        // OlcButton(.primary)'s cyan end measured ~1.7:1, and the hairline/glow
+        // built from them washed out on #F2F2F7. Now dynamic pairs exactly as
+        // #350 did for amber/star — the DARK endpoints are unchanged (dark mode
+        // looks identical), the LIGHT ones are deeper so OlcButton(.primary)'s
+        // white foreground lands ≈4.5:1 and OlcCard(glass:)'s cyan hairline gains
+        // contrast for free. No DesignSystem.swift change is needed: every
+        // consumer already reads these tokens.
+        static let signalCyan   = Theme.dynamic(dark: UIColor(hex: 0x36D8F5), light: UIColor(hex: 0x0E86A8))   // near-cyan, high-energy end
+        static let signalViolet = Theme.dynamic(dark: UIColor(hex: 0x8B7BFF), light: UIColor(hex: 0x5B4BD6))   // soft violet, calm end
+        static let signalMid    = Theme.dynamic(dark: UIColor(hex: 0x5EAEFF), light: UIColor(hex: 0x2C6BD4))   // blue midpoint (blends toward the system accent)
+        // eoc #456
 
         /// The signature gradient (top-leading cyan → bottom-trailing violet),
         /// used for the connected hero ring and primary-button fills.
+        /// #456: built from the dynamic Colors above — SwiftUI resolves each stop
+        /// against the active trait inside the LinearGradient, so this stays one
+        /// static token and still adapts per appearance.
         static let auroraGradient = LinearGradient(
             colors: [signalCyan, signalMid, signalViolet],
             startPoint: .topLeading, endPoint: .bottomTrailing)
 
         /// A low-opacity wash of the same gradient for glows and translucent
         /// fills behind glass (never for text/controls — decoration only).
+        /// #456 was: 0.22 — a 22% wash of a light-mode cyan on the light card
+        /// fill was invisible, so the live carrier-row highlight disappeared in
+        /// Light. 0.28 survives there and is still decoration-weight on dark.
         static let auroraSoft = LinearGradient(
-            colors: [signalCyan.opacity(0.22), signalViolet.opacity(0.22)],
+            colors: [signalCyan.opacity(0.28), signalViolet.opacity(0.28)],
             startPoint: .topLeading, endPoint: .bottomTrailing)
 
         /// Tint for the connected-state glow/shadow (the cyan end reads as
         /// "live" against the dark ground).
-        static let connectedGlow = signalCyan
+        /// #456 was: connectedGlow = signalCyan — a pale cyan glow that vanished
+        /// on the #F2F2F7 light ground. Its own pair: cyan on dark, the deeper
+        /// blue midpoint on light, where a glow needs weight to read at all.
+        static let connectedGlow = Theme.dynamic(dark: UIColor(hex: 0x36D8F5),
+                                                 light: UIColor(hex: 0x2C6BD4))
     }
 
     // MARK: - Elevation (#455)

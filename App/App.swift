@@ -163,16 +163,11 @@ struct MainTabView: View {
                 .tabItem { Label(L10n.tabSettings.localized(), systemImage: "gearshape") }
                 .tag(4)
         }
-        // (audit) Dark↔Gray both keep colorScheme == .dark, so switching them
-        // produces no trait change and non-SettingsStore-observing children
-        // (LogsView, presented sheets, DesignSystem components) could keep
-        // stale Theme colors — the gray-branching tokens are computed statics
-        // read at body evaluation. `.id` forces a full TabView rebuild on the
-        // (rare) scheme switch. Tradeoff: child view state — nav stacks,
-        // scroll positions, in-progress sheet edits — resets; acceptable
-        // because the user is sitting in Settings when switching, and
-        // `selectedTab` lives on MainTabView so the selected tab survives.
-        .id(settings.appearanceMode)
+        // #456 was: .id(settings.appearanceMode) — a full TabView rebuild that
+        // reset nav stacks, scroll positions and in-progress sheet edits. It
+        // existed ONLY because Dark↔Gray produced no colorScheme trait change;
+        // with Gray gone every appearance switch flips colorScheme, so SwiftUI
+        // re-resolves the tokens on its own.
         // Prevent the keyboard from incorrectly resizing tab content. SwiftUI
         // TabView already accounts for the home-indicator / tab-bar safe area,
         // but without this modifier the keyboard safe area can bleed through

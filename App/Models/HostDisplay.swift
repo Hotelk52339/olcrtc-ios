@@ -30,7 +30,11 @@ enum HostBase: Equatable {
         switch self {
         case .unknown, .noPodman:   return .unknown
         case .noImage:              return .progress   // amber — Podman ok, image not pulled
-        case .imageReady, .running: return .ok
+        // #456 was: .ok — green is now reserved for an end-to-end VERIFIED result;
+        // podman "Up" only proves the process exists (the user's telemost container
+        // was Up and green while its own logs read `traffic: in=0 out=0`), and
+        // `.imageReady` means "nothing installed yet", which was never a success.
+        case .imageReady, .running: return .unknown
         case .stopped:              return .warn
         }
     }
@@ -166,5 +170,105 @@ extension HostDisplay {
     func retryBase() -> HostDisplay? {
         guard case .failed(_, _, _, let prev) = self else { return nil }
         return .base(prev)
+    }
+}
+
+// MARK: - HostHeadline (#456)
+
+/// #456: the ONE headline for a VPS card. Combines what SSH proved about the
+/// HOST with what end-to-end probes proved about its PROTOCOLS. Pure → tested.
+///
+/// This replaces "the podman pill is the card's verdict". Podman status is
+/// demoted to a caption line with its own age; the headline answers the only
+/// question the user actually has: *what is true right now, and what do I do?*
+enum HostHeadline: Equatable {
+    /// An operation is running. Carries the op's VERB for the title AND the live
+    /// provisioner note + step for the subtitle.
+    /// #456 (audit fix) was: `case busy(String)` holding only the verb, so the
+    /// pill rendered "Installing…" as its title and "Installing" as its subtitle
+    /// — the same word twice — and the running commentary the user relies on to
+    /// see progress (which the provisioner publishes continuously) was dropped.
+    case busy(verb: String, note: String, step: Int, of: Int)
+    /// The last operation failed: WHICH op, and its message.
+    /// #456 (audit fix) was: `case opFailed(String)` (message only), so the title
+    /// became a generic "Last action failed" and the user could no longer tell
+    /// whether the install, the reconfigure or the uninstall was the thing that
+    /// broke.
+    case opFailed(verb: String, message: String)
+    /// SSH / TCP said no. This is "couldn't check" — requirement 2 — and is NEVER
+    /// rendered as stopped or failed, however old the last container reading is.
+    case unreachable(age: TimeInterval?)
+    /// Nothing has probed this host yet this launch — an honest blank, not a
+    /// present-tense claim recycled from a persisted value.
+    case notChecked
+    case containerStopped
+    case noContainer(HostBase)
+    /// Nothing is in the way: the card shows the PROTOCOLS' measured verdict.
+    case health(HealthDisplay)
+
+    /// Precedence, strictly in this order:
+    /// 1 running op · 2 failed op · 3 SSH/TCP said no ("couldn't check", NEVER
+    /// "stopped") · 4 never probed this launch · 5 container stopped ·
+    /// 6 nothing installed · 7 the protocols' measured verdict.
+    static func reduce(display: HostDisplay,
+                       reachable: Bool?,
+                       lastProbeAge: TimeInterval?,
+                       health: HealthDisplay) -> HostHeadline {
+        if case .running(let op, let phase, let note, _) = display {
+            return .busy(verb: op.verb, note: note, step: phase, of: op.stepCount)   // #456
+        }
+        if case .failed(let op, _, let message, _) = display {
+            return .opFailed(verb: op.verb, message: message)   // #456
+        }
+        // Before ANY container reading: an unreachable VPS tells us nothing about
+        // the container, so a stale "stopped" must never surface as fact here.
+        if reachable == false { return .unreachable(age: lastProbeAge) }
+        if lastProbeAge == nil { return .notChecked }
+        if display.base == .stopped { return .containerStopped }
+        if !display.base.hasContainer { return .noContainer(display.base) }
+        return .health(health)
+    }
+
+    var tone: OlcStatusTone {
+        switch self {
+        case .busy:             return .progress
+        case .opFailed:         return .error
+        // Grey, not red: "we could not check" is not a verdict about the server.
+        case .unreachable:      return .unknown
+        case .notChecked:       return .unknown
+        case .containerStopped: return .warn
+        case .noContainer(let b): return b.tone
+        case .health(let h):    return h.tone
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .busy(let verb, _, _, _): return "\(verb)…"
+        // #456 (audit fix): name the operation that failed, not a generic sentence.
+        case .opFailed(let verb, _):  return L10n.vpsOpFailed_fmt.formatted(verb)
+        case .unreachable:        return L10n.vpsHeadlineUnreachable.localized()
+        case .notChecked:         return L10n.vpsHeadlineNotChecked.localized()
+        case .containerStopped:   return L10n.vpsHeadlineStopped.localized()
+        case .noContainer(let b): return b.title
+        case .health(let h):      return h.title
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        // #456 (audit fix): the live note plus "step n/total" — what the card
+        // showed before the headline reducer existed.
+        case .busy(_, let note, let step, let total):
+            return note.isEmpty ? "\(step)/\(total)" : "\(note) · \(step)/\(total)"
+        case .opFailed(_, let m): return m
+        case .unreachable(let age):
+            return age.map { L10n.vpsHeadlineUnreachableHint_fmt.formatted(HealthAge.label($0)) }
+                ?? L10n.vpsHeadlineUnreachableHintNever.localized()
+        case .notChecked:         return L10n.vpsHeadlineNotCheckedHint.localized()
+        case .containerStopped:   return L10n.vpsHeadlineStoppedHint.localized()
+        case .noContainer(let b): return b.subtitle
+        case .health(let h):      return h.subtitle
+        }
     }
 }

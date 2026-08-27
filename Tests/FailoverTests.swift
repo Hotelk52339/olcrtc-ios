@@ -20,20 +20,32 @@ final class FailoverTests: XCTestCase {
 
     private let recordsKey = "olcrtc_records_v2"
     private let hostsKey    = "olcrtc_server_hosts"
+    // #456: computeFailoverCandidates now reads HealthCoordinator.shared, whose
+    // map persists — snapshot + reset it so observed evidence never leaks
+    // between tests (or in from a previous run).
+    private let healthKey   = "olcrtc_health_v1"
     private var recordsSnapshot: Data?
     private var hostsSnapshot: Data?
+    private var healthSnapshot: Data?
 
     override func setUp() {
         super.setUp()
         recordsSnapshot = UserDefaults.standard.data(forKey: recordsKey)
         hostsSnapshot   = UserDefaults.standard.data(forKey: hostsKey)
+        healthSnapshot  = UserDefaults.standard.data(forKey: healthKey)   // #456
+        HealthCoordinator.shared._resetForTesting()                       // #456
     }
 
     override func tearDown() {
+        // #456
+        HealthCoordinator.shared._resetForTesting()
+        HealthCoordinator.flushPendingWrites()
         if let d = recordsSnapshot { UserDefaults.standard.set(d, forKey: recordsKey) }
         else { UserDefaults.standard.removeObject(forKey: recordsKey) }
         if let d = hostsSnapshot { UserDefaults.standard.set(d, forKey: hostsKey) }
         else { UserDefaults.standard.removeObject(forKey: hostsKey) }
+        if let d = healthSnapshot { UserDefaults.standard.set(d, forKey: healthKey) }   // #456
+        else { UserDefaults.standard.removeObject(forKey: healthKey) }
         super.tearDown()
     }
 
@@ -154,5 +166,71 @@ final class FailoverTests: XCTestCase {
     func testComputeCandidatesEmptyWhenStoresNil() {
         let lonely = record("lonely")
         XCTAssertTrue(TunnelManager.computeFailoverCandidates(lonely, store: nil, serverStore: nil).isEmpty)
+    }
+
+    // MARK: observed evidence outranks the matrix (#456)
+
+    /// #456: the pure rank itself. Measured proof first, "we don't know" in the
+    /// middle, "we just watched it fail" last.
+    func testObservedRankPrefersMeasuredProof() {
+        XCTAssertLessThan(TunnelManager.observedRank(.verified(ms: 20, age: 5)),
+                          TunnelManager.observedRank(.fading(ms: 20, age: 600)))
+        XCTAssertLessThan(TunnelManager.observedRank(.fading(ms: 20, age: 600)),
+                          TunnelManager.observedRank(.never))
+        XCTAssertLessThan(TunnelManager.observedRank(.never),
+                          TunnelManager.observedRank(.broken(.keyMismatch, age: 5)))
+        // "Couldn't check" must NOT be punished like a failure.
+        XCTAssertEqual(TunnelManager.observedRank(.inconclusive(.hostUnreachable, age: 5)),
+                       TunnelManager.observedRank(.never))
+        // Neither must "connects but no data" — it is unknown, not proven dead.
+        XCTAssertEqual(TunnelManager.observedRank(.handshakeOnly(age: 5)),
+                       TunnelManager.observedRank(.never))
+    }
+
+    /// #456: with NO recorded evidence every candidate ranks the same (2), so the
+    /// static matrix still decides — the pre-existing ordering is preserved.
+    func testWithoutEvidenceTheMatrixStillDecides() {
+        let store = ConnectionStore()
+        let serverStore = ServerHostStore()
+        let primary = record("primary", carrier: "wbstream", transport: "vp8channel")
+        let best    = record("best",    carrier: "jitsi", transport: "datachannel")  // matrix rank 0
+        let worse   = record("worse",   carrier: "jitsi", transport: "vp8channel")   // matrix rank 1
+        store.connections = [primary, best, worse]
+        var host = ServerHost(label: "H", host: "1.2.3.4")
+        host.lastConnectionID = primary.id
+        host.extraConnectionIDs = [worse.id, best.id]
+        serverStore.hosts = [host]
+
+        let cands = TunnelManager.computeFailoverCandidates(primary, store: store, serverStore: serverStore)
+        XCTAssertEqual(cands.map(\.id), [best.id, worse.id])
+    }
+
+    /// #456: THE regression this exists for — a node the user just watched fail
+    /// must stop being tried first, even though the compile-time matrix calls it
+    /// the recommended combo.
+    func testRecentlyBrokenSortsAfterVerifiedDespiteBetterMatrixRank() {
+        let store = ConnectionStore()
+        let serverStore = ServerHostStore()
+        let primary  = record("primary",  carrier: "wbstream", transport: "vp8channel")
+        let broken   = record("broken",   carrier: "jitsi", transport: "datachannel")  // matrix rank 0
+        let verified = record("verified", carrier: "jitsi", transport: "vp8channel")   // matrix rank 1
+        store.connections = [primary, broken, verified]
+        var host = ServerHost(label: "H", host: "1.2.3.4")
+        host.lastConnectionID = primary.id
+        host.extraConnectionIDs = [broken.id, verified.id]
+        serverStore.hosts = [host]
+
+        // Evidence: the "recommended" one just failed a handshake; the "ok" one
+        // passed an end-to-end probe seconds ago.
+        HealthCoordinator.shared.noteFailure(recordID: broken.id,
+                                             raw: "handshake client: read welcome: EOF",
+                                             source: "probe")
+        HealthCoordinator.shared.noteLiveVerified(recordID: verified.id, rttMs: 44)
+        XCTAssertEqual(HealthCoordinator.shared.display(for: broken.id).tone, .error)
+        XCTAssertTrue(HealthCoordinator.shared.display(for: verified.id).isVerified)
+
+        let cands = TunnelManager.computeFailoverCandidates(primary, store: store, serverStore: serverStore)
+        XCTAssertEqual(cands.map(\.id), [verified.id, broken.id],
+                       "measured proof must outrank the static matrix")
     }
 }

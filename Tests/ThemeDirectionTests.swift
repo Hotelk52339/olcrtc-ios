@@ -4,55 +4,47 @@ import SwiftUI
 
 // #299 was: testConsoleIsSharperAndDenserThanRefined — pinned the Refined vs
 // Console "design direction" metric tokens. The direction is gone; Theme is now
-// real colour schemes (System / Light / Dark / Gray). These tests pin the new
-// contract: the appearance modes and the single (Refined) metric values.
+// real colour schemes. These tests pin the current contract: the appearance
+// modes, their colorScheme mapping, and the single (Refined) metric values.
+// #456 was: the same file with Gray as a fourth scheme (testAppearanceModesIncludeGray,
+// testGrayUsesDarkColorScheme, testGrayChangesGroundTokens). Gray is removed —
+// System / Light / Dark only — so the first two shrank and the ground-token test
+// went with the feature. In its place, testStoredGrayStillDecodesToSomethingValid
+// pins the SAFE migration: a user whose UserDefaults still says "gray" must land
+// on a valid mode rather than an invalid one, and that happens for free through
+// SettingsStore.init's `?? .dark` (no migration code, deliberately).
 
 @MainActor
 final class ThemeDirectionTests: XCTestCase {
 
-    /// Gray is a first-class appearance mode, distinct from System/Light/Dark.
-    func testAppearanceModesIncludeGray() {
+    /// The appearance modes are exactly System / Light / Dark, in picker order.
+    func testAppearanceModes() {
         XCTAssertEqual(AppearanceMode.allCases,
-                       [.system, .light, .dark, .gray])
+                       [.system, .light, .dark])   // #456 was: + .gray
         // Each mode has a non-empty, distinct title (drives the Settings picker).
         let titles = AppearanceMode.allCases.map { $0.title }
         XCTAssertEqual(Set(titles).count, titles.count)
         XCTAssertFalse(titles.contains(where: \.isEmpty))
     }
 
-    /// Gray forces dark system chrome (its grounds are on the dark side); System
-    /// follows the OS (nil); Light/Dark force their own scheme.
-    func testGrayUsesDarkColorScheme() {
+    /// System follows the OS (nil); Light/Dark force their own scheme. With Gray
+    /// gone, every switch between modes flips `colorScheme` — which is what lets
+    /// App.swift drop the `.id(settings.appearanceMode)` full-TabView rebuild
+    /// (#456): SwiftUI re-resolves the dynamic Theme tokens on the trait change.
+    func testColorSchemeMapping() {
         XCTAssertNil(AppearanceMode.system.colorScheme)
         XCTAssertEqual(AppearanceMode.light.colorScheme, .light)
-        XCTAssertEqual(AppearanceMode.dark.colorScheme,  .dark)
-        XCTAssertEqual(AppearanceMode.gray.colorScheme,  .dark)   // #299
+        XCTAssertEqual(AppearanceMode.dark.colorScheme,  .dark)   // #456 was: + .gray → .dark
     }
 
-    /// Selecting Gray changes the resolved ground tokens (no longer pure black).
-    func testGrayChangesGroundTokens() {
-        let saved = SettingsStore.shared.appearanceMode
-        defer { SettingsStore.shared.appearanceMode = saved }
-
-        SettingsStore.shared.appearanceMode = .dark
-        let darkBG = UIColor(Theme.Palette.bg).resolvedColor(
-            with: UITraitCollection(userInterfaceStyle: .dark))
-
-        SettingsStore.shared.appearanceMode = .gray
-        let grayBG = UIColor(Theme.Palette.bg).resolvedColor(
-            with: UITraitCollection(userInterfaceStyle: .dark))
-
-        // Selecting Gray changes the resolved ground…
-        XCTAssertNotEqual(darkBG, grayBG)
-        // …to a neutral mid-gray (systemGray6 ≈ 0x1C1C1E, white ≈ 0.106): not
-        // pure-black (the dark ground) and not a light ground. Gray's bg is
-        // trait-independent (same UIColor for light & dark), so its resolved
-        // white component is stable regardless of how the Color→UIColor bridge
-        // bakes the trait — unlike the dynamic dark token, which is why we pin
-        // gray's absolute value rather than comparing it against the dark one.
-        var grayWhite: CGFloat = 0
-        grayBG.getWhite(&grayWhite, alpha: nil)
-        XCTAssertEqual(grayWhite, 0.106, accuracy: 0.05)
+    /// #456: an existing user's persisted `"gray"` must not strand the app on an
+    /// invalid appearance. The raw value no longer matches a case, so
+    /// `AppearanceMode(rawValue:)` returns nil and SettingsStore.init's `?? .dark`
+    /// resolves it to Dark — the scheme Gray was closest to. This is the whole
+    /// migration; if this test ever fails, the removal stopped being safe.
+    func testStoredGrayStillDecodesToSomethingValid() {
+        XCTAssertNil(AppearanceMode(rawValue: "gray"))
+        XCTAssertEqual(AppearanceMode(rawValue: "gray") ?? .dark, .dark)
     }
 
     /// The "design direction" tokens collapsed to single Refined values:
