@@ -642,7 +642,7 @@ final class LogStore: ObservableObject {
     }
 
     // Redacts credentials before anything lands in the in-memory buffer or on
-    // disk. Three passes:
+    // disk. Four passes:
     //   1. The post-`#` key segment of any olcrtc:// URI is stripped.
     //      URI shape: olcrtc://carrier?transport@roomID#KEY[%clientID][$mimo].
     //      We replace KEY (everything up to %/$/whitespace) but keep the URI
@@ -655,9 +655,11 @@ final class LogStore: ObservableObject {
     //      lines today (verified — no log site prints them), but this nets the
     //      case if a future Citadel error string or command preview ever echoes
     //      one. Prose without a value ("password changed") is left untouched.
+    //   4. #463: a `Session_id=`/`sessionid2=` value is scrubbed — the Yandex
+    //      bearer cookie, which no other pass matches.
     // Ordering: URI pass runs first so its specific replacement wins; the hex
-    // pass mops up bare-line cases; the password pass is independent. All passes
-    // are idempotent.
+    // pass mops up bare-line cases; the password, wb-token and session passes
+    // are independent. All passes are idempotent.
     private static let _uriKeyRegex = try! NSRegularExpression(pattern: #"(olcrtc://[^\s#]+#)[^\s%$]+"#)
     private static let _hexKeyRegex = try! NSRegularExpression(pattern: #"\b[0-9a-fA-F]{64}\b"#)
     // #377: `pass`/`passwd`/`password` + `=`/`:` + a value token → redact the value.
@@ -670,6 +672,19 @@ final class LogStore: ObservableObject {
     // depth, gated on a cheap "token" pre-check like the password pass.
     private static let _wbTokenEnvRegex  = try! NSRegularExpression(pattern: #"(OLCRTC_WB_TOKEN=)\S+"#)
     private static let _wbTokenYamlRegex = try! NSRegularExpression(pattern: #"(?i)(\btoken:\s*")[^"]*(")"#)
+    // #463: the Yandex session cookie. `Session_id` is a bearer credential for
+    // the WHOLE Yandex identity (mail, Disk, Pay) — usable without the password
+    // and past 2FA — and its value (`3:1712…:…`) matches NONE of the passes
+    // above: it is not 64-hex, not a URI key segment, and carries no "pass" or
+    // "token" marker. `sessionid2` is its HTTPS-only twin and just as complete,
+    // so both spellings redact. Defence in depth, exactly like the #436 pass:
+    // no log site interpolates the cookie today (verified — TelemostRoomService
+    // puts it in a header and nowhere else), but a future Citadel/URLSession
+    // error echo or a careless line would otherwise land it in the log buffer,
+    // the log FILE and the Logs-tab export. Gated on a cheap "session"
+    // pre-check like the others.
+    private static let _yandexSessionRegex =
+        try! NSRegularExpression(pattern: #"(?i)(\bsession_?id2?\s*[=:]\s*)\S+"#)
     static func redactSecrets(_ s: String) -> String {
         var out = s
         let r = NSRange(out.startIndex..<out.endIndex, in: out)
@@ -690,6 +705,12 @@ final class LogStore: ObservableObject {
             out = _wbTokenEnvRegex.stringByReplacingMatches(in: out, range: r4, withTemplate: "$1<redacted>")
             let r5 = NSRange(out.startIndex..<out.endIndex, in: out)
             out = _wbTokenYamlRegex.stringByReplacingMatches(in: out, range: r5, withTemplate: "$1<redacted>$2")
+        }
+        // #463: `Session_id=` / `sessionid2=` — the Yandex bearer cookie. Same
+        // cheap-pre-check shape as the two passes above.
+        if out.range(of: "session", options: .caseInsensitive) != nil {
+            let r6 = NSRange(out.startIndex..<out.endIndex, in: out)
+            out = _yandexSessionRegex.stringByReplacingMatches(in: out, range: r6, withTemplate: "$1<redacted>")
         }
         return out
     }

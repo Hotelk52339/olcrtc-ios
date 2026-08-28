@@ -126,6 +126,18 @@ struct ServersView: View {
     @State private var recoverRowRequest    : CarrierRecoverRequest?
     @State private var carrierBusyHostID    : UUID?
     // eoc #452
+    // boc #463: one-button Telemost room renewal. A Telemost link dies after 24
+    // hours, and the manual cure (create a room in a browser, deliver the id
+    // over SSH) needs exactly the channel a whitelist window blocks. `telemostRenew`
+    // is the request the sheet is presented for (a value snapshot, the #330
+    // rule); `telemostPhase` is the operation's state — ONE property, because
+    // the SSH lane is serialized and only one renewal can ever be in flight;
+    // `telemostAccount` mirrors whether a Yandex session is stored, refreshed
+    // rather than observed so this file depends on no observability contract.
+    @State private var telemostRenew        : TelemostRenewRequest?
+    @State private var telemostPhase        : TelemostRoomPhase = .idle
+    @State private var telemostAccount      = false
+    // eoc #463
     // #374 was: pingTimer (Timer?) — a repeating Timer that re-pinged EVERY
     // host every tick, even mid-op. Replaced by a structured `.task` sweep loop
     // (autoPingLoop) tied to the view lifecycle, which cancels cleanly on
@@ -594,6 +606,11 @@ struct ServersView: View {
                 Text(L10n.installExistingFoundBody.localized())
             }
             // eoc #456
+            // #463: ONE new modifier on this chain, and the sheet's content is a
+            // single concrete type built by `telemostSheet` — this file has hit
+            // "unable to type-check this expression in reasonable time" three
+            // times, so nothing new is inlined here.
+            .sheet(item: $telemostRenew) { req in telemostSheet(req) }
     }
 
     private func removeFromList(_ host: ServerHost) {
@@ -1900,6 +1917,19 @@ struct ServersView: View {
         let rowState = rowHealth(host, row: row)   // #456
         let suggested = rowState.suggestedAction   // #457
         var items: [OlcMenuItem] = []
+        // boc #463: FIRST on a telemost row, above even the verdict's own
+        // suggested fix. An expired room reports `roomInvalid`, whose suggested
+        // action is "Change room / transport" — a sheet that asks the owner to
+        // paste a room id they do not have yet, because getting one is the very
+        // errand this item performs. When both apply, the item that ends the
+        // errand outranks the item that restates it.
+        if row.provider == "telemost" {
+            items.append(.action(L10n.telemostNewRoomAction.localized(),
+                                 systemImage: "arrow.triangle.2.circlepath") {
+                beginTelemostRenew(host, row: row)
+            })
+        }
+        // eoc #463
         // boc #457: a verdict that names its own fix must OFFER that fix, and
         // offer it first. `HealthReason.action` has always returned one
         // (keyMismatch → Recover connection, roomInvalid → Change room) and it
@@ -2179,6 +2209,215 @@ struct ServersView: View {
         if let port = url.port { return "\(scheme)://\(h):\(port)" }
         return "\(scheme)://\(h)"
     }
+
+    // MARK: - #463 — One-button Telemost room renewal
+    //
+    // A Yandex Telemost link stops working 24 hours after it is created
+    // («ссылка на созвон работает 24 часа»), and a server parked in the room
+    // does not extend it. The manual cure — open telemost.yandex.ru, create a
+    // conference, copy the id, deliver it to the VPS over SSH — needs exactly
+    // the channel a whitelist window blocks. This is the same errand as one
+    // press, and it runs on the PHONE for a structural reason: if the VPS
+    // rotated its own room, the phone could never learn the new id, because the
+    // only channel to it during a whitelist window is the tunnel that just died
+    // with the old room.
+    //
+    // Nothing about DELIVERING a room is reinvented here. `renewTelemostRoom`
+    // creates the room and then hands it to `reconfigure(_:containerName:recordID:options:)`
+    // — the existing path, which rewrites `room.id` in that container's yaml,
+    // restarts that ONE container, rebuilds the ConnectionRecord from the URI
+    // the server prints back, refreshes the protocol rows and re-verifies the
+    // node. This section only supplies the room and handles the one thing that
+    // path never had to face: renewing the carrier you are standing on.
+
+    private func beginTelemostRenew(_ host: ServerHost, row: SSHRunner.CarrierInfo) {
+        telemostPhase   = .idle
+        telemostAccount = YandexSessionStore.hasStoredSession()
+        telemostRenew   = TelemostRenewRequest(host: host, row: row,
+                                               recordID: connectionRecord(host, row: row)?.id)
+    }
+
+    /// Resolves the request into the sheet's inputs. Concrete return type, plain
+    /// values and closures — the `.sheet(item:)` in `carrierModals` stays one
+    /// cheap expression.
+    private func telemostSheet(_ req: TelemostRenewRequest) -> TelemostRoomSheet {
+        TelemostRoomSheet(
+            serverLabel:     req.host.label,
+            hasAccount:      telemostAccount,
+            phase:           telemostPhase,
+            hazard:          telemostHazard(req),
+            busy:            actionsDisabled || carrierBusyHostID != nil,
+            onSignedIn:      { adoptYandexSession($0) },
+            onForgetAccount: { forgetYandexSession() },
+            onCreate:        { Task { await renewTelemostRoom(req) } },
+            onSwitchCarrier: { switchCarrierBeforeRenewal(req) })
+    }
+
+    /// #463: THE hazard. SSH now rides the tunnel (`App/Core/SSHTransport.swift`),
+    /// so restarting the container the tunnel runs through cuts the command's own
+    /// transport mid-flight. Recomputed on every render — this view observes
+    /// `tunnel`, so the moment the user takes the "connect through X first"
+    /// offer the warning disappears by itself and the safe press is the only
+    /// press left.
+    private func telemostHazard(_ req: TelemostRenewRequest) -> TelemostRenewHazard {
+        guard isLiveRow(req.row) else { return .none }
+        guard let alt = alternativeCarrier(req) else { return .liveOnly }
+        return .liveSwitchable(CarrierTransportMatrix.carrierLabel(alt.provider))
+    }
+
+    /// Another protocol on the SAME host that is up server-side and has a saved
+    /// connection — somewhere safe to stand while telemost's container restarts.
+    /// This is why a multi-protocol host exists: a jitsi room never expires.
+    private func alternativeCarrier(_ req: TelemostRenewRequest) -> SSHRunner.CarrierInfo? {
+        (carrierRows[req.host.id] ?? []).first {
+            $0.container != req.row.container
+                && Self.isUp($0.status)
+                && connectionRecord(req.host, row: $0) != nil
+        }
+    }
+
+    private func switchCarrierBeforeRenewal(_ req: TelemostRenewRequest) {
+        guard let alt = alternativeCarrier(req),
+              let rec = connectionRecord(req.host, row: alt) else { return }
+        LogStore.shared.log(.provisioning,
+            "▶ Moving the tunnel to \(alt.provider) before renewing the telemost room")
+        // The disconnect is ours to make: ConnectionsView's comment claims
+        // `connect(record:)` "already disconnects-then-dials", but
+        // `TunnelManager.connect` RETURNS on .connecting/.connected/.waitingForNetwork.
+        tunnel.disconnect()
+        tunnel.connect(record: rec)
+    }
+
+    private func renewTelemostRoom(_ req: TelemostRenewRequest) async {
+        guard !actionsDisabled, carrierBusyHostID == nil else { return }
+
+        telemostPhase = .working(L10n.telemostRoomWorkingCreate.localized())
+        // #463 (audit) was: `let room: String` — `createRoom()` returns a
+        // `TelemostRoom` (uri + bare id), so this did not compile. The BARE ID is
+        // what every use site below wants: the server config, the record, the
+        // status line and the log.
+        let room: TelemostRoom
+        do {
+            room = try await TelemostRoomService.createRoom()
+        } catch {
+            // The reason, never the credential.
+            LogStore.shared.log(.provisioning,
+                "✗ Telemost room creation failed: \(error.localizedDescription)")
+            telemostAccount = YandexSessionStore.hasStoredSession()
+            telemostPhase   = .failed(error.localizedDescription)
+            return
+        }
+        LogStore.shared.log(.provisioning, "✓ New Telemost room: \(room.id.prefix(8))…")
+
+        // Read the hazard BEFORE the restart takes the answer away.
+        let wasLive = isLiveRow(req.row)
+        telemostPhase = .working(L10n.telemostRoomWorkingApply.localized())
+        let options = InstallOptions(carrier:   req.row.provider,
+                                     transport: req.row.transport,
+                                     roomID:    room.id)
+        await reconfigure(req.host, containerName: req.row.container,
+                          recordID: req.recordID, options: options)
+
+        // #463 (audit): keep the record honest on EVERY path, not only the one
+        // where the command died. `Provisioner.reconfigure` returns nil — and
+        // `run` still reports success — when the server applied the change but
+        // printed no `OLCRTC_URI=` line ("Reconfigure succeeded but server did
+        // not emit URI"). The record was then left on the room that just expired
+        // while the sheet said "Room replaced" and the reconnect below dialled
+        // the dead room. A no-op when reconfigure already rebuilt the record
+        // from the returned URI (the guard compares roomID).
+        applyRoomLocally(req, room: room.id)
+
+        guard let failure = reconfigureFailure(req.host.id) else {
+            telemostPhase = .done(room.id)
+            if wasLive { reconnectAfterRenewal(req) }
+            return
+        }
+        guard wasLive else {
+            telemostPhase = .failed(failure)
+            return
+        }
+        // boc #463: the EXPECTED outcome of renewing the carrier you are riding.
+        // `reconfigureScript` seds `room.id` and THEN restarts the container, so
+        // the command dies after the write and before it can print the new URI —
+        // the server changed, the confirmation did not survive. Reporting that as
+        // a plain failure would leave the record pointing at a room that is
+        // expired by definition, which is the lying state this feature exists to
+        // end. The record was already moved to the new room above, so what is
+        // left here is: re-probe it (HealthCoordinator dials the room directly
+        // and does NOT use the tunnel, so its verdict — not this SSH error — is
+        // the trustworthy answer), say exactly that, and reconnect. The card
+        // still reads "Reconfigure failed", which is TRUE of the command; the
+        // row's own health chip carries the real answer.
+        await verifyRecord(req.recordID)
+        telemostPhase = .failed(L10n.telemostRenewDropped_fmt.formatted(room.id))
+        reconnectAfterRenewal(req)
+        // eoc #463
+    }
+
+    /// The terminal message `run` wrote onto the card, or nil when the op
+    /// finished cleanly. The card's state is the single source of truth for
+    /// whether an op succeeded (#258), so this asks it instead of keeping a
+    /// second copy. Pinned to `.reconfigure` so a stale failure from some other
+    /// op can never be reported as this one's.
+    private func reconfigureFailure(_ hostID: UUID) -> String? {
+        guard let state = display[hostID],
+              case .failed(let op, _, let message, _) = state,
+              op == .reconfigure else { return nil }
+        return message
+    }
+
+    /// #463: keep the record honest when the server's confirmation was lost.
+    /// ONLY the room changes — `reconfigureScript` rewrites `room.id`, never the
+    /// key — so everything else is carried through untouched.
+    private func applyRoomLocally(_ req: TelemostRenewRequest, room: String) {
+        guard let id = req.recordID,
+              let existing = connections.connections.first(where: { $0.id == id }),
+              case .olcrtc(let params) = existing.details,
+              params.roomID != room else { return }
+        var moved = params
+        moved.roomID = room
+        var updated = existing
+        updated.details = .olcrtc(moved)
+        connections.update(updated)
+    }
+
+    /// #463: `TunnelManager.lastRecord` is a snapshot taken at connect time, so
+    /// after a room change the reconnect loop would keep dialing the room that
+    /// just expired until it gives up (OLC-1014). `disconnect()` cancels that
+    /// loop and clears `lastRecord`; the dial that follows uses the record as it
+    /// now stands.
+    private func reconnectAfterRenewal(_ req: TelemostRenewRequest) {
+        guard let id = req.recordID,
+              let rec = connections.connections.first(where: { $0.id == id }) else { return }
+        tunnel.disconnect()
+        tunnel.connect(record: rec)
+    }
+
+    // boc #463: the ONLY place in this file that touches the credential. A live
+    // `Session_id` is a bearer token for the user's whole Yandex identity — mail,
+    // Disk, Pay — usable without the password and past 2FA, so it goes straight
+    // from the web view into the Keychain-backed store and is never held here,
+    // never logged, and never formatted into a message.
+    // #463 (audit) was: `YandexSessionStore.shared` — that singleton does not
+    // exist (the store documents that it deliberately has none), and `save` takes
+    // an UNLABELLED value. The store owns no state beyond the published flag, so
+    // a transient instance writes and the nonisolated static re-reads the truth
+    // back out of the Keychain — which is also what makes the flag right when the
+    // Keychain write FAILED. The two duplicate log lines went with it: the store
+    // already logs both outcomes accurately, and these claimed success
+    // unconditionally.
+    private func adoptYandexSession(_ sessionID: String) {
+        YandexSessionStore().save(sessionID)
+        telemostAccount = YandexSessionStore.hasStoredSession()
+    }
+
+    private func forgetYandexSession() {
+        YandexSessionStore().clear()
+        telemostAccount = YandexSessionStore.hasStoredSession()
+        telemostPhase   = .idle
+    }
+    // eoc #463
 
     // MARK: Container scan (no base change → outside `run`)
     // #339 was: fetchLogs(_:) — ran provisioner.containerLogs and presented the
@@ -2490,6 +2729,18 @@ struct CarrierRecoverRequest: Identifiable {
     var id: String { container }
 }
 // eoc #452
+
+/// #463: the telemost row a room renewal was started for — a value snapshot
+/// (the #330 rule), so the sheet keeps working while the card behind it
+/// re-renders under a live tunnel. `recordID` is resolved once at open time
+/// rather than inside the sheet: resolving it needs the stores, which the sheet
+/// deliberately does not have.
+struct TelemostRenewRequest: Identifiable {
+    let host: ServerHost
+    let row: SSHRunner.CarrierInfo
+    let recordID: UUID?
+    var id: String { row.container }
+}
 
 // #340: both appearance variants.
 #if DEBUG

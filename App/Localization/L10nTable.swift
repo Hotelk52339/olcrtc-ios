@@ -1016,6 +1016,56 @@ enum L10nTable {
         // worth installing, which is the whole point of the switcher.
         .connectSwitcherOnlyOne:     "Only one protocol on this server",
         .connectSwitcherAddHint:     "Install a second one on the Servers tab, so you can switch when one stops working.",
+
+        // MARK: #463 One-button Telemost room renewal
+        // Yandex expires a Telemost link 24 hours after it is created, and the
+        // owner used to fix that by hand over SSH — the one channel a whitelist
+        // window closes. These strings cover the whole errand in one sheet.
+
+        // Create-call failures. Each names the cause AND the next move, and none
+        // of them may ever carry the session cookie or an internal symbol.
+        .telemostErrNoAccount:       "No Yandex account is linked. Sign in to create Telemost rooms.",
+        .telemostErrSessionRejected: "Yandex rejected the saved sign-in. Sign in again.",
+        .telemostErrRateLimited:     "Yandex is refusing new meetings right now. Wait a minute and try again.",
+        .telemostErrNetwork:         "Could not reach Yandex. Check the connection and try again.",
+        .telemostErrMalformed:       "Yandex sent an answer the app could not read. Try again.",
+        .telemostErrStatus_fmt:      "Yandex returned an error (HTTP %d). Try again in a minute.",
+
+        // The sign-in web view. This warning is the most important string in the
+        // feature: the saved sign-in opens the whole Yandex account without the
+        // password, so it is shown above the web view, before anything is typed.
+        .yandexLoginTitle:           "Yandex sign-in",
+        .yandexLoginWarning:         "Use a throwaway Yandex account. This device will store a sign-in token that opens that account's mail, Disk and payments without the password.",
+
+        // The sheet. One name for the menu item and the sheet it opens.
+        .telemostNewRoomAction:      "New Telemost room",
+        .telemostRoomServerLine_fmt: "Yandex Telemost on %@",
+        .telemostRoomExplainer:      "A Telemost link stops working 24 hours after it is created. This makes a fresh room in your Yandex account and points the server at it.",
+        .telemostRoomNoAccountTitle: "No Yandex account linked",
+        .telemostRoomNoAccountBody:  "Creating a room needs a signed-in Yandex account. Sign in with a throwaway one — the token is kept in the Keychain and never leaves this device.",
+        .telemostRoomSignInAction:   "Sign in to Yandex",
+        .telemostRoomIdleTitle:      "Yandex account linked",
+        .telemostRoomIdleBody:       "One tap creates the room and moves this server into it.",
+        .telemostRoomCreateAction:   "Create room and apply",
+        .telemostRoomWorkingTitle:   "Working",
+        .telemostRoomWorkingCreate:  "Creating the room in Telemost…",
+        .telemostRoomWorkingApply:   "Sending the new room to the server…",
+        .telemostRoomDoneTitle:      "Room replaced",
+        .telemostRoomDoneBody:       "The server is in the new room. Its link is good for the next 24 hours.",
+        .telemostRoomFailedTitle:    "Couldn't finish",
+        .telemostRoomRetryAction:    "Try again",
+        .telemostRoomOtherAccountAction:  "Use another account",
+        .telemostRoomForgetAccountAction: "Forget this Yandex account",
+        .telemostRoomKeychainNote:   "The sign-in token is kept in this device's Keychain only.",
+
+        // The live-row hazard. Renewing the protocol the tunnel is riding on
+        // restarts the container that carries the app's own SSH, so the command
+        // loses its transport mid-flight. Say so plainly, and offer the safe
+        // route first when the server has one.
+        .telemostRenewLiveSwitchable_fmt: "You are connected through this protocol. Replacing its room restarts it, so the connection will drop. Connect through %@ first and it won't.",
+        .telemostRenewSwitchAction_fmt:   "Connect through %@ first",
+        .telemostRenewLiveOnly:      "You are connected through this protocol, and this server has no other one to use instead. Replacing the room restarts it, so the connection will drop mid-command — the app saves the new room and reconnects to it.",
+        .telemostRenewDropped_fmt:   "The connection dropped while the server was switching to room %@ — expected when you renew the protocol you are connected through. The new room is saved and the app is reconnecting; run Verify from the protocol's menu to confirm the server took it.",
     ]
 
     // MARK: Russian
@@ -1989,5 +2039,55 @@ enum L10nTable {
         // ставить второй, — ради этого переключатель и существует.
         .connectSwitcherOnlyOne:     "На этом сервере только один протокол",
         .connectSwitcherAddHint:     "Установи второй на вкладке «Серверы», чтобы переключаться, когда один перестанет работать.",
+
+        // MARK: #463 Обновление комнаты Телемоста одной кнопкой
+        // Яндекс гасит ссылку Телемоста через 24 часа после создания, и раньше
+        // владелец чинил это руками по SSH — по тому самому каналу, который
+        // перекрывают в белом списке. Теперь весь путь укладывается в один лист.
+
+        // Ошибки создания комнаты. Каждая называет причину И следующий шаг; ни
+        // одна не может нести куку сессии или внутреннее имя.
+        .telemostErrNoAccount:       "Аккаунт Яндекса не привязан. Войди, чтобы создавать комнаты Телемоста.",
+        .telemostErrSessionRejected: "Яндекс отклонил сохранённый вход. Войди заново.",
+        .telemostErrRateLimited:     "Яндекс сейчас не даёт создавать встречи. Подожди минуту и попробуй снова.",
+        .telemostErrNetwork:         "Не удалось связаться с Яндексом. Проверь соединение и попробуй снова.",
+        .telemostErrMalformed:       "Яндекс прислал ответ, который приложение не смогло разобрать. Попробуй снова.",
+        .telemostErrStatus_fmt:      "Яндекс вернул ошибку (HTTP %d). Попробуй через минуту.",
+
+        // Веб-вход. Самая важная строка во всей функции: сохранённый вход
+        // открывает весь аккаунт Яндекса без пароля, поэтому предупреждение
+        // висит над веб-вью — до того, как что-то будет введено.
+        .yandexLoginTitle:           "Вход в Яндекс",
+        .yandexLoginWarning:         "Используй одноразовый аккаунт Яндекса. Устройство сохранит токен входа, который открывает почту, Диск и платежи этого аккаунта без пароля.",
+
+        // Лист. Одно имя для пункта меню и для листа, который он открывает.
+        .telemostNewRoomAction:      "Новая комната Телемоста",
+        .telemostRoomServerLine_fmt: "Яндекс Телемост на «%@»",
+        .telemostRoomExplainer:      "Ссылка Телемоста перестаёт работать через 24 часа после создания. Кнопка создаёт новую комнату в твоём аккаунте Яндекса и переключает сервер на неё.",
+        .telemostRoomNoAccountTitle: "Аккаунт Яндекса не привязан",
+        .telemostRoomNoAccountBody:  "Для создания комнаты нужен вход в Яндекс. Войди под одноразовым аккаунтом — токен хранится в Keychain и не покидает устройство.",
+        .telemostRoomSignInAction:   "Войти в Яндекс",
+        .telemostRoomIdleTitle:      "Аккаунт Яндекса привязан",
+        .telemostRoomIdleBody:       "Одно нажатие создаёт комнату и переводит сервер в неё.",
+        .telemostRoomCreateAction:   "Создать комнату и применить",
+        .telemostRoomWorkingTitle:   "Выполняется",
+        .telemostRoomWorkingCreate:  "Создаём комнату в Телемосте…",
+        .telemostRoomWorkingApply:   "Передаём новую комнату на сервер…",
+        .telemostRoomDoneTitle:      "Комната заменена",
+        .telemostRoomDoneBody:       "Сервер в новой комнате. Её ссылка действует ближайшие 24 часа.",
+        .telemostRoomFailedTitle:    "Не удалось завершить",
+        .telemostRoomRetryAction:    "Повторить",
+        .telemostRoomOtherAccountAction:  "Другой аккаунт",
+        .telemostRoomForgetAccountAction: "Забыть этот аккаунт Яндекса",
+        .telemostRoomKeychainNote:   "Токен входа хранится только в Keychain этого устройства.",
+
+        // Опасность живой строки. Обновление протокола, через который идёт
+        // туннель, перезапускает контейнер, несущий собственный SSH приложения, —
+        // команда теряет транспорт на полпути. Говорим это прямо и первым
+        // предлагаем безопасный путь, если он на сервере есть.
+        .telemostRenewLiveSwitchable_fmt: "Сейчас соединение идёт через этот протокол. Замена комнаты перезапустит его, и соединение оборвётся. Сначала подключись через %@ — тогда не оборвётся.",
+        .telemostRenewSwitchAction_fmt:   "Сначала подключиться через %@",
+        .telemostRenewLiveOnly:      "Сейчас соединение идёт через этот протокол, а других на этом сервере нет. Замена комнаты перезапустит его, и соединение оборвётся посреди команды — приложение сохранит новую комнату и переподключится к ней.",
+        .telemostRenewDropped_fmt:   "Соединение оборвалось, пока сервер переходил в комнату %@, — так и должно быть, когда обновляешь протокол, через который идёт соединение. Новая комната сохранена, идёт переподключение; запусти «Проверить» в меню протокола, чтобы убедиться, что сервер её принял.",
     ]
 }
