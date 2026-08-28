@@ -934,6 +934,58 @@ enum L10n: String, CaseIterable {
     // navigates away.
     case connectSwitcherOnlyOne             // "Only one protocol on this server"
     case connectSwitcherAddHint             // where to install a second one, and why
+
+    // MARK: #463 One-button Telemost room renewal
+    // A Telemost link dies 24 hours after it is created, and the only channel
+    // left to the phone during a whitelist window is the tunnel the dead room
+    // just took down. These strings cover the whole errand: the Yandex sign-in
+    // whose cookie creates rooms, the sheet that creates one and hands it to
+    // the server, and the honest warnings around renewing the very protocol
+    // the connection is riding on.
+
+    // Failures of the create call (TelemostRoomError.errorDescription). Each
+    // says what happened AND what to do; none may ever carry the cookie.
+    case telemostErrNoAccount
+    case telemostErrSessionRejected
+    case telemostErrRateLimited
+    case telemostErrNetwork
+    case telemostErrMalformed
+    case telemostErrStatus_fmt              // %d = HTTP status
+
+    // The sign-in web view. `yandexLoginWarning` is the most important string
+    // in this feature: a `Session_id` is a bearer credential for the whole
+    // Yandex identity, so the warning must be read BEFORE a password is typed.
+    case yandexLoginTitle
+    case yandexLoginWarning
+
+    // The sheet: row menu item and sheet title share one name, so the thing
+    // tapped and the thing opened are called the same.
+    case telemostNewRoomAction
+    case telemostRoomServerLine_fmt         // %@ = server label
+    case telemostRoomExplainer              // why the button exists at all (24 h)
+    case telemostRoomNoAccountTitle
+    case telemostRoomNoAccountBody
+    case telemostRoomSignInAction
+    case telemostRoomIdleTitle
+    case telemostRoomIdleBody
+    case telemostRoomCreateAction
+    case telemostRoomWorkingTitle
+    case telemostRoomWorkingCreate
+    case telemostRoomWorkingApply
+    case telemostRoomDoneTitle
+    case telemostRoomDoneBody
+    case telemostRoomFailedTitle
+    case telemostRoomRetryAction
+    case telemostRoomOtherAccountAction
+    case telemostRoomForgetAccountAction
+    case telemostRoomKeychainNote
+
+    // The live-row hazard: renewing the protocol you are tunnelling through
+    // restarts the container carrying your own SSH.
+    case telemostRenewLiveSwitchable_fmt    // %@ = another protocol on this host
+    case telemostRenewSwitchAction_fmt      // %@ = the same protocol name
+    case telemostRenewLiveOnly              // no alternative exists on this host
+    case telemostRenewDropped_fmt           // %@ = the new room id
 }
 
 extension L10n {

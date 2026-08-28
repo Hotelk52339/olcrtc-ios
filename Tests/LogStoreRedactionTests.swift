@@ -138,4 +138,35 @@ final class LogStoreRedactionTests: XCTestCase {
         XCTAssertEqual(LogStore.redactSecrets("key=val pass=s3cret"),
                        "key=val pass=<redacted>")
     }
+
+    // MARK: #463 — the Yandex session cookie
+    //
+    // `Session_id` is a bearer credential for the whole Yandex identity (mail,
+    // Disk, Pay), usable without the password and past 2FA. Its value matches
+    // none of the passes above — not 64-hex, no URI, no "pass"/"token" marker —
+    // so it needs its own. Nothing logs it today; this pass is the net for the
+    // day something echoes a header.
+
+    func testYandexSessionCookieValueIsRedacted() {
+        // Shape-alike fixture, not a real cookie.
+        let value = "3:1700000000.5.0.1700000000000:AbCdEf:1a.1.2:1|123456.0.2|0:0.0.0"
+        XCTAssertEqual(LogStore.redactSecrets("Cookie: Session_id=\(value)"),
+                       "Cookie: Session_id=<redacted>")
+        XCTAssertFalse(LogStore.redactSecrets("Session_id=\(value)").contains(value))
+    }
+
+    func testYandexSecureTwinIsRedacted() {
+        // `sessionid2` is the HTTPS-only twin and just as complete a credential.
+        XCTAssertEqual(LogStore.redactSecrets("sessionid2: 3:abcdef"),
+                       "sessionid2: <redacted>")
+    }
+
+    func testSessionProseWithoutAValueIsUntouched() {
+        // The service's own failure line must survive verbatim, and an interior
+        // `Session` (SOCKSSession) is not a credential marker.
+        for line in ["Telemost: the saved Yandex session was rejected (401)",
+                     "SOCKSSession: built a tunnel session"] {
+            XCTAssertEqual(LogStore.redactSecrets(line), line)
+        }
+    }
 }
