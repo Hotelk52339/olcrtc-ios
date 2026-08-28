@@ -1268,18 +1268,24 @@ struct ServersView: View {
     private func menuItems(_ host: ServerHost) -> [OlcMenuItem] {
         var items: [OlcMenuItem] = []
 
-        if hasContainer(host) {
-            items.append(.action(L10n.actionChangeRoomTransport.localized(), systemImage: "slider.horizontal.3") {
-                reconfigureRequest = primaryReconfigureRequest(host)   // #452
+        // #468 was: a host-level "Change room / transport" that silently targeted
+        // the PRIMARY protocol. Since #452 the card lists every protocol and each
+        // row carries its own copy of this action, where the target is named. At
+        // host level the same words answer a question the user did not ask —
+        // "which one?" — so the item is gone; the rows own it.
+        //
+        // #468 was: Scan ran unconditionally. #456 moved it out of an `else`
+        // branch to keep it reachable for siblings made outside the app — but
+        // `carrierListScript` globs every server-*.yaml, so those siblings are
+        // now listed on their own. What Scan still answers is the one case the
+        // list cannot: no container is adopted yet (so nothing can be listed at
+        // all), or the recorded name went stale and the listing failed. Offer it
+        // exactly then, and it stops being noise on a healthy card.
+        if (carrierRows[host.id] ?? []).isEmpty {
+            items.append(.action(L10n.actionScanVPS.localized(), systemImage: "magnifyingglass") {
+                Task { await scanContainers(host) }
             })
         }
-        // #456 was: the Scan item lived inside an `else` branch, so it vanished
-        // for good the moment a container was adopted — exactly when a user
-        // wants to look for siblings created outside the app, or after the
-        // recorded name went stale.
-        items.append(.action(L10n.actionScanVPS.localized(), systemImage: "magnifyingglass") {
-            Task { await scanContainers(host) }
-        })
         // #419: bot settings — available whether or not a container is installed.
         // #427: robot glyph (custom asset).
         items.append(.action(L10n.botSheetTitle.localized(), assetImage: "RobotIcon") {
@@ -1983,12 +1989,16 @@ struct ServersView: View {
         // #457 was: `row.status.shortLabel.hasPrefix("Up")` — string-matching a
         // user-visible label. `ContainerStatus.parse` already decided this.
         if Self.isUp(row.status) {
-            items.append(.action(L10n.actionStop.localized(), systemImage: "stop.fill", role: .destructive) {
+            // #468 was: `L10n.actionStop` — "Stop server". On a protocol row this
+            // stops that protocol's container, and on a multi-protocol host the
+            // others keep running, so the old wording promised something the
+            // action does not do. The card's own button still says "Stop server".
+            items.append(.action(L10n.protocolStopAction.localized(), systemImage: "stop.fill", role: .destructive) {
                 if row.isPrimary { Task { await stop(host) } }
                 else             { Task { await stopCarrier(host, row: row) } }
             })
         } else {
-            items.append(.action(L10n.actionStart.localized(), systemImage: "play.fill") {
+            items.append(.action(L10n.protocolStartAction.localized(), systemImage: "play.fill") {
                 if row.isPrimary { Task { await startContainer(host) } }
                 else             { Task { await startCarrier(host, row: row) } }
             })

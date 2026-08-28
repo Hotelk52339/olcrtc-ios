@@ -108,6 +108,12 @@ struct LogsView: View {
     @State private var selectedHostID: UUID?
     // #338 was: fetching: Bool — now the monotonic fetch phase (nil = idle),
     // mirroring the HostDisplay forward-only pattern; drives text + k/n + bar.
+    // #468: which container's `podman logs` to fetch. nil = the host's primary.
+    // A multi-protocol host runs one container per protocol, and this screen
+    // only ever fetched the primary — so on a host with a jitsi primary and a
+    // telemost sibling, the telemost log (where the traffic actually is) could
+    // not be read at all.
+    @State private var selectedContainerName: String?
     @State private var fetchPhase: Int?
     @State private var alertText: String?  // #297
 
@@ -450,6 +456,11 @@ struct LogsView: View {
             if subject.host == nil {
                 hostPicker
             }
+            // #468: on a pinned host the server is already decided; what is still
+            // open is WHICH of its protocols you want the log of.
+            if let pinned = subject.host ?? selectedHost {
+                protocolPicker(pinned)
+            }
             Spacer(minLength: 8)
             fetchButton
         }
@@ -475,6 +486,43 @@ struct LogsView: View {
     }
 
     @ViewBuilder
+    /// #468: every container this host runs, primary first. Derived from local
+    /// records (`extraConnectionIDs` → carrier → `<base>-<carrier>`), never from
+    /// an SSH scan — the picker has to be there before any connection is made.
+    private func containers(of host: ServerHost) -> [(name: String, label: String)] {
+        guard let base = host.lastContainerName else { return [] }
+        var out: [(name: String, label: String)] = [(base, primaryLabel(host))]
+        for id in host.extraConnectionIDs ?? [] {
+            guard let rec = connections.connections.first(where: { $0.id == id }),
+                  case .olcrtc(let p) = rec.details else { continue }
+            out.append((SSHRunner.siblingContainerName(base: base, carrier: p.carrier),
+                        CarrierTransportMatrix.carrierLabel(p.carrier)))
+        }
+        return out
+    }
+
+    /// The primary's own protocol name when the app knows it, so the picker reads
+    /// "Jitsi / Yandex Telemost" rather than "Primary / Yandex Telemost".
+    private func primaryLabel(_ host: ServerHost) -> String {
+        if let id = host.lastConnectionID,
+           let rec = connections.connections.first(where: { $0.id == id }),
+           case .olcrtc(let p) = rec.details {
+            return CarrierTransportMatrix.carrierLabel(p.carrier)
+        }
+        return L10n.logsContainerPrimary.localized()
+    }
+
+    @ViewBuilder
+    private func protocolPicker(_ host: ServerHost) -> some View {
+        let items = containers(of: host)
+        if items.count > 1 {
+            OlcChipPicker(selection: Binding<String?>(
+                get: { selectedContainerName ?? items[0].name },
+                set: { selectedContainerName = $0 }
+            ), options: items.map { (Optional($0.name), $0.label) })
+        }
+    }
+
     private var hostPicker: some View {
         if orderedHosts.count <= 3 {
             OlcChipPicker(selection: Binding(
@@ -551,7 +599,12 @@ struct LogsView: View {
             }
         }
 
-        guard let cname = target.lastContainerName else { return }
+        // #468 was: `target.lastContainerName` unconditionally — the primary, and
+        // only ever the primary. Honour the picker; fall back to the primary when
+        // the chosen name does not belong to this host (the host was switched).
+        let available = containers(of: target).map { $0.name }
+        let chosen = selectedContainerName.flatMap { available.contains($0) ? $0 : nil }
+        guard let cname = chosen ?? target.lastContainerName else { return }
         do {
             _ = try await provisioner.containerLogs(
                 on: target, password: pw, containerName: cname,

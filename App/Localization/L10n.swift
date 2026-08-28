@@ -989,6 +989,14 @@ enum L10n: String, CaseIterable {
 
     // #465: automatic renewal — raised only when the room is nearly gone and the
     // tunnel is in use, so the user is at the phone and can decide.
+    // #468: a protocol row's start/stop acts on THAT protocol's container, not
+    // on the server — the card's own button is the one that says "server".
+    // #468: picker label for a host whose primary protocol the app cannot name.
+    case logsContainerPrimary
+
+    case protocolStopAction
+    case protocolStartAction
+
     case telemostExpiryTitle
     case telemostExpiryBody_fmt             // %@ = record name, %d = minutes left
     case telemostExpiryRenewAction
