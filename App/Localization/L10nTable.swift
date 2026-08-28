@@ -541,6 +541,7 @@ enum L10nTable {
         .sshRetryIn4s:               "  retry in 4 s…",
         .sshPortNotResponding_fmt:   "Port %d on %@ did not respond — verify SSH is open and the VPS is reachable",
         .serverUnreachable_fmt:      "Server %@ is not responding — check the VPS is online and SSH port is reachable",
+        .sshTunnelDroppedMidOp_fmt:  "The SSH session was riding the app's own tunnel and that tunnel dropped mid-operation — the command may already have run on the server. Reconnect, then re-check the server state. (%@)",
 
         // NetPing
         .pingTCPOK_fmt:              "TCP/%d responded in %@ ms",
@@ -1520,6 +1521,7 @@ enum L10nTable {
         .sshRetryIn4s:               "  повтор через 4 с…",
         .sshPortNotResponding_fmt:   "Порт %d на %@ не ответил — проверь что SSH открыт и VPS доступен",
         .serverUnreachable_fmt:      "Сервер %@ не отвечает — проверь что VPS включён и SSH-порт открыт",
+        .sshTunnelDroppedMidOp_fmt:  "SSH-сессия шла через собственный туннель приложения, и туннель оборвался посреди операции — команда могла уже выполниться на сервере. Переподключись и проверь состояние сервера. (%@)",
 
         // NetPing
         .pingTCPOK_fmt:              "TCP/%d отвечает за %@ ms",

@@ -169,7 +169,9 @@ enum SSHRunner {
     ///      we abort with `.sshConnect` so the user learns about the drop
     ///      within ~45 s instead of waiting the full 25-minute timeout.
     ///   2. Every `probeIntervalPolls` (5) iterations we run a short TCP-22
-    ///      probe via NetPing.tcp. After `probeFailureAbortThreshold` (2)
+    ///      probe — #462: via `reachabilityProbe`, i.e. direct when there is no
+    ///      tunnel and a SOCKS5 CONNECT through it when there is, so the probe
+    ///      tests the SAME path the polls use. After `probeFailureAbortThreshold` (2)
     ///      consecutive probe failures (~150 s of confirmed unreachability)
     ///      we abort with `.sshConnect(serverUnreachable_fmt)`.
     ///   3. Any successful SSH poll or successful probe resets BOTH counters.
@@ -183,7 +185,15 @@ enum SSHRunner {
             maxPolls: installMaxPolls,
             pollInterval: installPollInterval,
             sleepFn: { secs in try await Task.sleep(for: .seconds(secs)) },
-            probeFn: { h, port in await NetPing.tcp(host: h, port: UInt16(port), timeout: Self.probeTimeout).success }
+            // #462: follow the SSH route. This call site OVERRODE pollLoop's own
+            // default, so leaving it alone would have kept aborting installs on a
+            // direct TCP-22 probe during a whitelist window even though every SSH
+            // poll was flowing through the tunnel.
+            // #462 was: `{ h, port in await NetPing.tcp(host: h, port: UInt16(port), timeout: Self.probeTimeout).success }`
+            probeFn: { h, port in
+                await SSHRunner.reachabilityProbe(host: h, port: port,
+                                                  timeout: Self.probeTimeout).success
+            }
         )
     }
 
@@ -215,7 +225,17 @@ enum SSHRunner {
         maxPolls: Int = installMaxPolls,
         pollInterval: TimeInterval = installPollInterval,
         sleepFn:  @Sendable (TimeInterval) async throws -> Void = { secs in try await Task.sleep(for: .seconds(secs)) },
-        probeFn:  @Sendable (String, Int)  async       -> Bool  = { h, port in await NetPing.tcp(host: h, port: UInt16(port)).success }
+        // boc #462: the default probe follows the SSH route. A direct TCP-22 ping
+        // is exactly what a carrier whitelist window kills, so during one it used
+        // to abort an install whose SSH commands were still flowing fine through
+        // the tunnel. `reachabilityProbe` pings direct when there is no tunnel and
+        // opens a one-shot SOCKS5 CONNECT through it when there is. The parameter
+        // stays injectable, so `MockSSHClient`-driven tests are unaffected.
+        // #462 was: `{ h, port in await NetPing.tcp(host: h, port: UInt16(port)).success }`
+        probeFn:  @Sendable (String, Int)  async       -> Bool  = { h, port in
+            await SSHRunner.reachabilityProbe(host: h, port: port).success
+        }
+        // eoc #462
     ) async throws -> InstallResult {
         var consecutiveSSHErrors:    Int = 0
         var consecutiveProbeFailures: Int = 0
@@ -1062,21 +1082,42 @@ enum SSHRunner {
     /// Named with a `_` prefix to signal it is implementation-internal; exposed
     /// as `internal` (not `private`) so `CitadelSSHClient` in the same module
     /// can bridge the `SSHClientProtocol` abstraction to real Citadel transport.
+    // boc #462: `connect` now also hands back the loopback relay that carried the
+    // session (nil on the direct path). The relay owns a listener + an outbound
+    // SOCKS leg, so it must be torn down on exactly the paths that close the
+    // client — hence it is released here rather than inside `connect`.
+    // #462 was: `let client = try await connect(host: host, secret: secret)`
     @discardableResult
     static func _withConnection<T>(
         host: ServerHost, secret: SSHSecret,
         _ body: (SSHClient) async throws -> T
     ) async throws -> T {
-        let client = try await connect(host: host, secret: secret)
+        let (client, relay) = try await connect(host: host, secret: secret)
         do {
             let result = try await body(client)
             try? await client.close()
+            relay?.close()          // #462: idempotent, fire-and-forget
             return result
         } catch {
+            // #462 (audit): the self-teardown case. An op that restarts or stops
+            // the exit container (reconfigure, update, rotateKey, stop,
+            // uninstall, reboot) kills the tunnel it is riding the moment the
+            // command lands, so the SOCKS leg dies before the reply comes back
+            // and the user got nothing but a raw Citadel channel error. Sample
+            // the relay BEFORE tearing it down and say what actually happened —
+            // including that the command probably DID run server-side, which is
+            // the part that decides what the owner should do next.
+            let tunnelCollapsed = relay?.isTransportDown ?? false
             try? await client.close()
+            relay?.close()          // #462
+            if tunnelCollapsed {
+                throw ProvisionError.sshConnect(
+                    L10n.sshTunnelDroppedMidOp_fmt.formatted(error.localizedDescription))
+            }
             throw error
         }
     }
+    // eoc #462
 
     /// #451: builds the Citadel authentication method for `secret`.
     ///
@@ -1135,33 +1176,94 @@ enum SSHRunner {
         }
     }
 
+    // boc #462: SSH now rides the app's own tunnel whenever — and ONLY whenever —
+    // the in-app proxy is genuinely connected (see `SSHTransport.route`). During a
+    // carrier whitelist window the tunnel survives while a direct dial to the VPS
+    // does not, which is exactly when the owner needs to administer the server.
+    //
+    // Nothing about the Citadel call itself changes: the relay makes the VPS look
+    // like `127.0.0.1:<ephemeral>`, and the SOCKS5 handshake is completed by
+    // `SSHTunnelRelay.open` BEFORE Citadel dials, so it never eats into Citadel's
+    // hardcoded, un-raisable 10 s login window.
+    //
+    // The retry semantics are untouched — still 2 attempts, still 4 s apart. The
+    // only addition is which route each attempt takes (`SSHTransport.nextRoute`):
+    // a failed tunnel attempt falls back to direct, a failed direct attempt
+    // retries through the tunnel if one genuinely exists. Never more than once
+    // each way, never a speculative tunnel attempt.
+    //
+    // `reconnect:` MUST stay `.never`: Citadel's reconnect re-dials the stored
+    // host/port, which for a torn-down single-use relay is a dead loopback port.
+    //
+    // #462 was: `private static func connect(...) async throws -> SSHClient`, which
+    // always dialled `host.host:host.port` directly.
+    //
     // Retries once after 4 s — handles transient TCP hiccups without the full
     // 30 s wait twice. If both attempts fail, surfaces the host+port so the
     // user knows exactly what couldn't be reached.
-    private static func connect(host: ServerHost, secret: SSHSecret) async throws -> SSHClient {
+    private static func connect(host: ServerHost, secret: SSHSecret)
+        async throws -> (client: SSHClient, relay: SSHTunnelRelay?)
+    {
         // #451: pre-flight the credential OUTSIDE the retry loop — a bad key /
         // wrong key format throws immediately with its own message instead of
         // being retried and re-wrapped as a connect failure.
         _ = try authenticationMethod(username: host.username, secret: secret)
+        var previousRoute: SSHTransport.Route?
         for attempt in 1...2 {
+            // #462: re-snapshot per attempt — the tunnel may have come up (or
+            // dropped) since the last one, and an honest answer now beats a
+            // cached one. In VPN mode this is always `.direct`: the packet tunnel
+            // already carries the direct dial (default route, no excludes) and
+            // there is no in-app SOCKS listener to relay through.
+            let available = await SSHTransport.currentRoute()
+            let requested = SSHTransport.nextRoute(attempt: attempt,
+                                                   previous: previousRoute,
+                                                   available: available)
+            // #462 (degrade safely): if the relay can't be built for ANY reason we
+            // fall back to today's direct connect rather than failing the op.
+            let relay = await openRelay(for: requested, host: host)
+            let route: SSHTransport.Route = (relay == nil) ? .direct : requested
+            previousRoute = route
+
+            let dialHost = (relay == nil) ? host.host : "127.0.0.1"
+            let dialPort = relay?.localPort ?? host.port
+            let routeLine = relay.map {
+                "→ SSH \(route.label): 127.0.0.1:\($0.localPort) → \(host.host):\(host.port)"
+                    + " (SOCKS 127.0.0.1:\($0.socksPort))"
+            } ?? "→ SSH \(route.label): \(host.host):\(host.port)"
+            await MainActor.run { LogStore.shared.log(.provisioning, routeLine) }
+
+            let started = Date()
             do {
                 // Fresh delegate per attempt — cheap (the pre-flight proved it
                 // parses), and avoids reusing any per-connection state Citadel
                 // may keep inside the method object.
                 let client = try await SSHClient.connect(
-                    host: host.host,
-                    port: host.port,
+                    host: dialHost,
+                    port: dialPort,
                     authenticationMethod: try authenticationMethod(username: host.username, secret: secret),
                     hostKeyValidator: .acceptAnything(),
                     reconnect: .never
                 )
-                await MainActor.run { LogStore.shared.log(.provisioning, "✓ SSH connected \(host.host):\(host.port)") }
-                return client
+                // #462: the elapsed time IS the diagnostic — Citadel fails the
+                // login at a hardcoded 10 000 ms that no setting can raise, and
+                // the tunnelled path spends ~5 RTT inside it.
+                let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+                await MainActor.run {
+                    LogStore.shared.log(.provisioning,
+                        "✓ SSH connected \(host.host):\(host.port) \(route.label)"
+                        + " — login \(elapsedMs) ms (Citadel cap 10000 ms)")
+                }
+                return (client, relay)
             } catch {
+                relay?.close()   // #462: never leave a listener behind on a retry
+                let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
                 let desc = "\(error)"
                 await MainActor.run {
                     LogStore.shared.log(.provisioning,
                         L10n.sshAttemptFailed_fmt.formatted(attempt, desc))
+                    LogStore.shared.log(.provisioning,
+                        "    \(route.label), \(elapsedMs) ms")
                 }
                 if attempt < 2 {
                     await MainActor.run {
@@ -1179,6 +1281,44 @@ enum SSHRunner {
         }
         preconditionFailure("unreachable: connect() loop must always return")
     }
+
+    /// #462: builds the loopback relay for a `.tunnel` route, or returns nil.
+    ///
+    /// Returning nil is the "degrade safely" path: `.direct` routes never need a
+    /// relay, and a relay that cannot be opened (tunnel dropped between the
+    /// snapshot and now, listener refusing, credentials rejected, handshake
+    /// timeout) logs why and lets the caller dial directly instead of failing the
+    /// operation. Never logs the SOCKS credentials — only the port.
+    private static func openRelay(for route: SSHTransport.Route,
+                                  host: ServerHost) async -> SSHTunnelRelay? {
+        guard case .tunnel(let socksPort) = route else { return nil }
+        do {
+            return try await SSHTunnelRelay.open(
+                targetHost: host.host,
+                targetPort: host.port,
+                socksPort:  socksPort,
+                credentials: TunnelManager.liveSocksCredentials)
+        } catch {
+            let detail = "\(error)"
+            await MainActor.run {
+                LogStore.shared.log(.provisioning,
+                    "⚠ SSH tunnel path unavailable (SOCKS 127.0.0.1:\(socksPort)):"
+                    + " \(detail) — using the direct path for this attempt")
+            }
+            return nil
+        }
+    }
+
+    /// #462: reachability probe that follows the SSH route instead of always
+    /// testing the public IP. Exposed so `Provisioner.ensureReachable` and the
+    /// install poll loop share one definition of "can we reach this VPS?".
+    static func reachabilityProbe(host: String, port: Int,
+                                  timeout: TimeInterval = probeTimeout)
+        async -> (success: Bool, ms: Double?, viaTunnel: Bool)
+    {
+        await SSHTransport.probeReachable(host: host, port: port, timeout: timeout)
+    }
+    // eoc #462
 
     /// Executes one shell command. stderr is merged into stdout so the user
     /// sees error detail (apt errors, podman errors etc.) in the log instead

@@ -203,10 +203,20 @@ final class Provisioner: ObservableObject {
     /// Throws `ProvisionError.sshConnect(serverUnreachable_fmt)` if TCP-port
     /// is not reachable within `probeTimeout` seconds. On success returns
     /// quickly (~50–200 ms) and the caller proceeds with SSH.
+    // boc #462 (audit): this pre-probe gates EVERY SSH-driven op, so while it
+    // pinged the public IP directly it vetoed the tunnel route before
+    // `SSHRunner.connect` ever got to choose one — during the carrier whitelist
+    // window that #462 exists for, the direct TCP-22 probe fails and the whole
+    // operation aborted with "server is not responding" even though the tunnel
+    // could carry the session end to end. `SSHRunner.reachabilityProbe` measures
+    // the path the SSH dial will actually take and still falls back to the
+    // direct probe when the tunnel path fails, so a genuinely dead VPS is still
+    // caught in ~5 s.
+    // #462 was: `let result = await NetPing.tcp(host: host.host, port: UInt16(host.port), timeout: Self.probeTimeout)`
     private func ensureReachable(_ host: ServerHost) async throws {
-        let result = await NetPing.tcp(host: host.host,
-                                        port: UInt16(host.port),
-                                        timeout: Self.probeTimeout)
+        let result = await SSHRunner.reachabilityProbe(host: host.host,
+                                                       port: host.port,
+                                                       timeout: Self.probeTimeout)
         guard result.success else {
             let target = "\(host.host):\(host.port)"
             let msg = L10n.serverUnreachable_fmt.formatted(target)
@@ -214,10 +224,13 @@ final class Provisioner: ObservableObject {
             throw ProvisionError.sshConnect(msg)
         }
         if let ms = result.ms {
+            let path = result.viaTunnel ? L10n.routingViaTunnel.localized()
+                                        : L10n.routingDirect.localized()
             LogStore.shared.log(.provisioning,
-                "✓ TCP/\(host.port) reachable (\(String(format: "%.0f", ms)) ms)")
+                "✓ TCP/\(host.port) reachable (\(String(format: "%.0f", ms)) ms, \(path))")
         }
     }
+    // eoc #462
 
     // MARK: Install / Uninstall / Reboot
 
