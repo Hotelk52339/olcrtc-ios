@@ -53,6 +53,9 @@ struct MainTabView: View {
     @StateObject  private var botStore    = BotStore()      // #417: bot registry (Servers + Settings)
     // #457 was: `@StateObject private var logsRouter = LogsRouter()` (#339).
     @StateObject  private var updateChecker = UpdateChecker()   // #360
+    // #465: renews a Telemost room before its 24 h clock runs out. Built in
+    // init() like the failover wiring — it needs all three stores.
+    @StateObject  private var telemostRenewal: TelemostRenewalCoordinator
     @ObservedObject private var settings  = SettingsStore.shared
 
     /// #375: re-hydrate Keychain secrets when the app returns to the foreground.
@@ -98,13 +101,18 @@ struct MainTabView: View {
         // to are the ConnectionRecords a ServerHost links (last + extra).
         let serverStore = ServerHostStore()
         _serverStore = StateObject(wrappedValue: serverStore)
-        _tunnel = StateObject(wrappedValue: TunnelManager(
+        // #465 was: the TunnelManager was built inline. It is now a local first,
+        // because the renewal coordinator has to hold the SAME instance.
+        let tunnel = TunnelManager(
             secretsLocked: { [weak store] in
                 store?.secretsLocked ?? false
             },
             failoverCandidates: { [weak store, weak serverStore] current in
                 TunnelManager.computeFailoverCandidates(current, store: store, serverStore: serverStore)
-            }))
+            })
+        _tunnel = StateObject(wrappedValue: tunnel)
+        _telemostRenewal = StateObject(wrappedValue: TelemostRenewalCoordinator(
+            connections: store, tunnel: tunnel, hosts: serverStore))
     }
 
     /// (audit) explicit font override → that exact size; "System" → the full
@@ -191,6 +199,9 @@ struct MainTabView: View {
                 if SettingsStore.shared.refreshOnEntry {
                     HealthCoordinator.shared.verifyDue(store.connections, using: tunnel)
                 }
+                // #465: the interesting case is a phone that spent the night
+                // asleep and woke with hours already burned off the room.
+                Task { await telemostRenewal.checkNow() }
             case .background:
                 // #432: record the transition (loud if connected without keep-alive),
                 // then fsync the logs so a following suspend/kill can't drop the tail.
@@ -261,6 +272,28 @@ struct MainTabView: View {
         // no modal on a background refresh. A manual pull-to-refresh reuses the
         // same `store.refreshDueSources()` trigger (exposed from the store).
         .task { await store.refreshDueSources() }
+        // #465: a Telemost link dies 24 h after it is created, and the tunnel —
+        // the only road to the VPS in a whitelist window — dies with it. This
+        // loop replaces the room before that happens, choosing a moment the user
+        // cannot feel. Sleeps and re-checks rather than returning: an id-less
+        // `.task` never restarts.
+        .task { await telemostRenewal.run() }
+        // #465: raised ONLY when the room is nearly gone and the tunnel is busy,
+        // i.e. the user is at the phone right now — which is what makes an alert
+        // the right channel here rather than a badge nobody would see.
+        .alert(L10n.telemostExpiryTitle.localized(), isPresented: Binding(
+            get: { telemostRenewal.warning != nil },
+            set: { if !$0 { telemostRenewal.dismissWarning() } }
+        )) {
+            Button(L10n.telemostExpiryRenewAction.localized()) {
+                Task { await telemostRenewal.renewFromWarning() }
+            }
+            Button(L10n.later.localized(), role: .cancel) { telemostRenewal.dismissWarning() }
+        } message: {
+            Text(L10n.telemostExpiryBody_fmt.formatted(
+                telemostRenewal.warning?.recordName ?? "",
+                telemostRenewal.warning?.minutesLeft ?? 0))
+        }
         .sheet(item: $updateChecker.available) { update in
             UpdateAvailableSheet(update: update)
         }

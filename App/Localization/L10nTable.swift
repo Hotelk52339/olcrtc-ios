@@ -1066,6 +1066,10 @@ enum L10nTable {
         .telemostRenewSwitchAction_fmt:   "Connect through %@ first",
         .telemostRenewLiveOnly:      "You are connected through this protocol, and this server has no other one to use instead. Replacing the room restarts it, so the connection will drop mid-command — the app saves the new room and reconnects to it.",
         .telemostRenewDropped_fmt:   "The connection dropped while the server was switching to room %@ — expected when you renew the protocol you are connected through. The new room is saved and the app is reconnecting; run Verify from the protocol's menu to confirm the server took it.",
+        .telemostExpiryTitle:        "Telemost room expires soon",
+        .telemostExpiryBody_fmt:     "The room behind \"%@\" stops working in about %d min, and the tunnel goes with it. Renewing now drops the connection for a few seconds.",
+        .telemostExpiryRenewAction:  "Renew now",
+        .later:                      "Later",
     ]
 
     // MARK: Russian
@@ -2089,5 +2093,9 @@ enum L10nTable {
         .telemostRenewSwitchAction_fmt:   "Сначала подключиться через %@",
         .telemostRenewLiveOnly:      "Сейчас соединение идёт через этот протокол, а других на этом сервере нет. Замена комнаты перезапустит его, и соединение оборвётся посреди команды — приложение сохранит новую комнату и переподключится к ней.",
         .telemostRenewDropped_fmt:   "Соединение оборвалось, пока сервер переходил в комнату %@, — так и должно быть, когда обновляешь протокол, через который идёт соединение. Новая комната сохранена, идёт переподключение; запусти «Проверить» в меню протокола, чтобы убедиться, что сервер её принял.",
+        .telemostExpiryTitle:        "Комната Телемоста скоро истечёт",
+        .telemostExpiryBody_fmt:     "Комната под «%@» перестанет работать примерно через %d мин, и туннель уйдёт вместе с ней. Обновление сейчас оборвёт соединение на несколько секунд.",
+        .telemostExpiryRenewAction:  "Обновить сейчас",
+        .later:                      "Позже",
     ]
 }

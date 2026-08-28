@@ -40,6 +40,13 @@ struct OlcrtcConnection: Codable, Equatable {
     var seiFrag : Int = 1200
     var seiACK  : Int = 1
 
+    // #465: when the room now in `roomID` was created. A Telemost link stops
+    // working 24 h after creation, and the tunnel dies with it — this stamp is
+    // the only thing that lets the app renew the room BEFORE that happens.
+    // `nil` means "unknown": a room that predates this field or was set outside
+    // the app. The policy then asks instead of guessing an age it cannot know.
+    var roomCreatedAt: Date? = nil
+
     var fallbackName: String {
         let shortRoom = roomID.count > 12 ? String(roomID.prefix(8)) + "…" : roomID
         return "\(carrier)/\(shortRoom)"
@@ -48,7 +55,8 @@ struct OlcrtcConnection: Codable, Equatable {
     init(carrier: String, transport: String, roomID: String, key: String, clientID: String,
          vp8FPS: Int? = nil, vp8BatchSize: Int? = nil,
          socksUser: String = "", socksPass: String = "", wbToken: String = "",
-         seiFPS: Int = 30, seiBatch: Int = 10, seiFrag: Int = 1200, seiACK: Int = 1) {
+         seiFPS: Int = 30, seiBatch: Int = 10, seiFrag: Int = 1200, seiACK: Int = 1,
+         roomCreatedAt: Date? = nil) {
         self.carrier      = carrier
         self.transport    = transport
         self.roomID       = roomID
@@ -63,6 +71,7 @@ struct OlcrtcConnection: Codable, Equatable {
         self.seiBatch     = seiBatch
         self.seiFrag      = seiFrag
         self.seiACK       = seiACK
+        self.roomCreatedAt = roomCreatedAt
     }
 
     // #401: the OlcrtcURI.Parsed → OlcrtcConnection mapping (carrying the URI's
@@ -98,6 +107,7 @@ struct OlcrtcConnection: Codable, Equatable {
         case carrier, transport, roomID, clientID
         case vp8FPS, vp8BatchSize, seiFPS, seiBatch, seiFrag, seiACK
         case socksUser
+        case roomCreatedAt          // #465: not a secret — persisted like the rest
         // socksPass and key are intentionally excluded — stored in Keychain via ConnectionSecretStore
     }
 
@@ -114,6 +124,9 @@ struct OlcrtcConnection: Codable, Equatable {
         seiBatch     = try c.decodeIfPresent(Int.self,    forKey: .seiBatch) ?? 10
         seiFrag      = try c.decodeIfPresent(Int.self,    forKey: .seiFrag)  ?? 1200
         seiACK       = try c.decodeIfPresent(Int.self,    forKey: .seiACK)   ?? 1
+        // #465: absent in records written before this field existed — nil is the
+        // honest answer there, not a fabricated age.
+        roomCreatedAt = try c.decodeIfPresent(Date.self, forKey: .roomCreatedAt)
         // socksPass, key and wbToken (#436) are never decoded from persistent
         // storage; callers restore them from ConnectionSecretStore after decoding.
         socksPass = ""
