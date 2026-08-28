@@ -493,6 +493,12 @@ enum L10n: String, CaseIterable {
     case sshRetryIn4s                       // "  retry in 4 s…"
     case sshPortNotResponding_fmt           // "Port %d on %@ did not respond — verify SSH is open and the VPS is reachable"
     case serverUnreachable_fmt              // "Server %@ is not responding — check the VPS is online and SSH port is reachable"
+    // #462 (audit): the SSH session was riding the app's own tunnel and that
+    // tunnel died mid-command — the self-teardown case (reconfigure / update /
+    // rotate key / stop / uninstall / reboot run through the very tunnel whose
+    // exit container they restart). Without this the user only saw a raw
+    // Citadel channel error.
+    case sshTunnelDroppedMidOp_fmt          // "…tunnel dropped mid-operation… (%@)"
 
     // MARK: NetPing
     case pingTCPOK_fmt                      // "TCP/%d responded in %@ ms"
