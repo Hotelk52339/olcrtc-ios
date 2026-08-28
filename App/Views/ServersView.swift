@@ -1813,7 +1813,14 @@ struct ServersView: View {
                     seiFPS:       oldParams.seiFPS,
                     seiBatch:     oldParams.seiBatch,
                     seiFrag:      oldParams.seiFrag,
-                    seiACK:       oldParams.seiACK
+                    seiACK:       oldParams.seiACK,
+                    // #465: the 24 h clock belongs to the ROOM, so it restarts
+                    // only when the room actually changed — a transport-only
+                    // reconfigure must not make an old room look fresh. Carrying
+                    // it explicitly is required: this rebuild lists every field,
+                    // which is exactly how sei and wbToken were once lost here.
+                    roomCreatedAt: cfg.roomID == oldParams.roomID
+                                 ? oldParams.roomCreatedAt : Date()
                 )
                 var updatedRecord = existing
                 updatedRecord.details = .olcrtc(updated)
@@ -2377,6 +2384,7 @@ struct ServersView: View {
               params.roomID != room else { return }
         var moved = params
         moved.roomID = room
+        moved.roomCreatedAt = Date()   // #465: starts this room's 24 h clock
         var updated = existing
         updated.details = .olcrtc(moved)
         connections.update(updated)

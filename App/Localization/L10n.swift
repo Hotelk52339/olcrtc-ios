@@ -986,6 +986,13 @@ enum L10n: String, CaseIterable {
     case telemostRenewSwitchAction_fmt      // %@ = the same protocol name
     case telemostRenewLiveOnly              // no alternative exists on this host
     case telemostRenewDropped_fmt           // %@ = the new room id
+
+    // #465: automatic renewal — raised only when the room is nearly gone and the
+    // tunnel is in use, so the user is at the phone and can decide.
+    case telemostExpiryTitle
+    case telemostExpiryBody_fmt             // %@ = record name, %d = minutes left
+    case telemostExpiryRenewAction
+    case later
 }
 
 extension L10n {
