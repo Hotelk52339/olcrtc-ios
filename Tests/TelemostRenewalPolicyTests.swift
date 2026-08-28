@@ -157,7 +157,10 @@ final class TelemostRenewalPolicyTests: XCTestCase {
                                         roomCreatedAt: stamp)
         let data = try JSONEncoder().encode(original)
         let back = try JSONDecoder().decode(OlcrtcConnection.self, from: data)
-        XCTAssertEqual(back.roomCreatedAt?.timeIntervalSince1970,
+        // `accuracy:` has no Optional overload — unwrap, so a nil stamp fails as
+        // a missing value rather than as a type error.
+        let decoded = try XCTUnwrap(back.roomCreatedAt)
+        XCTAssertEqual(decoded.timeIntervalSince1970,
                        stamp.timeIntervalSince1970, accuracy: 0.001)
     }
 
