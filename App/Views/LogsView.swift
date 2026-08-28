@@ -485,7 +485,6 @@ struct LogsView: View {
         }
     }
 
-    @ViewBuilder
     /// #468: every container this host runs, primary first. Derived from local
     /// records (`extraConnectionIDs` → carrier → `<base>-<carrier>`), never from
     /// an SSH scan — the picker has to be there before any connection is made.
@@ -523,6 +522,7 @@ struct LogsView: View {
         }
     }
 
+    @ViewBuilder
     private var hostPicker: some View {
         if orderedHosts.count <= 3 {
             OlcChipPicker(selection: Binding(
