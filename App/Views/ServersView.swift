@@ -1861,21 +1861,46 @@ struct ServersView: View {
 
     /// Row → the ConnectionRecord to connect with: the host-linked records
     /// first (primary + extras), then any record matching carrier + room.
+    // boc #467: the room is MUTABLE state of a protocol, not part of its
+    // identity. Matching on carrier+room meant that the moment the server's room
+    // changed — a renewal, an edit made elsewhere, or #466 applying one to the
+    // wrong config — the row stopped recognising its own record and the app
+    // reported "no saved connection for this protocol" while that connection sat
+    // right there. The user's only exit was Recover, which then ADDED a second
+    // record for the same protocol (see recover below), so the list grew a
+    // duplicate every time. Match by slot and carrier; use the room only to
+    // break ties.
     private func connectionRecord(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> ConnectionRecord? {
-        func matches(_ rec: ConnectionRecord) -> Bool {
+        func record(_ id: UUID) -> ConnectionRecord? {
+            connections.connections.first { $0.id == id }
+        }
+        func carrier(of rec: ConnectionRecord) -> String? {
+            if case .olcrtc(let p) = rec.details { return p.carrier }
+            return nil
+        }
+        func exact(_ rec: ConnectionRecord) -> Bool {
             if case .olcrtc(let p) = rec.details {
                 return p.carrier == row.provider && p.roomID == row.room
             }
             return false
         }
-        let linkedIDs = [host.lastConnectionID].compactMap { $0 } + (host.extraConnectionIDs ?? [])
-        for id in linkedIDs {
-            if let rec = connections.connections.first(where: { $0.id == id }), matches(rec) {
-                return rec
-            }
-        }
-        return connections.connections.first(where: matches)
+        // A host can legitimately hold two rows of the SAME carrier (the primary
+        // and a sibling), so resolve inside the row's own slot first — that is
+        // what keeps a sibling from claiming the primary's record.
+        let slotIDs: [UUID] = row.isPrimary
+            ? [host.lastConnectionID].compactMap { $0 }
+            : (host.extraConnectionIDs ?? [])
+        let slot = slotIDs.compactMap(record)
+        if let rec = slot.first(where: exact) { return rec }
+        if let rec = slot.first(where: { carrier(of: $0) == row.provider }) { return rec }
+        // Then anything else linked to this host, then an unlinked import.
+        let linked = ([host.lastConnectionID].compactMap { $0 } + (host.extraConnectionIDs ?? []))
+            .compactMap(record)
+        if let rec = linked.first(where: exact) { return rec }
+        if let rec = linked.first(where: { carrier(of: $0) == row.provider }) { return rec }
+        return connections.connections.first(where: exact)
     }
+    // eoc #467
 
     /// Whether the LIVE tunnel runs through this row's protocol (carrier+room).
     private func isLiveRow(_ row: SSHRunner.CarrierInfo) -> Bool {
@@ -2476,17 +2501,40 @@ struct ServersView: View {
             )
             // #452: an extra-protocol recover names + links the record like an
             // extra install would (carrier-suffixed name, extraConnectionIDs).
-            let record = ConnectionRecord(
-                name: Self.recordName(host: host, carrier: cfg.carrier, multi: asExtra),
-                details: .olcrtc(params))
-            connections.add(record)
-            var updated = host
-            if asExtra {
-                updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []) + [record.id]
+            // boc #467: recover used to `add` unconditionally, so re-running it on
+            // a protocol that already had a record — the thing #467a's dead end
+            // pushed users into doing — left TWO records for one protocol and
+            // appended a second id to the host. Recover reads the server's own
+            // config, so when a record for this protocol is already linked the
+            // honest outcome is to correct it in place, keeping its id (live
+            // tunnel, health history and the user's name for it all hang off
+            // that id) rather than growing a duplicate beside it.
+            let slotIDs: [UUID] = asExtra
+                ? (host.extraConnectionIDs ?? [])
+                : [host.lastConnectionID].compactMap { $0 }
+            let existing = slotIDs
+                .compactMap { id in connections.connections.first { $0.id == id } }
+                .first { rec in
+                    if case .olcrtc(let p) = rec.details { return p.carrier == cfg.carrier }
+                    return false
+                }
+            if var found = existing {
+                found.details = .olcrtc(params)
+                connections.update(found)
             } else {
-                updated.lastConnectionID = record.id
+                let record = ConnectionRecord(
+                    name: Self.recordName(host: host, carrier: cfg.carrier, multi: asExtra),
+                    details: .olcrtc(params))
+                connections.add(record)
+                var updated = host
+                if asExtra {
+                    updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []) + [record.id]
+                } else {
+                    updated.lastConnectionID = record.id
+                }
+                serverStore.update(updated, password: nil)
             }
-            serverStore.update(updated, password: nil)
+            // eoc #467
             alertText = L10n.recoverResultSuccess_fmt.formatted(cfg.carrier, cfg.transport)
         // boc #314: server.yaml unreadable/unparseable — the key/params can't
         // be extracted read-only, so offer the "generate new key" fallback

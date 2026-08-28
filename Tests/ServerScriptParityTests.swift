@@ -251,6 +251,55 @@ final class ServerScriptParityTests: XCTestCase {
         XCTAssertTrue(script.contains(AppConstants.upstreamCorePin))
     }
 
+    // MARK: #466 — reconfigure must edit the config its OWN container reads
+
+    func testReconfigureResolvesTheConfigFromTheContainerCommand() {
+        // Every sibling carrier mounts the SAME deploy dir, so a hardcoded
+        // "$DEPLOY_DIR/server.yaml" is the PRIMARY's config whatever container is
+        // named. That is what #466 was: reconfiguring a sibling overwrote the
+        // primary's carrier and room — destroying that protocol outright — while
+        // the restart re-read the sibling's own untouched file, so the change
+        // reported success and landed nowhere.
+        let script = SSHRunner.reconfigureScript(
+            containerName: "olcrtc-server-abc-telemost",
+            env: ["OLCRTC_CARRIER=telemost", "OLCRTC_TRANSPORT=vp8channel",
+                  "OLCRTC_ROOM_ID=room1"])
+        // The container's command names the file it actually reads.
+        XCTAssertTrue(script.contains("{{range .Config.Cmd}}"),
+            "the config must be resolved from the container's own command")
+        XCTAssertTrue(script.contains(#"grep -oE 'server[A-Za-z0-9_.-]*[.]yaml'"#))
+        XCTAssertTrue(script.contains(#"CONFIG="${DEPLOY_DIR}/${CONFIG_NAME}""#),
+            "the edit target must be the resolved name, not a fixed one")
+        // The regression itself: never again assemble the path from a literal.
+        XCTAssertFalse(script.contains(#"CONFIG="${DEPLOY_DIR}/server.yaml""#),
+            "#466: hardcoding server.yaml edits a sibling's neighbour")
+    }
+
+    func testReconfigureStillDefaultsToServerYamlForAPrimary() {
+        // A primary container's command names server.yaml anyway; the fallback
+        // only covers a container whose command cannot be read, and it must not
+        // leave CONFIG empty (which would edit the deploy dir itself).
+        let script = SSHRunner.reconfigureScript(
+            containerName: "olcrtc-server-abc",
+            env: ["OLCRTC_CARRIER=jitsi", "OLCRTC_TRANSPORT=datachannel",
+                  "OLCRTC_ROOM_ID=room1"])
+        XCTAssertTrue(script.contains(#"if [ -z "$CONFIG_NAME" ]; then CONFIG_NAME="server.yaml"; fi"#))
+    }
+
+    func testReconfigureRestartsTheSameContainerItEdited() {
+        // The pair that has to stay together: whatever config was edited, the
+        // container restarted must be the one that reads it. #466 broke exactly
+        // this pairing — it edited the primary's file and restarted the sibling.
+        let script = SSHRunner.reconfigureScript(
+            containerName: "olcrtc-server-abc-telemost",
+            env: ["OLCRTC_CARRIER=telemost", "OLCRTC_TRANSPORT=vp8channel",
+                  "OLCRTC_ROOM_ID=room1"])
+        XCTAssertTrue(script.contains(#"CNAME="olcrtc-server-abc-telemost""#))
+        XCTAssertTrue(script.contains("podman restart"))
+        // CONFIG_NAME is derived from ${CNAME}, so the two cannot drift apart.
+        XCTAssertTrue(script.contains(#"'{{range .Config.Cmd}}{{.}} {{end}}' "${CNAME}""#))
+    }
+
     // MARK: #451 — reconfigure script (wbstream token + key fallback)
 
     func testReconfigureScriptManagesWBToken() {

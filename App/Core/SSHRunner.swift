@@ -1483,11 +1483,25 @@ enum SSHRunner {
         if ! podman ps -a --format '{{.Names}}' | grep -q "^${CNAME}$" 2>/dev/null; then
             echo "ERROR: container ${CNAME} not found" >&2; exit 1
         fi
-        echo "RECONFIGURE: locating server.yaml for ${CNAME}…"
+        echo "RECONFIGURE: locating the config for ${CNAME}…"
         DEPLOY_DIR=$(podman inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{break}}{{end}}{{end}}' "${CNAME}")
-        CONFIG="${DEPLOY_DIR}/server.yaml"
+        # boc #466: every sibling carrier mounts the SAME deploy dir, so
+        # "${DEPLOY_DIR}/server.yaml" — what this used to hardcode — is the
+        # PRIMARY's config no matter which container was asked for. Reconfiguring
+        # a sibling therefore overwrote the primary's carrier and room, silently
+        # destroying that protocol, while the restart re-read the sibling's own
+        # untouched file: the change looked like it succeeded and landed nowhere.
+        # The container's own command names the file it actually reads
+        # ("sh -c ./olcrtc server-telemost.yaml") — the one source that cannot
+        # disagree with reality, and it corrects every caller at once instead of
+        # trusting each to pass the right name. `grep -oE` prints one match per
+        # line on its own, so no `tr` and no escapes are needed here.
+        CONFIG_NAME=$(podman inspect --format '{{range .Config.Cmd}}{{.}} {{end}}' "${CNAME}" | grep -oE 'server[A-Za-z0-9_.-]*[.]yaml' | tail -1)
+        if [ -z "$CONFIG_NAME" ]; then CONFIG_NAME="server.yaml"; fi
+        CONFIG="${DEPLOY_DIR}/${CONFIG_NAME}"
+        # eoc #466
         if [ -z "$DEPLOY_DIR" ] || [ ! -f "$CONFIG" ]; then
-            echo "ERROR: server.yaml not found for ${CNAME} (deploy dir: ${DEPLOY_DIR:-unknown})" >&2; exit 1
+            echo "ERROR: ${CONFIG_NAME} not found for ${CNAME} (deploy dir: ${DEPLOY_DIR:-unknown})" >&2; exit 1
         fi
         echo "RECONFIGURE: updating ${CONFIG}…"
         sed -i \
