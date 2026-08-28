@@ -1096,7 +1096,7 @@ enum L10nTable {
         .configModeSectionHeader:   "Режим туннеля",
         .configVPNUnavailableFooter: "Режим VPN недоступен в этой установке:",
         // #461 было: «videochannel» — сырой id; во всех списках он «Видео».
-        .vpnVideochannelUnsupported: "Транспорт «Видео» не поддерживается в режиме VPN. Переключите подключение на другой транспорт или используйте режим прокси.",
+        .vpnVideochannelUnsupported: "Транспорт «Видео» не поддерживается в режиме VPN. Переключи подключение на другой транспорт или используй режим прокси.",
         .vpnDisconnected:           "VPN-туннель отключён",
         .vpnSettingsEntryName:      "OlcRTC",
         .vpnCapabilityUnavailable_fmt: "Система отклонила конфигурацию VPN (%@). Так бывает, если доступ к VPN был отклонён или приложение подписано бесплатным Apple ID — для Network Extension нужна платная команда Apple Developer. Режим прокси продолжает работать.",
@@ -1474,7 +1474,7 @@ enum L10nTable {
         .transportSectionHeader:     "Транспорт",
         .roomIDSectionHeader:        "Room ID",
         .jitsiServerHeader:          "Сервер Jitsi",
-        .jitsiServerFooter:          "Общий публичный сервер — укажите свой Jitsi для надёжности, чтобы не перегружать чужой.",
+        .jitsiServerFooter:          "Общий публичный сервер — укажи свой Jitsi для надёжности, чтобы не перегружать чужой.",
         .seiSettingsHeader:          "SEI-настройки",
         // #461 было: «передаются в srv.sh для seichannel» — имя скрипта и
         // сырой id транспорта в подписи, которую читает пользователь.
@@ -1489,7 +1489,7 @@ enum L10nTable {
         .bgKeeperFailed_fmt:         "⚠ Фоновый audio-keeper не запустился: %@ — приложение может быть остановлено в фоне",
         .transportUsesServerDefaults_fmt: "Будут использованы серверные дефолты для %@ — расширенные параметры пока не вынесены в настройки iOS.",
         .waitReadyFailed_fmt:        "✗ WaitReady: %@",
-        .connectNoPeer:              "Пир не присоединился вовремя — проверьте, что ключ совпадает с сервером, верна комната, или смените carrier/transport.",
+        .connectNoPeer:              "Пир не присоединился вовремя — проверь, что ключ совпадает с сервером, верна комната, или смените carrier/transport.",
         .waitReadyOK:                "✓ WaitReady OK — SOCKS5 слушает, проверяем туннель…",
         .tunnelOK:                   "✓ Туннель работает — данные идут через сервер",
         .tunnelFailed:               "✗ Туннель не отвечает (сервер недоступен или 403 Forbidden IP)",
@@ -1504,7 +1504,7 @@ enum L10nTable {
         .netPathChanged:             "сеть изменилась",
         .reconnecting_fmt:           "↻ Переподключение (%@)",
         .reconnectAttempt_fmt:       "↻ попытка %d/%d через %d с",
-        .reconnectGaveUp:            "✗ Не удалось переподключиться — нажмите «Повторить»",
+        .reconnectGaveUp:            "✗ Не удалось переподключиться — нажми «Повторить»",
         .rejoinSettle_fmt:           "⏳ Очистка комнаты: %.1f с до повторного входа",
         .connectingOlcrtc_fmt:       "→ olcrtc carrier=%@ transport=%@ clientID=%@",
 
@@ -1516,7 +1516,7 @@ enum L10nTable {
         .validateRoomIDEmpty:        "Room ID не может быть пустым",
         .errorPortBusy_fmt:          "Порт %d занят — освободите его или смените порт в Настройках",
         .errorSecretsLocked:         "Разблокируй устройство и снова открой приложение, чтобы загрузить сохранённый ключ.",
-        .errorRuntimeStillStopping:  "Предыдущая сессия ещё завершается — попробуйте снова через несколько секунд.",
+        .errorRuntimeStillStopping:  "Предыдущая сессия ещё завершается — попробуй снова через несколько секунд.",
 
         // OlcrtcURI errors
         .uriErrorInvalidScheme:      "URI должен начинаться с olcrtc://",
@@ -1599,7 +1599,7 @@ enum L10nTable {
         .sshKeyPassphraseField:      "Пароль ключа",
         .sshKeyDetected_fmt:         "✓ Обнаружен ключ %@",
         .sshKeyDetectedEncrypted_fmt: "✓ Обнаружен ключ %@ — зашифрован, нужен пароль ключа",
-        .sshKeyErrorECDSA:           "Ключи ECDSA не поддерживаются. Используйте ed25519 или RSA (ssh-keygen -t ed25519).",
+        .sshKeyErrorECDSA:           "Ключи ECDSA не поддерживаются. Используй ed25519 или RSA (ssh-keygen -t ed25519).",
         .sshKeyErrorUnsupportedFormat: "Неподдерживаемый формат ключа. Конвертируйте в формат OpenSSH: ssh-keygen -p -o -f <файл>.",
         .sshKeyErrorNotAKey:         "Это не похоже на приватный ключ. Вставьте файл целиком, включая строки BEGIN OPENSSH PRIVATE KEY (не .pub).",
 
@@ -1766,7 +1766,7 @@ enum L10nTable {
         .botStatusNone:              "На этом сервере нет бота",
         .botNoBotsTitle:             "Ботов пока нет",
         .botNoBotsHint:              "Добавь бота в «Настройки → Боты», затем установи его здесь.",
-        .botMissingTokenError:       "У этого бота ещё нет токена — добавьте его в «Настройки → Боты».",
+        .botMissingTokenError:       "У этого бота ещё нет токена — добавь его в «Настройки → Боты».",
         .botUnknownFound_fmt:        "Найден бот «%@», которого нет в настройках.",
         .botRemoveConfirmTitle:      "Удалить бота с этого сервера?",
         .botRemoveConfirmBody:       "Служба бота будет остановлена и удалена с сервера. Токен останется сохранён в настройках.",
@@ -1805,7 +1805,7 @@ enum L10nTable {
         // и SwiftUI переносил его посреди слова. Держать перевод коротким.
         .protocolLiveBadge:           "Активен",
         .protocolPrimaryBadge:        "основной",
-        .protocolRecordMissing:       "Нет сохранённого подключения для этого протокола — используйте «Восстановить подключение» в меню строки.",
+        .protocolRecordMissing:       "Нет сохранённого подключения для этого протокола — используй «Восстановить подключение» в меню строки.",
         .protocolAdded_fmt:           "Добавлен %@/%@ — подключение сохранено",
         .protocolRemoved_fmt:         "%@ удалён с сервера",
         .installExtrasHeader:         "Дополнительные протоколы",
