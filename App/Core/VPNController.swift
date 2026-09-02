@@ -76,7 +76,12 @@ final class VPNController: ObservableObject {
     // MARK: Constants
 
     /// Bundle id of the packet-tunnel appex (project.yml target olcrtc-tunnel).
-    static let providerBundleIdentifier = "io.github.hotelk52339.olcrtc-ios.tunnel"
+    /// Derived from the app's own bundle id — the appex is always
+    /// `<app id>.tunnel`. A hard-coded literal breaks VPN mode in any rebuild
+    /// under a different bundle id (a fork signed with its own team): the
+    /// system finds no such provider and the tunnel silently stays disconnected.
+    static let providerBundleIdentifier =
+        (Bundle.main.bundleIdentifier ?? "io.github.hotelk52339.olcrtc-ios") + ".tunnel"
 
     /// Shown under Settings > VPN next to the toggle.
     private static var localizedDescription: String { L10n.vpnSettingsEntryName.localized() }
