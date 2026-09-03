@@ -16,7 +16,7 @@ settings:
     # validation and confuses sideloads); scripts/cut-release.py reads
     # CURRENT_PROJECT_VERSION from here.
     MARKETING_VERSION: "1.3"
-    CURRENT_PROJECT_VERSION: "275"
+    CURRENT_PROJECT_VERSION: "276"
 
 packages:
   Citadel:
