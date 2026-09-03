@@ -201,6 +201,10 @@ enum HostHeadline: Equatable {
     /// Nothing has probed this host yet this launch — an honest blank, not a
     /// present-tense claim recycled from a persisted value.
     case notChecked
+    /// #469: the last silent probe FAILED (SSH auth, host key, timeout). Grey —
+    /// "could not check" is not a verdict about the server — but it names the
+    /// reason instead of leaving "Checking the server…" on screen all session.
+    case probeFailed(String)
     case containerStopped
     case noContainer(HostBase)
     /// Nothing is in the way: the card shows the PROTOCOLS' measured verdict.
@@ -213,7 +217,8 @@ enum HostHeadline: Equatable {
     static func reduce(display: HostDisplay,
                        reachable: Bool?,
                        lastProbeAge: TimeInterval?,
-                       health: HealthDisplay) -> HostHeadline {
+                       health: HealthDisplay,
+                       probeError: String? = nil) -> HostHeadline {   // #469
         if case .running(let op, let phase, let note, _) = display {
             return .busy(verb: op.verb, note: note, step: phase, of: op.stepCount)   // #456
         }
@@ -223,8 +228,15 @@ enum HostHeadline: Equatable {
         // Before ANY container reading: an unreachable VPS tells us nothing about
         // the container, so a stale "stopped" must never surface as fact here.
         if reachable == false { return .unreachable(age: lastProbeAge) }
+        // #469: a probe that threw is more informative than "not checked yet".
+        if lastProbeAge == nil, let probeError { return .probeFailed(probeError) }
         if lastProbeAge == nil { return .notChecked }
-        if display.base == .stopped { return .containerStopped }
+        // #469 was: `.containerStopped` whenever the PRIMARY was stopped — the
+        // base tracks only that container, so a host whose jitsi primary was
+        // stopped while its telemost sibling carried a verified live tunnel
+        // read "Server stopped · tap Start server". Measured, fresh evidence
+        // that a protocol works outranks one container's podman state.
+        if display.base == .stopped, !health.isVerified { return .containerStopped }
         if !display.base.hasContainer { return .noContainer(display.base) }
         return .health(health)
     }
@@ -236,6 +248,7 @@ enum HostHeadline: Equatable {
         // Grey, not red: "we could not check" is not a verdict about the server.
         case .unreachable:      return .unknown
         case .notChecked:       return .unknown
+        case .probeFailed:      return .unknown   // #469
         case .containerStopped: return .warn
         case .noContainer(let b): return b.tone
         case .health(let h):    return h.tone
@@ -249,6 +262,7 @@ enum HostHeadline: Equatable {
         case .opFailed(let verb, _):  return L10n.vpsOpFailed_fmt.formatted(verb)
         case .unreachable:        return L10n.vpsHeadlineUnreachable.localized()
         case .notChecked:         return L10n.vpsHeadlineNotChecked.localized()
+        case .probeFailed:        return L10n.vpsHeadlineProbeFailed.localized()   // #469
         case .containerStopped:   return L10n.vpsHeadlineStopped.localized()
         case .noContainer(let b): return b.title
         case .health(let h):      return h.title
@@ -270,6 +284,7 @@ enum HostHeadline: Equatable {
                 ?? L10n.vpsHeadlineUnreachableHintNever.localized()
         // eoc #459
         case .notChecked:         return L10n.vpsHeadlineNotCheckedHint.localized()
+        case .probeFailed(let m): return m   // #469: the actual error, verbatim
         case .containerStopped:   return L10n.vpsHeadlineStoppedHint.localized()
         case .noContainer(let b): return b.subtitle
         case .health(let h):      return h.subtitle

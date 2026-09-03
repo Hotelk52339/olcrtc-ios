@@ -611,6 +611,13 @@ enum SSHRunner {
             \#(AppConstants.serverGoImage) \
             sh -c "go mod download && go build -trimpath -ldflags='-s -w' -o olcrtc ./cmd/olcrtc"
         podman restart "$CNAME"
+        # #469: every `<base>-<carrier>` sibling maps the SAME ./olcrtc from the
+        # shared deploy dir. The file was replaced above, but a running process
+        # keeps the old inode — without a restart the siblings kept speaking the
+        # previous build's protocol after the primary had moved on.
+        for c in $(podman ps -a --format '{{.Names}}' | grep "^${CNAME}-" 2>/dev/null); do
+            podman restart "$c" >/dev/null 2>&1 || true
+        done
         echo "OLCRTC_UPDATED=ok"
         """#
     }
@@ -710,7 +717,15 @@ enum SSHRunner {
     static func stopScript(containerName: String) -> String {
         let safe = shellSafe(containerName)
         // Exit 1 on failure so _execute throws and the UI shows an error.
+        // boc #469: the card's button says "Stop server", and since #452 a server
+        // is the primary PLUS every `<base>-<carrier>` sibling. Stopping only the
+        // primary left the other protocols serving while the card read
+        // "Server stopped". Siblings are best-effort: a missing one is not an
+        // error, the primary's result decides the exit code.
         return """
+        for c in $(podman ps --format '{{.Names}}' | grep '^\(safe)-' 2>/dev/null); do
+            podman stop "$c" 2>&1 || true
+        done
         if podman stop "\(safe)" 2>&1; then
             echo OLCRTC_STOPPED=ok
         else
@@ -718,6 +733,7 @@ enum SSHRunner {
             exit 1
         fi
         """
+        // eoc #469
     }
 
     static func stop(host: ServerHost, secret: SSHSecret, containerName: String,
@@ -920,14 +936,33 @@ enum SSHRunner {
     /// `<base>-<carrier>` — the primary container/config can never be removed
     /// here (that is uninstall's job).
     static func removeCarrierScript(baseContainer: String, carrier: String) -> String {
-        let safeCname = shellSafe(baseContainer)
-        let safeCarrier = shellSafe(carrier)
+        // #469: kept for callers that only know the carrier — derives the pair
+        // the same way add-carrier.sh named it.
+        removeCarrierScript(baseContainer: baseContainer,
+                            container: siblingContainerName(base: baseContainer, carrier: carrier),
+                            configFile: carrierYAMLFile(carrier))
+    }
+
+    /// #469 was: only the carrier-derived form above. A sibling's carrier is
+    /// mutable (reconfigure rewrites `provider:` in its own file), after which
+    /// `<base>-<provider>` named a container that did not exist — or a DIFFERENT
+    /// sibling. The row carries the container and the file it was listed from;
+    /// delete exactly those. The primary can never be named here: its file is
+    /// `server.yaml`, which this refuses.
+    static func removeCarrierScript(baseContainer: String, container: String, configFile: String) -> String {
+        let safeCname  = shellSafe(baseContainer)
+        let safeTarget = shellSafe(container)
+        let safeFile   = shellSafe(configFile)
         return #"""
         CNAME="\#(safeCname)"
-        TARGET="${CNAME}-\#(safeCarrier)"
+        TARGET="\#(safeTarget)"
+        FILE="\#(safeFile)"
+        if [ "$TARGET" = "$CNAME" ] || [ "$FILE" = "server.yaml" ]; then
+            echo "ERROR: refusing to remove the primary protocol (use uninstall)" >&2; exit 1
+        fi
         DEPLOY_DIR=$(podman inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{break}}{{end}}{{end}}' "${CNAME}" 2>/dev/null)
         podman rm -f "${TARGET}" 2>/dev/null || true
-        [ -n "$DEPLOY_DIR" ] && rm -f "${DEPLOY_DIR}/server-\#(safeCarrier).yaml" 2>/dev/null || true
+        [ -n "$DEPLOY_DIR" ] && rm -f "${DEPLOY_DIR}/${FILE}" 2>/dev/null || true
         echo "OLCRTC_CARRIER_REMOVED=ok"
         """#
     }
@@ -1779,6 +1814,14 @@ enum SSHRunner {
         return #"""
         set +e
         if podman ps -a --format '{{.Names}}' | grep -q '^\#(target)$' 2>/dev/null; then
+            # #469: the siblings (`<base>-<carrier>`, #452) bind-mount the very
+            # deploy dir the rm -rf below deletes. Removing only the primary left
+            # them running with their config pulled out from under them, and the
+            # card claiming "Ready to install".
+            for c in $(podman ps -a --format '{{.Names}}' | grep '^\#(target)-' 2>/dev/null); do
+                podman stop "$c" 2>/dev/null
+                podman rm   "$c" 2>/dev/null
+            done
             podman stop "\#(target)" 2>/dev/null
             podman rm   "\#(target)" 2>/dev/null
         else

@@ -201,7 +201,7 @@ enum L10nTable {
         // the menu item is `actionUninstall`, "Remove container from server".
         .removeHostConfirmMessage:   "The host will be removed from this device's list. The container on the VPS is NOT touched — use «Remove container from server» first if you want to wipe it. SSH password is removed from Keychain.",
         .uninstallConfirmTitle:      "Uninstall container?",
-        .uninstallConfirmBody:       "Only the container (running process) will be removed. Podman, the golang image (~300 MB) and the Go module cache remain on the server. Reinstallation will be fast (~1–2 min).",
+        .uninstallConfirmBody:       "Every olcrtc container on this server (all protocols), the deploy directory and the encryption key will be removed. Podman, the golang image (~300 MB) and the Go module cache stay. Reinstallation is fast (~1–2 min).",
         .deepUninstallConfirmBody:   "Removes container, Go cache (~300 MB), and encryption key. Podman and image stay.",
         .rebootConfirmTitle:         "Reboot server?",
         .rebootConfirmBody:          "This will reboot the entire VPS. The olcrtc container will restart automatically once the server is back online.",
@@ -997,7 +997,7 @@ enum L10nTable {
         // Every destructive row says what it destroys — the sentence a menu row
         // could not carry, and the reason this screen exists.
         .vpsAdvancedRebootFooter:      "Restarts the whole server. Everything running on it stops until it comes back.",
-        .vpsAdvancedUninstallFooter:   "Deletes the olcrtc container on this server. The connection saved for it stops working.",
+        .vpsAdvancedUninstallFooter:   "Deletes every olcrtc container on this server, its deploy directory and the key. Every connection saved for it stops working.",
         .vpsAdvancedDeepUninstallFooter: "Deletes every olcrtc container, image and deploy directory on the server.",
         .vpsAdvancedRemoveHostFooter:  "Forgets this server in the app. Nothing on the machine itself changes.",
 
@@ -1067,6 +1067,8 @@ enum L10nTable {
         .telemostRenewLiveOnly:      "You are connected through this protocol, and this server has no other one to use instead. Replacing the room restarts it, so the connection will drop mid-command — the app saves the new room and reconnects to it.",
         .telemostRenewDropped_fmt:   "The connection dropped while the server was switching to room %@ — expected when you renew the protocol you are connected through. The new room is saved and the app is reconnecting; run Verify from the protocol's menu to confirm the server took it.",
         .logsContainerPrimary:       "Primary",
+        .vpsHeadlineProbeFailed:     "Couldn't check the server",
+        .subMetaUpdatedPull_fmt:     "Updated %@ · pull down to refresh",
         .protocolStopAction:         "Stop this protocol",
         .protocolStartAction:        "Start this protocol",
         .telemostExpiryTitle:        "Telemost room expires soon",
@@ -1252,7 +1254,7 @@ enum L10nTable {
         // whose Russian name is «Удалить контейнер с сервера» (actionUninstall).
         .removeHostConfirmMessage:   "Сервер исчезнет из списка на этом устройстве. Контейнер на VPS НЕ затрагивается — если хочешь его вычистить, сначала выполни «Удалить контейнер с сервера». Пароль SSH удаляется из Keychain.",
         .uninstallConfirmTitle:      "Удалить контейнер?",
-        .uninstallConfirmBody:       "Будет удалён только контейнер (запущенный процесс). Podman, образ golang (~300 МБ) и кеш Go-модулей остаются на сервере. Повторная установка займёт ~1–2 мин.",
+        .uninstallConfirmBody:       "Будут удалены все контейнеры olcrtc на этом сервере (все протоколы), папка развёртывания и ключ шифрования. Podman, образ golang (~300 МБ) и кеш Go-модулей останутся. Повторная установка займёт ~1–2 мин.",
         .deepUninstallConfirmBody:   "Удаляет контейнер, кеш Go (~300 МБ) и ключ шифрования. Podman и образ остаются.",
         .rebootConfirmTitle:         "Перезагрузить сервер?",
         .rebootConfirmBody:          "Будет выполнена перезагрузка всего VPS. Контейнер olcrtc запустится автоматически после того, как сервер поднимется.",
@@ -2027,7 +2029,7 @@ enum L10nTable {
         // Каждая опасная строка говорит, что именно она уничтожит, — этого не
         // умеет пункт меню, и ради этого экран и появился.
         .vpsAdvancedRebootFooter:      "Перезагружает сервер целиком. Всё, что на нём работает, остановится, пока он не поднимется.",
-        .vpsAdvancedUninstallFooter:   "Удаляет контейнер olcrtc с этого сервера. Сохранённое для него подключение перестанет работать.",
+        .vpsAdvancedUninstallFooter:   "Удаляет все контейнеры olcrtc с этого сервера, папку развёртывания и ключ. Все сохранённые для него подключения перестанут работать.",
         .vpsAdvancedDeepUninstallFooter: "Удаляет с сервера все контейнеры, образы и каталоги olcrtc.",
         .vpsAdvancedRemoveHostFooter:  "Забывает этот сервер в приложении. На самой машине ничего не меняется.",
 
@@ -2097,6 +2099,8 @@ enum L10nTable {
         .telemostRenewLiveOnly:      "Сейчас соединение идёт через этот протокол, а других на этом сервере нет. Замена комнаты перезапустит его, и соединение оборвётся посреди команды — приложение сохранит новую комнату и переподключится к ней.",
         .telemostRenewDropped_fmt:   "Соединение оборвалось, пока сервер переходил в комнату %@, — так и должно быть, когда обновляешь протокол, через который идёт соединение. Новая комната сохранена, идёт переподключение; запусти «Проверить» в меню протокола, чтобы убедиться, что сервер её принял.",
         .logsContainerPrimary:       "Основной",
+        .vpsHeadlineProbeFailed:     "Не удалось проверить сервер",
+        .subMetaUpdatedPull_fmt:     "Обновлено %@ · потяни вниз, чтобы обновить",
         .protocolStopAction:         "Остановить этот протокол",
         .protocolStartAction:        "Запустить этот протокол",
         .telemostExpiryTitle:        "Комната Телемоста скоро истечёт",

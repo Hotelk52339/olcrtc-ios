@@ -994,6 +994,11 @@ enum L10n: String, CaseIterable {
     // #468: picker label for a host whose primary protocol the app cannot name.
     case logsContainerPrimary
 
+    // #469: the card names WHY the silent probe failed instead of "Checking…"
+    case vpsHeadlineProbeFailed
+    // #469 (issue #17): subscription footer — when the pull last refreshed it.
+    case subMetaUpdatedPull_fmt            // %@ = HealthAge.phrase (e.g. "2 h ago")
+
     case protocolStopAction
     case protocolStartAction
 

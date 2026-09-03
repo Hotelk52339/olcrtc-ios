@@ -285,8 +285,15 @@ struct MainTabView: View {
             get: { telemostRenewal.warning != nil },
             set: { if !$0 { telemostRenewal.dismissWarning() } }
         )) {
+            // #469 was: `Task { await telemostRenewal.renewFromWarning() }`. The
+            // Task is deferred; SwiftUI's dismissal writes `isPresented = false`
+            // first (→ dismissWarning → warning = nil), so by the time the Task
+            // ran the warning was gone and the renew returned without doing
+            // anything — "Renew now" was a no-op. Capture the record while the
+            // alert content is built, when the warning is still there.
+            let expiringID = telemostRenewal.warning?.id
             Button(L10n.telemostExpiryRenewAction.localized()) {
-                Task { await telemostRenewal.renewFromWarning() }
+                if let id = expiringID { Task { await telemostRenewal.renew(recordID: id) } }
             }
             Button(L10n.later.localized(), role: .cancel) { telemostRenewal.dismissWarning() }
         } message: {
@@ -453,9 +460,29 @@ struct MainTabView: View {
             return
         }
         let params = OlcrtcConnection(from: p)   // #401: shared Parsed → connection mapping
-        store.add(ConnectionRecord(name: fa.label,
-                                   groupName: ConnectionRecord.defaultGroupName,
-                                   details: .olcrtc(params)))
+        // boc #469: #384 dedups the VPS, but the connection was still `add`ed
+        // unconditionally, so re-opening the same link (share-sheet retry, QR
+        // rescan) grew a duplicate row every time — and the record was never
+        // linked to the host, so the fresh card reported no connection at all.
+        // Reuse the record for the same node (carrier + room + key) and link it.
+        let connID: UUID
+        if let same = store.connections.first(where: { rec in
+            if case .olcrtc(let q) = rec.details {
+                return q.carrier == params.carrier && q.roomID == params.roomID && q.key == params.key
+            }
+            return false
+        }) {
+            connID = same.id
+            LogStore.shared.log(.connection,
+                "⬇ full-access import: connection already saved (\(same.displayName)) — reused")
+        } else {
+            let record = ConnectionRecord(name: fa.label,
+                                          groupName: ConnectionRecord.defaultGroupName,
+                                          details: .olcrtc(params))
+            store.add(record)
+            connID = record.id
+        }
+        // eoc #469
         // #384: route the VPS host through the same dedup + #323 label-collision
         // checks AddServerHostView enforces, instead of a blind serverStore.add:
         // re-opening the same link refreshes the existing card (no duplicate VPS
@@ -465,11 +492,15 @@ struct MainTabView: View {
                                    port: fa.sshPort, username: fa.sshUsername)
         switch ServerHostStore.resolveImport(candidate, into: serverStore.hosts) {
         case .updateExisting(let existing):
-            serverStore.update(existing, password: fa.sshPassword)
+            var linked = existing
+            linked.lastConnectionID = connID   // #469: the card must know its own connection
+            serverStore.update(linked, password: fa.sshPassword)
             LogStore.shared.log(.connection,
                 "⬇ full-access import: refreshed VPS \(existing.label) (\(existing.username)@\(existing.host):\(existing.port))")
         case .addNew(let host):
-            serverStore.add(host, password: fa.sshPassword)
+            var linked = host
+            linked.lastConnectionID = connID   // #469
+            serverStore.add(linked, password: fa.sshPassword)
             LogStore.shared.log(.connection,
                 "⬇ imported full-access: connection + VPS \(host.label) (\(host.username)@\(host.host):\(host.port))")
         }

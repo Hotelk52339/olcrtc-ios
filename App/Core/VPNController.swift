@@ -117,6 +117,18 @@ final class VPNController: ObservableObject {
         guard capability == .unknown else { return }
         guard let managers = try? await NETunnelProviderManager.loadAllFromPreferences() else { return }
         if !managers.isEmpty { capability = .available }
+        // boc #469 was: the managers were read for the capability bit and
+        // discarded, so a tunnel that was ALREADY running — the app relaunched
+        // under it, or it was started from iOS Settings — was invisible: the
+        // hero said "Disconnected" while the whole device was tunnelled, and
+        // the only way to stop it was Settings > VPN. Adopt the first manager,
+        // observe it, and publish its real status so the bridge sees the truth.
+        if manager == nil, let existing = managers.first {
+            manager = existing
+            observeStatus(of: existing)
+            status = Status(existing.connection.status)
+        }
+        // eoc #469
     }
 
     // MARK: Start
@@ -241,7 +253,19 @@ final class VPNController: ObservableObject {
         manager?.connection.fetchLastDisconnectError { [weak self] error in
             guard let error else { return }
             let reason = error.localizedDescription
-            Task { @MainActor [weak self] in self?.lastDisconnectReason = reason }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.lastDisconnectReason = reason
+                // #469: `status` was published BEFORE this fetch returned, so the
+                // bridge (`TunnelManager.vpnStatusChanged`) mapped the drop with
+                // `reason: nil` and the user always saw the generic "VPN tunnel
+                // disconnected". Re-emit the same status now that the cause is
+                // known; the bridge maps it again with the reason attached.
+                if self.status == .disconnected {
+                    let same = self.status
+                    self.status = same
+                }
+            }
         }
     }
 

@@ -445,7 +445,7 @@ struct AddConnectionView: View {
     }
 
     private func save() {
-        let params = OlcrtcConnection(
+        var params = OlcrtcConnection(
             carrier:      carrier,
             transport:    transport,
             roomID:       roomID,
@@ -460,18 +460,42 @@ struct AddConnectionView: View {
             seiFrag:      seiFrag,
             seiACK:       seiACK
         )
+        // boc #469: the editor has no field for these, so rebuilding the record
+        // from its @State alone dropped them on every Save. The WB token went to
+        // "" until relaunch (the Keychain still held it — `save()` never deletes
+        // a blanked secret — so the record silently dialled as a guest until the
+        // next hydration); the #465 room clock reset to "unknown"; and the
+        // subscription provenance vanished, so the next refresh re-imported the
+        // same node as a duplicate row. Carry through everything this sheet
+        // cannot edit; the stamp only survives when the room is the same room.
+        if let existing, case .olcrtc(let prior) = existing.details {
+            params.wbToken       = prior.carrier == carrier ? prior.wbToken : ""
+            params.roomCreatedAt = prior.roomID == roomID ? prior.roomCreatedAt : nil
+        }
+        // eoc #469
         let trimmedGroup = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
         // #283: store the canonical default token when the user left the group at
         // the (localised) default or empty, so it localises at display time
         // instead of freezing the language it was created in.
         let resolvedGroup = (trimmedGroup.isEmpty || trimmedGroup == L10n.groupDefault.localized())
             ? ConnectionRecord.defaultGroupName : trimmedGroup
-        let record = ConnectionRecord(
+        var record = ConnectionRecord(
             id:        existing?.id ?? UUID(),
             name:      name,
             groupName: resolvedGroup,
             details:   .olcrtc(params)
         )
+        // #469: keep the subscription provenance (see above) — `diffSubscription`
+        // matches prior records by source + node key, and a record that lost
+        // them is invisible to the diff, i.e. re-added beside itself.
+        if let existing {
+            record.subSourceURL = existing.subSourceURL
+            record.subNodeKey   = existing.subNodeKey
+            record.subIP        = existing.subIP
+            record.subComment   = existing.subComment
+            record.subUsed      = existing.subUsed
+            record.subAvailable = existing.subAvailable
+        }
         // #456: seed the per-carrier room suggestion that the install / reconfigure
         // sheets (and `roomSuggestion()` above) read, so the app stops asking for a
         // value it has already been told once.

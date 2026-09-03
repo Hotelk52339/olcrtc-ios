@@ -72,13 +72,22 @@ struct AddServerHostView: View {
         authMethod == .privateKey ? keyOK : !password.isEmpty
     }
 
+    /// #469: a port outside 1…65535 passed `isValid` (`Int(port) != nil`), was
+    /// stored as typed, and crashed the Servers tab in `UInt16(host.port)` on the
+    /// very next auto-ping — on every launch, until the host was deleted.
+    static func validPort(_ text: String) -> Int? {
+        guard let p = Int(text.trimmingCharacters(in: .whitespaces)),
+              (1...65535).contains(p) else { return nil }
+        return p
+    }
+
     private var isValid: Bool {
-        !label.isEmpty && !host.isEmpty && Int(port) != nil
+        !label.isEmpty && !host.isEmpty && Self.validPort(port) != nil   // #469
             && !username.isEmpty && credentialOK && !isDuplicateLabel
     }
 
     private var canTest: Bool {
-        !host.isEmpty && Int(port) != nil && !username.isEmpty && credentialOK
+        !host.isEmpty && Self.validPort(port) != nil && !username.isEmpty && credentialOK   // #469
     }
 
     var body: some View {
@@ -249,7 +258,7 @@ struct AddServerHostView: View {
         var h = existing ?? ServerHost(label: "", host: "")
         h.label    = label
         h.host     = host
-        h.port     = Int(port) ?? 22
+        h.port     = Self.validPort(port) ?? 22   // #469: never store an unroutable port
         h.username = username
         h.authMethod = authMethod   // #451: nil only for pre-#451 stored hosts
         let secret: SSHSecret = authMethod == .privateKey

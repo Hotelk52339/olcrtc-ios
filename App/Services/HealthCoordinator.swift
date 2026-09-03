@@ -221,6 +221,23 @@ final class HealthCoordinator: ObservableObject {
     private func runProbe(_ record: ConnectionRecord, using tunnel: TunnelManager, deep: Bool) async {
         defer { inFlight.remove(record.id); bump() }
 
+        // #456: REUSE the existing self-collision rule verbatim — never a second
+        // rule. The live session is continuously verified by verifyTunnel /
+        // keep-alive, which already writes `.working` for it.
+        // #469: this check now runs FIRST. It used to sit below the VPN guard,
+        // which WROTE `.inconclusive(.vpnActive)` for every record — including
+        // the one the VPN session itself runs through — so every foreground
+        // sweep overwrote the connected node's real verdict with "couldn't
+        // check — turn the VPN off". The node holding the live tunnel is never
+        // a candidate for a side-channel probe in either mode.
+        if TunnelManager.shouldSkipBatchPing(record: record,
+                                             connectedNode: tunnel.connectedRecord,
+                                             state: tunnel.state) {
+            LogStore.shared.log(.connection,
+                "Health: skipped \(record.displayName) — the live tunnel holds this node")
+            return
+        }
+
         // #456: a probe under a live system VPN is a mixed-path measurement —
         // its signalling rides the tunnel it is measuring. Honest answer: we
         // could not check.
@@ -228,17 +245,6 @@ final class HealthCoordinator: ObservableObject {
             noteInconclusive(recordID: record.id, reason: .vpnActive)
             LogStore.shared.log(.connection,
                 "Health: skipped \(record.displayName) — can't probe while the system VPN is up")
-            return
-        }
-
-        // #456: REUSE the existing self-collision rule verbatim — never a second
-        // rule. The live session is continuously verified by verifyTunnel /
-        // keep-alive, which already writes `.working` for it.
-        if TunnelManager.shouldSkipBatchPing(record: record,
-                                             connectedNode: tunnel.connectedRecord,
-                                             state: tunnel.state) {
-            LogStore.shared.log(.connection,
-                "Health: skipped \(record.displayName) — the live tunnel holds this node")
             return
         }
 
@@ -277,7 +283,14 @@ final class HealthCoordinator: ObservableObject {
             }
             // #456 (audit fix): our own deadline expiring is not evidence the
             // node is broken.
-            if hitOurCap {
+            // #469: …unless the core SAID why. Its ready-wait is bounded by the
+            // very timeout we pass, so a stopped server or a dead room ALWAYS
+            // came back at our cap — and was filed as grey "couldn't check"
+            // (retry) instead of red "nobody answered" (recover). `.noPeer` was
+            // unreachable from a probe. A raw error the mapper recognises is a
+            // verdict; only an unclassified timeout is our deadline talking.
+            let mapped = HealthFailureMapper.reason(forRaw: raw)
+            if hitOurCap, mapped == .timedOut || mapped == .unknown {
                 noteInconclusive(recordID: record.id, reason: .timedOut)
                 LogStore.shared.log(.connection,
                     "Health: \(record.displayName) — no answer within the \(HealthPolicy.probeTimeoutMs / 1000)s check budget; not treating that as a failure")

@@ -181,6 +181,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
                 self.startedAt = Date()
                 self.installMemoryPressureHandler()
+                self.startLivenessWatch()   // #469
                 self.startPacketPump()
                 self.logBuffer.append("tunnel up: \(config.carrier)/\(config.transport), socks 127.0.0.1:\(config.socksPort)")
                 completionHandler(nil)
@@ -200,8 +201,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // NO excludedRoutes (provider-own sockets bypass the tunnel on iOS)
         // and NEVER includeAllNetworks (would loop our own carrier traffic).
         settings.ipv4Settings = ipv4
-        // v1 is IPv4-only: on v6-capable networks IPv6 traffic BYPASSES the
-        // tunnel (documented; blackholing v6 is a pending product decision).
+        // boc #469 was: no ipv6Settings at all — "v1 is IPv4-only: on v6-capable
+        // networks IPv6 traffic BYPASSES the tunnel". On a dual-stack carrier
+        // (the norm here) every host with an AAAA record was reached DIRECTLY
+        // from the real address while the hero said "everything on this
+        // device". Claim the v6 default route so that traffic enters the tunnel
+        // — where the pump drops it (AF_INET only) — instead of leaking. A
+        // blackhole is honest; a bypass is not. ULA address, RFC 4193.
+        let ipv6 = NEIPv6Settings(addresses: ["fd6f:6c63:7274:6300::1"], networkPrefixLengths: [64])
+        ipv6.includedRoutes = [NEIPv6Route.default()]        // ::/0
+        settings.ipv6Settings = ipv6
+        // eoc #469
         settings.dnsSettings = NEDNSSettings(servers: [dnsHost])  // host only, e.g. "8.8.8.8"
         settings.mtu = NSNumber(value: 1500)
         return settings
@@ -249,7 +259,36 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Must run on workQueue. Order matters: close the tun2socks device first
     /// (releases the lwIP per-process singleton and ends the pump), then stop
     /// the Go runtime (blocks up to stopTimeoutMs for the WebRTC teardown).
+    // boc #469: the provider had no liveness loop and never called
+    // `cancelTunnelWithError`. When the carrier session ended (liveness
+    // failures, room closed, the server container restarted) the run goroutine
+    // exited and the loopback SOCKS listener closed — but NEVPNStatus stayed
+    // `.connected`, the hero stayed green, and every app on the device was
+    // black-holed until the user noticed. The runtime already knows it is dead;
+    // ask it, and hand the verdict to the system so the status becomes true.
+    private var livenessTimer: DispatchSourceTimer?
+
+    private func startLivenessWatch() {
+        livenessTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: workQueue)
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler { [weak self] in
+            guard let self, let rt = self.runtime else { return }
+            if !rt.isRunning() {
+                self.logBuffer.append("core stopped (\(rt.state())) — cancelling the tunnel so the system knows")
+                self.livenessTimer?.cancel()
+                self.livenessTimer = nil
+                self.cancelTunnelWithError(NEVPNError(.connectionFailed))
+            }
+        }
+        timer.resume()
+        livenessTimer = timer
+    }
+    // eoc #469
+
     private func teardownLocked() {
+        livenessTimer?.cancel()          // #469
+        livenessTimer = nil
         memoryPressureSource?.cancel()
         memoryPressureSource = nil
         try? tunnel?.close()

@@ -74,6 +74,17 @@ final class ConnectionStore: ObservableObject {
                 LogStore.shared.log(.connection, "★ primary fallback → \(p.displayName)")
             }
         }
+        // boc #469: a subscription could never be forgotten — its meta was only
+        // ever written by import, so deleting all of its rows left the source
+        // registered, and the next refresh (launch or pull) brought every node
+        // back under fresh ids. Once no record of a source remains, forget it.
+        for r in removed {
+            guard let source = r.subSourceURL, subscriptionMeta[source] != nil,
+                  !connections.contains(where: { $0.subSourceURL == source }) else { continue }
+            subscriptionMeta[source] = nil
+            LogStore.shared.log(.connection, "− forgot subscription \(source): its last server was removed")
+        }
+        // eoc #469
     }
 
     func remove(id: UUID) {
@@ -290,7 +301,22 @@ final class ConnectionStore: ObservableObject {
             }
             do {
                 let body = try await fetch(fetchURL)
-                importSubscription(OlcrtcSubscription.parse(body), source: source)
+                let parsed = OlcrtcSubscription.parse(body)
+                // boc #469: the manual import refuses a body with no server lines
+                // (`emptySubscription`); this path fed one straight into the diff,
+                // whose "remove what the source no longer lists" step then deleted
+                // EVERY record of the source — and their Keychain keys. A captive
+                // portal, a Cloudflare challenge, any HTTP 200 that is not the
+                // subscription did exactly that on launch. An empty parse is not
+                // an emptied subscription; it is a fetch that returned the wrong
+                // thing.
+                guard !parsed.entries.isEmpty else {
+                    LogStore.shared.log(.connection,
+                        "⚠ subscription refresh for \(fetchURL.host ?? source): the answer held no servers — kept the saved ones")
+                    continue
+                }
+                // eoc #469
+                importSubscription(parsed, source: source)
                 refreshed.append(source)
             } catch {
                 LogStore.shared.log(.connection,
@@ -387,6 +413,9 @@ final class ConnectionStore: ObservableObject {
     // MARK: Persistence
 
     private static let v2Key      = "olcrtc_records_v2"
+    /// #469: where an UNREADABLE records blob is parked before anything can
+    /// overwrite it. Written once (the first failure's bytes are the originals).
+    private static let v2BackupKey = "olcrtc_records_v2.unreadable"
     private static let subMetaKey = "olcrtc_sub_meta_v1"   // #356
 
     /// Saves the connection list to UserDefaults with the encryption key
@@ -425,6 +454,19 @@ final class ConnectionStore: ObservableObject {
                 list = try JSONDecoder().decode([ConnectionRecord].self, from: data)
             } catch {
                 LogStore.shared.log(.connection, "⚠ ConnectionStore: failed to decode saved connections: \(error.localizedDescription)")
+                // boc #469: `connections = []` below fires didSet → save(), which
+                // wrote the empty list straight over the only copy of the user's
+                // connections — a decode failure was a wipe. Park the unreadable
+                // bytes under a side key FIRST, once, so a later launch cannot
+                // overwrite the originals with a second failure, and say so.
+                // Recovery is then a newer build reading the old shape, not a
+                // lost list.
+                if UserDefaults.standard.data(forKey: Self.v2BackupKey) == nil {
+                    UserDefaults.standard.set(data, forKey: Self.v2BackupKey)
+                }
+                LogStore.shared.log(.connection,
+                    "⚠ ConnectionStore: kept the unreadable list under \(Self.v2BackupKey) (\(data.count) bytes) — nothing was deleted")
+                // eoc #469
             }
         }
 

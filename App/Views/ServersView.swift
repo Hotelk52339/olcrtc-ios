@@ -87,6 +87,10 @@ struct ServersView: View {
     /// a regression, not a simplification. Menu items are closures here, not
     /// links, so the push is driven by this optional.
     @State private var logsForHost    : ServerHost?
+    /// #469: why the last silent probe of a host FAILED (SSH auth, host key,
+    /// timeout). Without it a failed auto-check left the card on "Checking the
+    /// server…" for the rest of the session — a dead end with no reason.
+    @State private var lastProbeError : [UUID: String] = [:]
     /// #459: the server whose "Manage server" screen is pushed — everything
     /// rare or destructive that used to sit in the card's 13-item ⋯ menu.
     // #459 (audit fix): its own wrapper type, NOT a second `ServerHost?`.
@@ -241,9 +245,12 @@ struct ServersView: View {
             // #332 visibility gate relies on exactly that), so no selectedTab
             // plumbing from MainTabView is needed.
             .onAppear { Task { await refreshOnEntry() } }
-            // Leaving the tab stops further probes; an in-flight native call
-            // can't be interrupted, its result is simply discarded.
-            .onDisappear { health.cancelAll() }
+            // #469 was: `.onDisappear { health.cancelAll() }` — both tabs verify
+            // the SAME records through ONE sequential coordinator, and a tab
+            // switch fires the new tab's onAppear and the old tab's onDisappear
+            // in the same turn: the sweep the new tab had just scheduled was
+            // cancelled before its first probe. "Check on opening" silently did
+            // nothing on every Servers → Connections switch.
             // eoc #456
             // #258: route the provisioner's progress stream into the running host's
             // phase/subtitle ONLY — never the base state or the dot colour.
@@ -702,7 +709,8 @@ struct ServersView: View {
         // present-tense reading and skipped the honest `.notChecked` headline.
         let age = lastProbeOK[host.id].map { Date().timeIntervalSince($0) }
         return HostHeadline.reduce(display: state, reachable: reachable,
-                                   lastProbeAge: age, health: hostHealth(host))
+                                   lastProbeAge: age, health: hostHealth(host),
+                                   probeError: lastProbeError[host.id])   // #469
     }
 
     // #459 was: `unverifiedCount(_:)` — the aggregate "N more not checked" that
@@ -890,7 +898,9 @@ struct ServersView: View {
     }
 
     private func doPing(_ host: ServerHost) async {
-        let result = await NetPing.tcp(host: host.host, port: UInt16(host.port), timeout: 5)
+        // #469: `clamping:` — a stored port can predate the range check in
+        // AddServerHostView, and a trap here took the whole app down on entry.
+        let result = await NetPing.tcp(host: host.host, port: UInt16(clamping: host.port), timeout: 5)
         pingLatencies[host.id] = result.success ? result.ms : nil
         lastPing[host.id] = Date()   // #374: record so the sweep can skip fresh hosts
     }
@@ -1445,8 +1455,10 @@ struct ServersView: View {
                 display[host.id] = .base(base)
             }
             lastProbeOK[host.id] = Date()       // #456 (audit): a REAL container reading
+            lastProbeError[host.id] = nil       // #469
         } catch {
             LogStore.shared.log(.provisioning, "⚠ auto-check failed: \(error.localizedDescription)")
+            lastProbeError[host.id] = error.localizedDescription   // #469: the card says WHY
             // boc #456 (audit)
             // #456 was: `pingLatencies[host.id] = nil` with the comment
             // «"couldn't check", NOT "stopped"». `pingLatencies` is
@@ -1488,8 +1500,14 @@ struct ServersView: View {
     // for its duration — the honest cost of an SSH call, and it clears itself.
     private func adoptOrphanContainer(_ host: ServerHost, secret: SSHSecret,
                                       base: HostBase) async -> HostBase {
+        // #469 was: `.first` — podman lists newest first, so on a multi-protocol
+        // host the freshly added SIBLING was adopted as the host's "primary",
+        // and every host-level op (stop, update, uninstall, logs) then aimed at
+        // it. The primary is `olcrtc-server-<id>`; every sibling is that name
+        // plus `-<carrier>`, so the primary is the shortest name of the set.
         guard host.lastContainerName == nil, !base.hasContainer,
-              let found = try? await provisioner.scanContainers(on: host, secret: secret).first
+              let scanned = try? await provisioner.scanContainers(on: host, secret: secret),
+              let found = scanned.min(by: { $0.name.count < $1.name.count })
         else { return base }
         var updated = host
         updated.lastContainerName = found.name
@@ -1787,6 +1805,10 @@ struct ServersView: View {
     // own container.
     private func reconfigure(_ host: ServerHost, containerName: String,
                              recordID: UUID?, options: InstallOptions) async {
+        // #469: read BEFORE the restart takes the answer away (same rule as the
+        // telemost renewal): is the live tunnel riding the record we are about
+        // to reconfigure?
+        let wasRiding = recordID != nil && tunnel.connectedRecord?.id == recordID
         await run(.reconfigure, on: host) { secret in
             let newURI = try await provisioner.reconfigure(on: host, secret: secret,
                                                            containerName: containerName, options: options)
@@ -1840,6 +1862,33 @@ struct ServersView: View {
             if let stats { vpsStats[host.id] = stats }
             return HostBase(rstate)
         }
+        // boc #469: the EXPECTED outcome when the command rides the container it
+        // restarts — the yaml is rewritten, `podman restart` kills the SSH
+        // session, and the OLCRTC_URI line that would have updated the record
+        // never arrives. The server changed; the record did not. Unlike a key
+        // rotation nothing here is unknowable: carrier, transport and room are
+        // what we just asked for, and reconfigure never touches the key. Apply
+        // them locally and reconnect; the #456 re-measure below is the
+        // trustworthy answer, not this SSH error.
+        if wasRiding, reconfigureFailure(host.id) != nil,
+           let id = recordID,
+           var existing = connections.connections.first(where: { $0.id == id }),
+           case .olcrtc(var p) = existing.details {
+            let roomChanged = p.roomID != options.roomID
+            p.carrier   = options.carrier
+            p.transport = options.transport
+            p.roomID    = options.roomID
+            if roomChanged { p.roomCreatedAt = Date() }
+            existing.details = .olcrtc(p)
+            connections.update(existing)
+            LogStore.shared.log(.provisioning,
+                "• Reconfigure dropped the session it rode (expected) — applied \(options.carrier)/\(options.transport) locally; re-measuring")
+            tunnel.disconnect()
+            if let fresh = connections.connections.first(where: { $0.id == id }) {
+                tunnel.connect(record: fresh)
+            }
+        }
+        // eoc #469
         await refreshCarriers(host.id)   // #452
         // boc #456: a reconfigure rewrites room/transport server-side — the row's
         // old verdict describes a deployment that no longer exists, so re-measure.
@@ -2117,8 +2166,14 @@ struct ServersView: View {
         carrierBusyHostID = host.id
         defer { carrierBusyHostID = nil }
         do {
+            // #469 was: `carrier: row.provider` → `<base>-<provider>`. A sibling's
+            // carrier is mutable (Change room / transport rewrites `provider:` in
+            // ITS file), after which the derived name pointed at a container
+            // that does not exist — or at a different sibling. The row already
+            // knows its container and its config file; delete exactly those.
             try await provisioner.removeCarrier(
-                on: host, secret: secret, baseContainer: cname, carrier: row.provider)
+                on: host, secret: secret, baseContainer: cname,
+                container: row.container, configFile: row.file)
             if let record = connectionRecord(host, row: row) {
                 connections.remove(id: record.id)
                 var updated = host
@@ -2323,10 +2378,10 @@ struct ServersView: View {
               let rec = connectionRecord(req.host, row: alt) else { return }
         LogStore.shared.log(.provisioning,
             "▶ Moving the tunnel to \(alt.provider) before renewing the telemost room")
-        // The disconnect is ours to make: ConnectionsView's comment claims
-        // `connect(record:)` "already disconnects-then-dials", but
-        // `TunnelManager.connect` RETURNS on .connecting/.connected/.waitingForNetwork.
-        tunnel.disconnect()
+        // #469 was: an explicit disconnect() + connect(), because connect used
+        // to RETURN on a live session. It switches by itself now, and only
+        // after the old engine has really stopped — the manual pair raced its
+        // own teardown and could start on top of a runtime still shutting down.
         tunnel.connect(record: rec)
     }
 
@@ -2529,7 +2584,20 @@ struct ServersView: View {
                     return false
                 }
             if var found = existing {
-                found.details = .olcrtc(params)
+                // #469: `params` comes from the server's yaml, which knows nothing
+                // about the local SOCKS credentials, the WB token the record
+                // carries, or when the room was created. Overwriting wholesale
+                // reset the #465 clock to "unknown" on every Recover and dropped
+                // the in-memory secrets until relaunch. Carry them through; the
+                // stamp only survives when the room is the same room.
+                var merged = params
+                if case .olcrtc(let prior) = found.details {
+                    merged.socksUser     = prior.socksUser
+                    merged.socksPass     = prior.socksPass
+                    merged.wbToken       = prior.carrier == merged.carrier ? prior.wbToken : ""
+                    merged.roomCreatedAt = prior.roomID == merged.roomID ? prior.roomCreatedAt : nil
+                }
+                found.details = .olcrtc(merged)
                 connections.update(found)
             } else {
                 let record = ConnectionRecord(
@@ -2571,6 +2639,18 @@ struct ServersView: View {
         guard let cname = host.lastContainerName else {
             alertText = L10n.containerNotInstalled.localized(); return
         }
+        // boc #469: rotate-key.sh restarts the container BEFORE it prints the new
+        // URI. Run through a tunnel riding that host, the restart killed the SSH
+        // session and the new key never arrived: server re-keyed, app kept the
+        // old key, nothing could connect. A rotation forces a reconnect anyway,
+        // so drop the session first and let the command travel a route that
+        // survives the restart.
+        if let live = tunnel.connectedRecord, hostRecords(host).contains(where: { $0.id == live.id }) {
+            LogStore.shared.log(.provisioning,
+                "▶ Disconnecting before the key rotation — the command must not ride the container it restarts")
+            tunnel.disconnect()
+        }
+        // eoc #469
         do {
             let result = try await provisioner.rotateKey(on: host, secret: secret, containerName: cname)
             let cfg = try OlcrtcURI.parse(result.uri)
@@ -2580,12 +2660,33 @@ struct ServersView: View {
             // #401: shared Parsed → connection mapping (sei defaults 30/10/1200/1
             // == the struct's own defaults, so behavior is unchanged).
             let params = OlcrtcConnection(from: cfg)
-            let record = ConnectionRecord(name: host.label, details: .olcrtc(params))
-            connections.add(record)
+            // boc #469 was: always `add` a fresh record and re-point the host at
+            // it — the SAME duplicate pattern #467 removed from Recover. The old
+            // primary record stayed in the list with a key that no longer
+            // decrypts anything; a live tunnel through it could never reconnect.
+            // Correct the linked record in place (its id is what the tunnel, the
+            // health history and the user's name hang off); add only when the
+            // host has none.
             var updated = host
             updated.lastContainerName = result.containerName
-            updated.lastConnectionID  = record.id
+            if let id = host.lastConnectionID,
+               var found = connections.connections.first(where: { $0.id == id }) {
+                var merged = params
+                if case .olcrtc(let prior) = found.details {
+                    merged.socksUser     = prior.socksUser
+                    merged.socksPass     = prior.socksPass
+                    merged.wbToken       = prior.carrier == merged.carrier ? prior.wbToken : ""
+                    merged.roomCreatedAt = prior.roomID == merged.roomID ? prior.roomCreatedAt : nil
+                }
+                found.details = .olcrtc(merged)
+                connections.update(found)
+            } else {
+                let record = ConnectionRecord(name: host.label, details: .olcrtc(params))
+                connections.add(record)
+                updated.lastConnectionID = record.id
+            }
             serverStore.update(updated, password: nil)
+            // eoc #469
             // boc #452: sibling protocol containers were restarted with the SAME
             // new key — refresh every matching record so a multi-protocol host
             // stays fully usable after a rotation.
