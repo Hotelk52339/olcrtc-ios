@@ -692,7 +692,10 @@ final class TunnelManager: ObservableObject {
             // then-dials". It did not: with a session up, a tap moved
             // `store.primary`, fired a haptic and did nothing else. The SAME
             // record stays idempotent; a DIFFERENT one tears down and dials.
-            if let live = lastRecord, live.id == record.id { return }
+            // A live state without a known record (only reachable through the
+            // test seam) is treated as the same record: never tear down a
+            // session we cannot identify.
+            guard let live = lastRecord, live.id != record.id else { return }
             disconnect()   // the teardown wait below dials once the engine is down
             // eoc #469
         }
