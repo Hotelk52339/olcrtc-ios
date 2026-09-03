@@ -685,7 +685,19 @@ final class TunnelManager: ObservableObject {
         // `.waitingForNetwork` is an active session the path monitor will
         // reconnect on its own once connectivity returns — a manual connect now
         // (no route) would only fail, so treat it like .connecting/.connected.
-        case .connecting, .connected, .waitingForNetwork: return
+        case .connecting, .connected, .waitingForNetwork:
+            // boc #469: was a bare `return`. Every "switch to this protocol"
+            // affordance — the Connections switcher, the host card's "Connect via
+            // this protocol" — trusted the comment that connect "disconnects-
+            // then-dials". It did not: with a session up, a tap moved
+            // `store.primary`, fired a haptic and did nothing else. The SAME
+            // record stays idempotent; a DIFFERENT one tears down and dials.
+            // A live state without a known record (only reachable through the
+            // test seam) is treated as the same record: never tear down a
+            // session we cannot identify.
+            guard let live = lastRecord, live.id != record.id else { return }
+            disconnect()   // the teardown wait below dials once the engine is down
+            // eoc #469
         }
         // #393: if the device was locked before first unlock at launch the saved
         // key couldn't be read (empty in memory) — surface the actionable unlock
@@ -706,6 +718,13 @@ final class TunnelManager: ObservableObject {
         // two backends never share a runtime.
         lastRecord = record
         if SettingsStore.shared.tunnelMode == .vpn {
+            // #469: the proxy machinery that must NOT outlive a mode switch. A
+            // recovery loop left over from a dropped proxy session woke under
+            // the VPN, ran preflight, bound the port and started the in-app
+            // engine beneath the system tunnel. `stopTask` is deliberately left
+            // alone (see above): a pending proxy teardown SHOULD finish first.
+            recoveryTask?.cancel(); recoveryTask = nil
+            pendingStartTask?.cancel(); pendingStartTask = nil
             activeMode = .vpn
             startVPN(record: record)
             return
@@ -713,10 +732,25 @@ final class TunnelManager: ObservableObject {
         activeMode = .proxy
         // A manual connect supersedes any in-flight auto-recovery loop (#270).
         recoveryTask?.cancel(); recoveryTask = nil
-        // #409: cancel a pending off-MainActor teardown from a just-prior
-        // disconnect so its late MobileStop() can't kill the session we're about
-        // to start (both hit the same Go singleton).
-        stopTask?.cancel(); stopTask = nil
+        // boc #469 was: `stopTask?.cancel(); stopTask = nil` (#409) — cancelling a
+        // teardown that had not STARTED yet meant the old engine was never
+        // stopped at all: its runtime stayed live and the new start died with
+        // "the previous session is still stopping" (OlcrtcEngine.start), which
+        // is exactly what a quick disconnect → connect, and every protocol
+        // switch, produced. Wait for the teardown to finish, then dial — the Go
+        // singleton serialises Stop/Start, and a Stop that has COMPLETED before
+        // Start cannot kill the session that follows it.
+        if let stop = stopTask {
+            stopTask = nil
+            pendingStartTask?.cancel()
+            pendingStartTask = Task { [weak self] in
+                await stop.value
+                guard let self, !Task.isCancelled else { return }
+                self.connect(record: record)
+            }
+            return
+        }
+        // eoc #469
         // #386: cancel a same-port wait still pending from a prior connect so its
         // post-wait preflight can't fire for the old record after this one starts.
         pendingStartTask?.cancel(); pendingStartTask = nil
@@ -1399,6 +1433,12 @@ final class TunnelManager: ObservableObject {
             // and lands back on `.connecting` for a DIFFERENT record — the old
             // `state == .connecting` guard couldn't tell the two apart and would
             // preflight the stale record last, connecting the wrong exit node.
+            // #469: bump BEFORE flipping to .connecting. `isLiveAttempt(epoch)` is
+            // `connectEpoch == epoch && state == .connecting`; without the bump a
+            // superseded attempt's continuation — its epoch still equal to the
+            // unchanged counter — saw .connecting and published ITS result, so a
+            // failed verify from record A landed in record B's pending connect.
+            connectEpoch &+= 1
             let epochAtWaitStart = connectEpoch
             state = .connecting   // optimistic: hold the toggle ON while we wait
             // #386: store the Task so disconnect()/connect() can cancel it; was a
@@ -1572,7 +1612,11 @@ final class TunnelManager: ObservableObject {
             // Guard again: disconnect() / a newer attempt may have intervened
             // during verifyTunnel() — only the still-current attempt posts a result.
             guard manager?.isLiveAttempt(epoch) == true else {
-                engine.stop()
+                // #469 was: `engine.stop()` inside MainActor.run — MobileStop
+                // blocks up to 5 s while the WebRTC session closes and froze the
+                // UI for exactly that long (#445 moved every OTHER stop off the
+                // actor; these two were missed).
+                Task.detached { engine.stop() }
                 return false
             }
             if tunnelOK {
@@ -1587,7 +1631,7 @@ final class TunnelManager: ObservableObject {
                 return true
             } else {
                 LogStore.shared.log(.connection, L10n.tunnelFailed.localized(), code: .tunnelDown)  // OLC-1009
-                engine.stop()
+                Task.detached { engine.stop() }   // #469: off the actor — see above
                 // #456: the transport came up (start + waitReady succeeded) but
                 // verifyTunnel got no HTTP 200 — this is EXACTLY "connects but no
                 // data", the user's telemost incident, so it is recorded as

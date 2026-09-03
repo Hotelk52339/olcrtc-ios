@@ -300,13 +300,44 @@ final class TunnelManagerStateTests: XCTestCase {
     // calls hit the early-return and are silent no-ops.
     func testMultipleConnectCallsWhileConnectingDoNotStackStates() {
         let manager = makeManager()
-        manager.connect(record: record(with: validParams()))
+        // #469: a double-tap is the SAME record. `record(with:)` mints a fresh id
+        // per call, and a different id is a protocol switch now (see the test
+        // below), so the repeat calls reuse one record.
+        let same = record(with: validParams())
+        manager.connect(record: same)
         XCTAssertEqual(manager.state, .connecting, "first call must flip to .connecting")
-        manager.connect(record: record(with: validParams()))
+        manager.connect(record: same)
         XCTAssertEqual(manager.state, .connecting, "second call must not change state")
-        manager.connect(record: record(with: validParams()))
+        manager.connect(record: same)
         XCTAssertEqual(manager.state, .connecting, "third call must not change state")
         // Tidy up.
+        manager.state = .disconnected
+    }
+
+    // #469: the user's complaint — tapping ANOTHER protocol while a session is
+    // up used to do nothing (connect returned on every live state). A different
+    // record is a switch: the live attempt is torn down synchronously, and the
+    // new one dials once the engine has stopped (asynchronously, off-actor).
+    func testConnectWithADifferentRecordWhileConnectingSwitches() {
+        let manager = makeManager()
+        manager.connect(record: record(with: validParams()))
+        XCTAssertEqual(manager.state, .connecting)
+        var other = validParams()
+        other.roomID = "room-2"
+        manager.connect(record: record(with: other))
+        // The old attempt is gone the moment the switch is requested; the new
+        // dial waits for the teardown, so it is not observable synchronously.
+        XCTAssertEqual(manager.state, .disconnected, "a different record tears the live attempt down")
+        manager.state = .disconnected
+    }
+
+    // #469: …but a live state the manager cannot attribute to a record (only
+    // reachable through this seam) is never torn down.
+    func testConnectWhileLiveWithoutAKnownRecordStaysANoOp() {
+        let manager = makeManager()
+        manager.state = .connected
+        manager.connect(record: record(with: validParams()))
+        XCTAssertEqual(manager.state, .connected)
         manager.state = .disconnected
     }
 

@@ -410,11 +410,13 @@ python3 scripts/cut-release.py --dry-run    # tag v<MARKETING_VERSION>.<CFBundle
   `Mobile.xcframework` bump.
 - `NSCameraUsageDescription` in `project.yml` ↔ `App/en.lproj/InfoPlist.strings`.
 - `SettingsStoreTests` `snapshot` dict + tearDown ↔ every clamped numeric setting
-  (`vpsAutoPingInterval` is currently missing there).
-- `VPNController.providerBundleIdentifier` ↔ the `olcrtc-tunnel` target's
-  `PRODUCT_BUNDLE_IDENTIFIER` (`io.github.hotelk52339.olcrtc-ios.tunnel`); its
-  `NSExtensionPrincipalClass` ↔ the `PacketTunnelProvider` class name — both in
-  `project.yml`.
+  (#469: the class now also snapshots/restores every persisted `settings.*` key
+  wholesale, so `reset()` can no longer leak a real setting out of a test run).
+- `VPNController.providerBundleIdentifier` is derived at runtime from the app's
+  own bundle id + `.tunnel` (#16), so it no longer has to be hand-synced with the
+  `olcrtc-tunnel` target — but that target's `PRODUCT_BUNDLE_IDENTIFIER` must
+  keep the `<app id>.tunnel` shape; its `NSExtensionPrincipalClass` ↔ the
+  `PacketTunnelProvider` class name — both in `project.yml`.
 - `packet-tunnel-provider` in BOTH `App/Entitlements.plist` and
   `Tunnel/Entitlements.plist` (the app manages the tunnel, the appex runs it).
 - `build-framework.sh` smux anchors (`smuxMaxReceiveBuffer = 32 * 1024 * 1024` /

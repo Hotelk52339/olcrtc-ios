@@ -119,7 +119,7 @@ struct LogEntry: Identifiable, Equatable {
 }
 
 // Writes plain text lines to a per-category rotating file.
-// On simulator also mirrors to /tmp/olcrtc-ios-logs/ so Claude Code can read them.
+// On simulator also mirrors to /tmp/olcrtc-ios-logs/ so they can be read from the host.
 // #332: writes used to run synchronously on the caller's (main) thread, so a
 // teardown log storm stacked two disk writes per line inside UI updates —
 // the "slow disconnect" freeze. They now hop onto one shared serial

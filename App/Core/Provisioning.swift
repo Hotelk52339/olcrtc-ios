@@ -178,7 +178,7 @@ final class Provisioner: ObservableObject {
         status = .running("Ping \(host.host):\(host.port)…")
         LogStore.shared.startSession(.provisioning)
         LogStore.shared.log(.provisioning, "→ Ping \(host.host):\(host.port)")
-        let result = await NetPing.tcp(host: host.host, port: UInt16(host.port))
+        let result = await NetPing.tcp(host: host.host, port: UInt16(clamping: host.port))   // #469: never trap on a stored value
         if result.success, let ms = result.ms {
             let msg = L10n.pingTCPOK_fmt.formatted(host.port, String(format: "%.0f", ms))
             LogStore.shared.log(.provisioning, "✓ \(msg)")
@@ -198,7 +198,13 @@ final class Provisioner: ObservableObject {
     // a painful wait. A 5 s probe finds the bad cases up-front and surfaces
     // a friendly "Server is not responding" message instead.
 
-    private static let probeTimeout: TimeInterval = 5
+    // #469 was: 5 — shorter than the 15 s the dial itself gives the tunnel relay
+    // (SSHTransport) and the core's 15 s CONNECT-ack wait, so a working tunnel
+    // route was vetoed by its own pre-check whenever the carrier took more than
+    // five seconds to answer (vp8channel / seichannel, a mid-renegotiation
+    // room). A dead VPS now costs 15 s to report instead of 5; a live tunnel
+    // is no longer refused for being slow.
+    private static let probeTimeout: TimeInterval = 15
 
     /// Throws `ProvisionError.sshConnect(serverUnreachable_fmt)` if TCP-port
     /// is not reachable within `probeTimeout` seconds. On success returns
@@ -650,17 +656,28 @@ final class Provisioner: ObservableObject {
     /// Removes a sibling carrier (container + its server-<carrier>.yaml).
     /// Never touches the primary — removeCarrierScript always targets
     /// `<base>-<carrier>`.
+    /// #469: kept for callers that only know the carrier.
     func removeCarrier(on host: ServerHost, secret: SSHSecret,
                        baseContainer: String, carrier: String) async throws {
+        try await removeCarrier(on: host, secret: secret, baseContainer: baseContainer,
+                                container: SSHRunner.siblingContainerName(base: baseContainer, carrier: carrier),
+                                configFile: SSHRunner.carrierYAMLFile(carrier))
+    }
+
+    /// #469: the row names its container and its config file; delete exactly
+    /// those (see `SSHRunner.removeCarrierScript(baseContainer:container:configFile:)`).
+    func removeCarrier(on host: ServerHost, secret: SSHSecret,
+                       baseContainer: String, container: String, configFile: String) async throws {
         status = .running(L10n.provisioningUninstallSSH.localized())
         LogStore.shared.startSession(.provisioning)
-        LogStore.shared.log(.provisioning, "→ Remove carrier on \(host.host): \(baseContainer)-\(carrier)")
+        LogStore.shared.log(.provisioning, "→ Remove carrier on \(host.host): \(container) (\(configFile))")
         do {
             try await ensureReachable(host)
             let output = try await SSHRunner._withConnection(host: host, secret: secret) { client in
                 try await SSHRunner._execute(client: client, label: "remove carrier",
                                              command: SSHRunner.removeCarrierScript(baseContainer: baseContainer,
-                                                                                    carrier: carrier))
+                                                                                    container: container,
+                                                                                    configFile: configFile))
             }
             guard SSHRunner.extract(key: "OLCRTC_CARRIER_REMOVED", from: output) == "ok" else {
                 throw ProvisionError.sshCommand("remove carrier — \(String(output.suffix(300)))")

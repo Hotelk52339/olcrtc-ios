@@ -32,7 +32,35 @@ final class SettingsStoreTests: XCTestCase {
 
     private var s: SettingsStore { SettingsStore.shared }
 
+    // boc #469: `s.reset()` (testResetRestoresAllNumericDefaults) resets EVERY
+    // setting — language, DNS, log level, appearance, auto-connect, IP sources —
+    // but tearDown restored only the numeric snapshot, so one run left the
+    // developer's real app settings at factory defaults. Snapshot every
+    // persisted `settings.*` default around each test and put it back exactly,
+    // absent keys included.
+    private var allSettingsSnapshot: [String: Any?] = [:]
+
+    private func snapshotAllSettings() {
+        let d = UserDefaults.standard
+        allSettingsSnapshot = [:]
+        for (key, value) in d.dictionaryRepresentation() where key.hasPrefix("settings.") {
+            allSettingsSnapshot[key] = value
+        }
+    }
+
+    private func restoreAllSettings() {
+        let d = UserDefaults.standard
+        for key in d.dictionaryRepresentation().keys where key.hasPrefix("settings.") {
+            if allSettingsSnapshot[key] == nil { d.removeObject(forKey: key) }
+        }
+        for (key, value) in allSettingsSnapshot {
+            if let value { d.set(value, forKey: key) } else { d.removeObject(forKey: key) }
+        }
+    }
+    // eoc #469
+
     override func setUp() {
+        snapshotAllSettings()   // #469
         super.setUp()
         // Snapshot every numeric property AND its UserDefaults key so we can
         // restore both layers — the in-memory @Published and the persisted
@@ -53,6 +81,7 @@ final class SettingsStoreTests: XCTestCase {
     }
 
     override func tearDown() {
+        defer { restoreAllSettings() }   // #469: after the property restores below
         s.socksPort              = snapshot["socksPort"]              as! Int
         s.fontSizeIndex          = snapshot["fontSizeIndex"]          as! Int
         s.startTimeoutSeconds    = snapshot["startTimeoutSeconds"]    as! Int

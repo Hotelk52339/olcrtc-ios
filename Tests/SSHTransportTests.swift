@@ -72,8 +72,12 @@ final class SSHTransportTests: XCTestCase {
     // MARK: - connectRequest
 
     func testConnectRequestUsesATYP1ForIPv4Literal() throws {
-        let bytes = try SSHSocks5.connectRequest(host: "150.40.117.93", port: 22)
-        XCTAssertEqual(bytes, [0x05, 0x01, 0x00, 0x01, 150, 40, 117, 93, 0x00, 0x16])
+        // #469 was: the owner's REAL VPS address as the fixture — an
+        // infrastructure identifier committed to a public repo (and since
+        // forked). Fixtures use RFC 5737 documentation space, which is
+        // reserved and routes nowhere.
+        let bytes = try SSHSocks5.connectRequest(host: "203.0.113.5", port: 22)
+        XCTAssertEqual(bytes, [0x05, 0x01, 0x00, 0x01, 203, 0, 113, 5, 0x00, 0x16])
     }
 
     func testConnectRequestUsesATYP3ForHostname() throws {

@@ -254,7 +254,10 @@ final class SSHRunnerCarrierTests: XCTestCase {
 
     func testRemoveCarrierScriptTargetsOnlySibling() {
         let script = SSHRunner.removeCarrierScript(baseContainer: "olcrtc-server-abc", carrier: "jitsi")
-        XCTAssertTrue(script.contains(#"TARGET="${CNAME}-jitsi""#))
+        // #469 was: `TARGET="${CNAME}-jitsi"` — the pair is resolved in Swift now
+        // (the row's own container + file), the shell no longer derives it.
+        XCTAssertTrue(script.contains(#"TARGET="olcrtc-server-abc-jitsi""#))
+        XCTAssertTrue(script.contains(#"FILE="server-jitsi.yaml""#))
         XCTAssertTrue(script.contains(#"podman rm -f "${TARGET}""#))
         XCTAssertTrue(script.contains("server-jitsi.yaml"))
         XCTAssertTrue(script.contains("OLCRTC_CARRIER_REMOVED=ok"))

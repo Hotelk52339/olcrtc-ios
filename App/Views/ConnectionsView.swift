@@ -140,9 +140,11 @@ struct ConnectionsView: View {
         // "Check on opening" switch. The contract, stated once: THE TOGGLE
         // DECIDES WHETHER THE APP CHECKS BY ITSELF; A PULL ALWAYS CHECKS.
         .onAppear { entrySweep() }
-        // #456: an in-flight native probe can't be interrupted, but leaving the tab
-        // stops the coordinator from starting further ones.
-        .onDisappear { health.cancelAll() }
+        // #469 was: `.onDisappear { health.cancelAll() }` — see ServersView: the
+        // two tabs verify the SAME records through ONE coordinator, and a tab
+        // switch fires the new tab's onAppear and the old one's onDisappear in
+        // the same turn, so the sweep just scheduled was cancelled before its
+        // first probe. "Check on opening" silently did nothing on a switch.
     }
 
     // boc #461
@@ -886,6 +888,12 @@ private struct SubscriptionMetaFooter: View {
                 line(L10n.subMetaServers.localized(), String(count))
             }
             line(L10n.subMetaRefresh.localized(), Self.refreshDisplay(meta.refreshInterval))
+            // #469 (issue #17): the pull DOES re-fetch every source, but nothing on
+            // screen said so after #459 dropped the button and the caption — a
+            // reader coming from olcbox concluded the app had no subscription
+            // refresh at all. One line: when it last happened, and how to do it.
+            Text(L10n.subMetaUpdatedPull_fmt.formatted(HealthAge.phrase(Date().timeIntervalSince(meta.lastRefresh))))
+                .foregroundStyle(Theme.Palette.textTertiary)
             if let used = meta.used, !used.isEmpty {
                 line(L10n.subMetaUsed.localized(), used)
             }

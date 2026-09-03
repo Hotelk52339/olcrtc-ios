@@ -344,6 +344,16 @@ struct ConnectHero: View {
     }
 
     private var failureReason: HealthReason? {
+        // #469: in `.failed(raw)` the sentence must explain THIS failure. It used
+        // to read only `health` — the subject's stored verdict from an earlier
+        // probe — so a port-busy failure five minutes after a key-mismatch probe
+        // was headlined "Key no longer matches" with the real reason discarded.
+        // Classify the raw message first; fall back to the stored verdict only
+        // when it carries nothing the mapper recognises.
+        if case .failed(let raw) = state {
+            let now = HealthFailureMapper.reason(forRaw: raw)
+            if now != .unknown { return now }
+        }
         switch health {
         case .broken(let r, _), .inconclusive(let r, _): return r
         default: return nil

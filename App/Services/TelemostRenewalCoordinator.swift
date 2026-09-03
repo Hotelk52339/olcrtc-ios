@@ -83,6 +83,15 @@ final class TelemostRenewalCoordinator: ObservableObject {
         _ = await renew(record)
     }
 
+    /// #469: the alert captures the record id while its content is built, so the
+    /// renew no longer depends on `warning` surviving SwiftUI's dismissal write
+    /// (which lands before a deferred Task runs).
+    func renew(recordID id: UUID) async {
+        warning = nil
+        guard let record = connections.connections.first(where: { $0.id == id }) else { return }
+        _ = await renew(record)
+    }
+
     /// Dismiss without renewing. The policy will raise it again on a later pass
     /// only if the record changes — a warning the user has already refused should
     /// not reappear every quarter hour.
@@ -159,7 +168,9 @@ final class TelemostRenewalCoordinator: ObservableObject {
             guard let alt = connections.connections.first(where: { $0.id == altID }) else { return false }
             LogStore.shared.log(.provisioning,
                 "▶ Moving the tunnel to \(alt.name) before renewing the telemost room")
-            tunnel.disconnect()
+            // #469 was: `tunnel.disconnect()` then `connect` — `connect` now
+            // switches by itself, and does so only after the old engine has
+            // really stopped (the manual pair raced its own teardown).
             tunnel.connect(record: alt)
             // Renew on the NEXT pass: the move has to actually land first, and
             // this way the policy re-checks against reality instead of against
@@ -222,6 +233,10 @@ final class TelemostRenewalCoordinator: ObservableObject {
             // `TunnelManager.lastRecord` is a connect-time snapshot, so without
             // the disconnect the reconnect loop would keep dialling the room that
             // just expired (OLC-1014).
+            // #469 was: disconnect() + connect() — see `TunnelManager.connect`.
+            // A same-record connect while live is idempotent, so the fresh room
+            // has to go through an explicit teardown: disconnect, then dial once
+            // the engine is down (`connect` waits for that itself now).
             tunnel.disconnect()
             if let fresh = connections.connections.first(where: { $0.id == record.id }) {
                 tunnel.connect(record: fresh)
