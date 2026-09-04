@@ -415,14 +415,15 @@ struct SettingsAdvancedView: View {
     // the same fault as findings 10/11/20, one screen down. Both sentences are
     // notes on their own rows now, and `socksAuthFooter` explains the auth
     // toggle again instead of nothing explaining it.
-    // #471: the header names the thing, not the wire protocol, and the main list
-    // keeps a read-only summary of the port (`TunnelSettingsPortRow`) — someone
-    // pointing OTHER apps at the tunnel needs to READ that number far more often
-    // than to change it.
+    // #471: the header names the thing, not the wire protocol.
+    // #474: and the address someone types into another app lives here, beside
+    // the port it is built from, instead of as a bare number on the first
+    // screen of Settings.
     @ViewBuilder
     private var proxySection: some View {
         Section {
             portRow
+            proxyAddressRow   // #474
             TunnelSettingsNote(text: L10n.socksPortChangeNote.localized())
             // #460 was: the whole check ran inline in this button's action — it
             // is a method now, so one code path answers the question.
@@ -439,6 +440,20 @@ struct SettingsAdvancedView: View {
         // one or tapping "Random port" left "free" / "in use" beside a port
         // nobody had checked — the next connect could then fail with OLC-1026.
         .onChange(of: settings.socksPort) { _, _ in portCheck = nil }
+    }
+
+    // #474: the number alone answers nothing — what goes into another app's
+    // proxy settings is host AND port. Printed as one selectable line so it can
+    // be copied rather than transcribed, and stated for what it is: a local
+    // address that only answers while the tunnel is up in proxy mode.
+    private var proxyAddressRow: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
+            Text(L10n.settingsProxyAddressLabel.localized())
+            Text("127.0.0.1:\(settings.socksPort)")
+                .font(Theme.Typography.mono)
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .textSelection(.enabled)
+        }
     }
 
     private var portRow: some View {

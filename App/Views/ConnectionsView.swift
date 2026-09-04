@@ -804,6 +804,10 @@ struct ConnectionsView: View {
     /// the foreground transition.
     private func entrySweep() {
         guard settings.refreshOnEntry else { return }
+        // #474 was: a sweep on every appearance of this tab. Switching back and
+        // forth re-checked everything each time; automatic is once per
+        // foreground session now. Pull-to-refresh is unaffected and always runs.
+        guard health.claimAutomaticSweep() else { return }
         health.verifyDue(store.connections, using: tunnel)
     }
 }

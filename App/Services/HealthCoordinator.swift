@@ -96,6 +96,40 @@ final class HealthCoordinator: ObservableObject {
 
     private func bump() { revision &+= 1 }
 
+    // boc #474: automatic checking used to fire on EVERY tab appearance, so
+    // walking between screens re-swept everything, over and over, while the
+    // user did nothing. Automatic means once: the app comes to the foreground,
+    // the first screen that wants a pass takes it, and nothing else runs by
+    // itself until the app is backgrounded and returns. Pulling down is never
+    // affected — a pull is the user asking, and it always checks.
+    private var autoPassTaken = false
+    private var serverPassTaken = false
+
+    /// The app came to the foreground: automatic passes are allowed again.
+    func noteForegrounded() {
+        autoPassTaken = false
+        serverPassTaken = false
+    }
+
+    /// Claims this foreground session's automatic health sweep. Both tabs sweep
+    /// the same records, so whichever opens first does it and the other stands
+    /// down. Returns false when it has already been taken.
+    func claimAutomaticSweep() -> Bool {
+        guard !autoPassTaken else { return false }
+        autoPassTaken = true
+        return true
+    }
+
+    /// The same, for the Servers tab's SSH readiness pass — separate because it
+    /// measures something else (the machine, not the protocols) and costs an SSH
+    /// connection per host.
+    func claimServerPass() -> Bool {
+        guard !serverPassTaken else { return false }
+        serverPassTaken = true
+        return true
+    }
+    // eoc #474
+
     /// #456: run the ageing clock exactly while there is something to age.
     private func startAgeTickerIfNeeded() {
         guard ageTicker == nil, !store.isEmpty else { return }

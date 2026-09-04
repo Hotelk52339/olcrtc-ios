@@ -166,10 +166,9 @@ struct ServersView: View {
     @State private var telemostPhaseOwner   : String?
     @State private var telemostAccount      = false
     // eoc #463
-    // #374 was: pingTimer (Timer?) — a repeating Timer that re-pinged EVERY
-    // host every tick, even mid-op. Replaced by a structured `.task` sweep loop
-    // (autoPingLoop) tied to the view lifecycle, which cancels cleanly on
-    // disappear (no manual invalidate needed) and only re-pings stale hosts.
+    // #374 was: pingTimer (Timer?) — a repeating Timer that re-pinged EVERY host
+    // every tick, even mid-op. #474: there is no repeating pass at all now — one
+    // staggered sweep on entry, and the pull.
 
     @ObservedObject private var settings = SettingsStore.shared
     /// #456: the ONE owner of measured evidence. Every green on this tab now
@@ -272,7 +271,7 @@ struct ServersView: View {
             // #374: structured sweep loop tied to the view lifecycle — SwiftUI
             // cancels it when the view disappears, replacing the old
             // onAppear-start / onDisappear-invalidate Timer pair.
-            .task { await autoPingLoop() }
+            .task { await autoPingOnce() }
             // boc #456: requirement 4 — entering Manage VPS re-checks by itself,
             // so the user never has to press a button to learn the truth. A
             // TabView child reliably gets `onAppear` per tab entry (LogsView's
@@ -921,53 +920,24 @@ struct ServersView: View {
 
     /// How long the loop idles between checks while auto-ping is OFF or has no
     /// positive interval set — so flipping the toggle back ON resumes pinging
-    /// within a few seconds instead of never (#395). Short enough to feel live,
-    /// long enough not to spin.
-    private static let autoPingIdlePollSeconds: Double = 5
-
-    private func autoPingLoop() async {
-        // Initial pass: ping every host that's never been pinged.
-        await pingDueHosts(force: true)
-
-        // #395 was: `guard … else { return }` — the loop exited *permanently*
-        // when auto-ping was disabled (or its interval was 0), and the id-less
-        // `.task` (body, line ~99) doesn't restart on a setting flip, so
-        // re-enabling auto-ping on the same tab never resumed periodic pinging.
-        // Now we sleep-and-recheck instead of returning, so a toggle flip is
-        // picked up on the next idle poll. SwiftUI still cancels the whole `.task`
-        // on view disappear (Task.sleep throws on cancel), keeping teardown clean.
-        while !Task.isCancelled {
-            guard settings.vpsAutoPingEnabled, settings.vpsAutoPingInterval > 0 else {
-                // Disabled / no interval — idle briefly, then re-check the toggle.
-                do {
-                    try await Task.sleep(nanoseconds: UInt64(Self.autoPingIdlePollSeconds * 1_000_000_000))
-                } catch {
-                    return   // cancelled while idling
-                }
-                continue
-            }
-            let interval = TimeInterval(settings.vpsAutoPingInterval)
-            do {
-                try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-            } catch {
-                return   // cancelled while sleeping
-            }
-            // Don't sweep on top of an in-flight SSH op — it would queue probes
-            // against a host we're already talking to, and nothing's changed.
-            guard !actionsDisabled else { continue }
-            await pingDueHosts(force: false)
-        }
+    // boc #474 was: `autoPingLoop` — a `while` loop that TCP-pinged every host
+    // every `vpsAutoPingInterval` seconds (30 by default) for as long as this
+    // tab was on screen, so the app kept working while the user did nothing.
+    // Automatic checking is once, on entry; everything after that is the pull.
+    // The two settings behind the old loop have no UI and are left alone: the
+    // keys stay for downgrade safety and the tests that snapshot them.
+    private func autoPingOnce() async {
+        await pingNeverPingedHosts()
     }
+    // eoc #474
 
-    /// Pings every host whose ping is stale (older than the configured
-    /// interval) — or, with `force`, every host not yet pinged. Staggered.
-    private func pingDueHosts(force: Bool) async {
-        let interval = TimeInterval(settings.vpsAutoPingInterval)
-        let now = Date()
-        let due = serverStore.hosts.filter { host in
-            guard let last = lastPing[host.id] else { return true }   // never pinged → due
-            return force ? false : now.timeIntervalSince(last) >= interval
-        }
+    /// #474: pings every host that has never been pinged in this session.
+    /// Staggered, so a list of servers does not open every socket at once.
+    /// #474 was: `pingDueHosts(force:)` — `force` selected between "never
+    /// pinged" and "older than the interval" for the periodic loop. The loop is
+    /// gone, and with it the only caller that passed false.
+    private func pingNeverPingedHosts() async {
+        let due = serverStore.hosts.filter { lastPing[$0.id] == nil }
         for (i, host) in due.enumerated() {
             if i > 0 {
                 do {
@@ -1490,6 +1460,9 @@ struct ServersView: View {
         // reading keeps its honest age until they ask for a check themselves.
         guard SettingsStore.shared.refreshOnEntry else { return }
         guard !entryRefreshing, !actionsDisabled else { return }
+        // #474: once per foreground session — see HealthCoordinator. Re-entering
+        // this tab used to open an SSH connection to every host again.
+        guard health.claimServerPass() else { return }
         entryRefreshing = true
         defer { entryRefreshing = false }
         let now = Date()
