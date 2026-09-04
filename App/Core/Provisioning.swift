@@ -170,6 +170,18 @@ enum ContainerStatus: Equatable, Sendable {
 final class Provisioner: ObservableObject {
     @Published var status: ProvisionStatus = .idle
 
+    // boc #470: ServersView serialises its OWN ops (`anyBusy`), but the Telemost
+    // renewal coordinator holds a SECOND Provisioner and runs unattended — so a
+    // renewal could restart a container while an install or a key rotation was
+    // half-way through it, on the same host, through a different SSH session.
+    // One process-wide registry of hosts under an SSH op; the unattended side
+    // yields to the user's.
+    @MainActor private static var busyHosts: Set<UUID> = []
+    @MainActor static var busyHostIDs: Set<UUID> { busyHosts }
+    @MainActor static func enterHost(_ id: UUID) { busyHosts.insert(id) }
+    @MainActor static func leaveHost(_ id: UUID) { busyHosts.remove(id) }
+    // eoc #470
+
     // MARK: Ping
 
     /// TCP-22 reachability check. Doesn't need creds, so we route directly

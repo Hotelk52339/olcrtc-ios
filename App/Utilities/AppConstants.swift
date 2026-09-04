@@ -27,7 +27,7 @@ enum AppConstants {
     // OLC2/HKDF record layer, handshake v3, OLVC v5 frames, instance mobile API)
     // is a hard flag day: a server built from a different commit fails every
     // tunnel right after the handshake. Old 42ae4e0 servers MUST be reinstalled.
-    static let upstreamCorePin = "f616f57bb3a90740f1755922ffeaa7acc5cfe4ed"
+    static let upstreamCorePin = "54bd269bbc8c1c97c966307e0bca733366694a09"
 
     /// Go builder/toolchain image the server core is built (and rebuilt) in.
     /// Single source of truth for every Swift-side reference — the readiness

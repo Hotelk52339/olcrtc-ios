@@ -156,8 +156,11 @@ private struct DiagnosticsFacts: View {
         // pull gesture and ConnectionsView's connect-transition fetch. Deliberately
         // NOT `initial: true`: a value already in the store was measured at some
         // unknown earlier moment, and stamping it on mount would date it "now".
-        .onChange(of: ipCheck.exitGeo) { _, new in
-            exitAt = new == nil ? nil : Date()
+        // #470 was: `.onChange(of: ipCheck.exitGeo)` stamping Date() here — a
+        // refresh that returned the same geo never fired it, so a fresh reading
+        // kept its old age. The checker dates each measurement (`exitGeoAt`).
+        .onChange(of: ipCheck.exitGeoAt) { _, new in
+            exitAt = new
         }
     }
 
@@ -193,7 +196,22 @@ private struct DiagnosticsFacts: View {
             }
             // eoc #461
             probing = true
-            let ms = await speed.quickPing(via: mode)
+            // boc #470: fail-closed, the way `verifyTunnel` is (#445). URLSession
+            // silently BYPASSES a loopback proxy that REFUSES the connection and
+            // completes the HEAD direct, so a sample taken after the Go listener
+            // died still succeeded — and was published below as `.working`
+            // (green "Verified just now · N ms") while `LatencyProbe` refreshed
+            // the keep-alive activity marker on what was direct traffic. The raw
+            // SOCKS greeting cannot be bypassed: no answer is a failed sample,
+            // never a direct one. `.direct` mode has no listener to ask.
+            var listens = true
+            if mode == .tunnel {
+                listens = await TunnelManager.socksListenerAnswers(port: TunnelManager.activeSocksPort)
+            }
+            let ms: Double?
+            if listens { ms = await speed.quickPing(via: mode) } else { ms = nil }
+            // #470 was: let ms = await speed.quickPing(via: mode)
+            // eoc #470
             if Task.isCancelled { return }
             latencyMs = ms
             latencyAt = Date()
@@ -367,6 +385,11 @@ private struct DiagnosticsFacts: View {
     private var responseValue: String {
         if let ms = latencyMs { return L10n.healthLatencyMs_fmt.formatted(Int(ms.rounded())) }
         if probing && latencyAt == nil { return L10n.healthChecking.localized() }
+        // #470: a probe that RAN and got nothing back is a data-path fact, not an
+        // absence of measurement — "not measured · checked just now" hid a wedged
+        // tunnel (in=0 out=0) under a no-measurement word while the hero above
+        // still read Connected. `latencyAt` is stamped on failure too.
+        if latencyAt != nil { return L10n.healthLatencyNoResponse.localized() }
         return L10n.healthLatencyNotMeasured.localized()
     }
 
@@ -432,7 +455,7 @@ private struct DiagnosticsTools: View {
                     .font(.caption)
                     .foregroundStyle(Theme.Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ConnectIPStatus(ipCheck: ipCheck, maskIPs: maskIPs)
+                ConnectIPStatus(ipCheck: ipCheck, maskIPs: maskIPs, mode: mode)   // #470: + mode
                 if let t = ipCheckTime, !ipCheck.isChecking {
                     Label(t.formatted(date: .omitted, time: .shortened), systemImage: "clock")
                         .font(.caption2)
@@ -455,16 +478,17 @@ private struct DiagnosticsTools: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .top, spacing: 16) {
+                    // #470 was: speed.lastResult?.downloadMbps / uploadMbps (any route)
                     OlcMetric(label: L10n.speedLabelDL.localized(),
-                              value: value(speed.lastResult?.downloadMbps, L10n.speedRateValue_fmt.localized()),
+                              value: value(routeResult?.downloadMbps, L10n.speedRateValue_fmt.localized()),
                               unit: L10n.speedUnitMbps.localized(), unitInLabel: true)
                     OlcMetric(label: L10n.speedLabelUL.localized(),
-                              value: value(speed.lastResult?.uploadMbps, L10n.speedRateValue_fmt.localized()),
+                              value: value(routeResult?.uploadMbps, L10n.speedRateValue_fmt.localized()),
                               unit: L10n.speedUnitMbps.localized(), unitInLabel: true)
                 }
                 // #459: the throughput figures keep the card's dating rule — a
                 // run this view watched finish, on this route, or no stamp.
-                if throughputAt != nil, speed.lastResult?.mode == mode {
+                if throughputAt != nil, routeResult != nil {   // #470 was: speed.lastResult?.mode == mode
                     DiagnosticsAge(at: throughputAt)
                 }
             }
@@ -488,6 +512,19 @@ private struct DiagnosticsTools: View {
     // `carrierEndpointsRowTitle` survives as that item's title; the two hints
     // and `carrierEndpointsShowAction` lose their last use.
     // eoc #461
+
+    // boc #470
+    /// The last result ONLY when it was measured on the route this card is
+    /// about. #470 was: the DL/UL figures printed `speed.lastResult` whatever
+    /// its `mode`, and only the AGE line was gated on it — so a direct-mode run
+    /// showed as bare numbers inside the tunnel's Diagnostics, undated and
+    /// unattributed, the exact claim the file header forbids. A result from the
+    /// other route reads "—", like no result. (A same-route result from an
+    /// earlier session still shows undated: `SpeedResult` carries no timestamp.)
+    private var routeResult: SpeedResult? {
+        speed.lastResult.flatMap { $0.mode == mode ? $0 : nil }
+    }
+    // eoc #470
 
     private func value(_ v: Double?, _ format: String) -> String {
         if speed.isTesting { return "…" }
@@ -602,6 +639,9 @@ private struct DiagnosticsAge: View {
 private struct ConnectIPStatus: View {
     @ObservedObject var ipCheck: IPChecker
     let maskIPs: Bool
+    /// #470: the route the card is about NOW — a result from the other route is
+    /// attributed, and never green.
+    let mode: RouteMode
 
     var body: some View {
         if ipCheck.isChecking {
@@ -614,19 +654,39 @@ private struct ConnectIPStatus: View {
                 .foregroundStyle(Theme.Palette.textSecondary)
         } else if collapsed, let ip = summaryIP {
             // #337: mask for display only — the value behind it stays real.
-            Text(L10n.ipSourcesAgree_fmt.formatted(IPMask.display(ip, masked: maskIPs),
-                                                   ipCheck.results.filter { $0.ip != nil }.count))
+            // #470: say WHICH ROUTE answered, and be green only while that is the
+            // route this card is about. `IPResult.mode` was stored and never
+            // rendered, and nothing clears results across connect / disconnect,
+            // so a real-IP check made before connecting sat green under a
+            // Connected hero (and a tunnel IP stayed green after disconnecting),
+            // reading as the current answer.
+            let agree = L10n.ipSourcesAgree_fmt.formatted(IPMask.display(ip, masked: maskIPs),
+                                                          ipCheck.results.filter { $0.ip != nil }.count)
+            Text("\(agree) · \(resultRoute.label)")
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Theme.Palette.green)
+                .foregroundStyle(resultIsCurrentRoute ? Theme.Palette.green : Theme.Palette.textSecondary)
         } else {
             VStack(alignment: .leading, spacing: 3) {
                 if allDone, Set(ipCheck.results.compactMap { $0.ip }).count > 1 {
                     leakWarning
                 }
                 ForEach(ipCheck.results) { r in sourceRow(r) }
+                routeCaption   // #470
             }
         }
     }
+
+    // boc #470
+    /// The route the listed answers came from (every row of one check shares it).
+    private var resultRoute: RouteMode { ipCheck.results.first?.mode ?? mode }
+    private var resultIsCurrentRoute: Bool { resultRoute == mode }
+
+    private var routeCaption: some View {
+        Text(resultRoute.label)
+            .font(.caption2)
+            .foregroundStyle(Theme.Palette.textTertiary)
+    }
+    // eoc #470
 
     private var leakWarning: some View {
         HStack(spacing: 6) {

@@ -240,7 +240,9 @@ struct ConnectionRowView: View {
 // WHY IT EXISTS. Our product is Amnezia's shape — ONE VPS running SEVERAL
 // protocol containers — with Mullvad's identity question: which service am I
 // hiding inside? We inherited Amnezia's "server name first" while our identity
-// is the carrier. `ServersView.recordName` writes "zaza · Telemost" into
+// is the carrier. `ServersView.recordName` writes "zaza · telemost" into
+// (#470: the RAW carrier id — a persisted token stays locale-stable, and the
+// service's name is drawn from it at render time)
 // `ConnectionRecord.name`, and every venue printed that verbatim.
 //
 // NOTHING HERE REWRITES STORED DATA. `ConnectionRecord.name`,

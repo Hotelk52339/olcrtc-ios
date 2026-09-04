@@ -81,14 +81,28 @@ struct AddServerHostView: View {
         return p
     }
 
+    // boc #470: whitespace never reaches a stored host. `isValid` accepted a
+    // label of spaces and a host pasted as "1.2.3.4 " from a chat (the duplicate
+    // check trimmed, the validity check did not), and `save()` stored both
+    // verbatim — every later op then failed to resolve a correct address, and a
+    // blank label produced a nameless card and records named " · Telemost".
+    private var trimmedLabel: String    { label.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedHost: String     { host.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedUsername: String { username.trimmingCharacters(in: .whitespacesAndNewlines) }
+
     private var isValid: Bool {
-        !label.isEmpty && !host.isEmpty && Self.validPort(port) != nil   // #469
-            && !username.isEmpty && credentialOK && !isDuplicateLabel
+        // #470 was: !label.isEmpty && !host.isEmpty … && !username.isEmpty
+        !trimmedLabel.isEmpty && !trimmedHost.isEmpty && Self.validPort(port) != nil   // #469
+            && !trimmedUsername.isEmpty && credentialOK && !isDuplicateLabel
     }
 
+    /// #470: the test below is a TCP probe of host:port — it needs no
+    /// credentials, and gating it on them read as "my password works".
+    /// #470 was: !host.isEmpty && Self.validPort(port) != nil && !username.isEmpty && credentialOK
     private var canTest: Bool {
-        !host.isEmpty && Self.validPort(port) != nil && !username.isEmpty && credentialOK   // #469
+        !trimmedHost.isEmpty && Self.validPort(port) != nil   // #469
     }
+    // eoc #470
 
     var body: some View {
         NavigationStack {
@@ -117,7 +131,11 @@ struct AddServerHostView: View {
                                         ProgressView()
                                             .padding(.trailing, 4)
                                     }
-                                    Text(L10n.testSSHAction.localized())
+                                    // #470 was: Text(L10n.testSSHAction.localized()) — "Test SSH"
+                                    // over a bare TCP connect: a wrong password still
+                                    // earned a green "Reachable". It is the same TCP ping
+                                    // the VPS card runs, so it is named like it.
+                                    Text(L10n.vpsStatPing.localized())
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -233,10 +251,14 @@ struct AddServerHostView: View {
         keyDetection = trimmed.isEmpty ? nil : SSHKeyAnalyzer.detect(text)
     }
 
+    /// A TCP connect to host:port — reachability only. It proves the address
+    /// and port answer, NOT that the credentials work; SSH auth is exercised by
+    /// the first real server action. #470: the result says exactly that.
     @MainActor
     private func testSSH() async {
         guard !Task.isCancelled else { return }
-        guard let portInt = Int(port), portInt > 0, portInt <= 65535 else {
+        // #470 was: `Int(port), portInt > 0, portInt <= 65535` — the #469 helper.
+        guard let portInt = Self.validPort(port) else {
             // #455 (editorial) was: hardcoded English "✗ Invalid port" — a
             // Russian user saw mixed languages. Localised; the ✓/✗ prefix is
             // kept because `testResult.hasPrefix("✓")` drives the result colour.
@@ -244,22 +266,23 @@ struct AddServerHostView: View {
             isTesting = false
             return
         }
-        let result = await NetPing.tcp(host: host, port: UInt16(portInt))
+        let result = await NetPing.tcp(host: trimmedHost, port: UInt16(portInt))   // #470: trimmed
         if result.success, let ms = result.ms {
-            // #455 was: String(format: "✓ Reachable (%.0f ms)", ms)
-            testResult = "✓ " + L10n.sshTestReachable_fmt.formatted(String(format: "%.0f ms", ms))
+            // #470 was: L10n.sshTestReachable_fmt ("Reachable (%@)") — read as
+            // "SSH works". The VPS card's own TCP-ping wording names the port.
+            testResult = "✓ " + L10n.pingTCPOK_fmt.formatted(portInt, String(format: "%.0f", ms))
         } else {
-            testResult = "✗ " + L10n.sshTestUnreachable.localized()   // #455 was: "✗ Unreachable"
+            testResult = "✗ " + L10n.pingTCPFail_fmt.formatted(portInt)   // #470 was: L10n.sshTestUnreachable
         }
         isTesting = false
     }
 
     private func save() {
         var h = existing ?? ServerHost(label: "", host: "")
-        h.label    = label
-        h.host     = host
+        h.label    = trimmedLabel      // #470 was: label
+        h.host     = trimmedHost       // #470 was: host
         h.port     = Self.validPort(port) ?? 22   // #469: never store an unroutable port
-        h.username = username
+        h.username = trimmedUsername   // #470 was: username
         h.authMethod = authMethod   // #451: nil only for pre-#451 stored hosts
         let secret: SSHSecret = authMethod == .privateKey
             ? .privateKey(text: privateKey,

@@ -183,7 +183,9 @@ extension HostDisplay {
 /// question the user actually has: *what is true right now, and what do I do?*
 enum HostHeadline: Equatable {
     /// An operation is running. Carries the op's VERB for the title AND the live
-    /// provisioner note + step for the subtitle.
+    /// provisioner note + step for the subtitle. #470: `step` is the 0-based
+    /// `HostDisplay.running.phase` (capped at `stepCount - 1`); `subtitle`
+    /// renders it 1-based, like the progress bar.
     /// #456 (audit fix) was: `case busy(String)` holding only the verb, so the
     /// pill rendered "Installing…" as its title and "Installing" as its subtitle
     /// — the same word twice — and the running commentary the user relies on to
@@ -274,7 +276,14 @@ enum HostHeadline: Equatable {
         // #456 (audit fix): the live note plus "step n/total" — what the card
         // showed before the headline reducer existed.
         case .busy(_, let note, let step, let total):
-            return note.isEmpty ? "\(step)/\(total)" : "\(note) · \(step)/\(total)"
+            // #470: `step` is the 0-based phase while the bar draws
+            // (phase + 1) / stepCount (`ServersView.statusBarFraction`), so the
+            // pill read "0/3" over a third of a bar and topped out at "2/3"
+            // under a full one. Same 1-based rendering as the bar (and as
+            // LogsView's fetch phases).
+            // #470 was: "\(step)/\(total)"
+            let shown = min(step + 1, total)
+            return note.isEmpty ? "\(shown)/\(total)" : "\(note) · \(shown)/\(total)"
         case .opFailed(_, let m): return m
         // boc #459 was: HealthAge.label($0) inside "SSH didn't answer (%@ ago)",
         // which rendered "SSH didn't answer (just now ago)". `phrase` carries its

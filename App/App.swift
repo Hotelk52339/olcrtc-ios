@@ -69,6 +69,15 @@ struct MainTabView: View {
     /// not every time the user comes back to the Connections tab.
     @State private var didAutoConnect = false
 
+    /// #470: `HealthCoordinator.verifyDue` cancels whatever sweep is running —
+    /// a forced pull-to-refresh / "Check all" included — and re-queues the rest
+    /// un-forced (debounced, no deep pass). scenePhase round-trips
+    /// `.inactive → .active` on a Notification Center / Control Center pull, a
+    /// Face ID prompt or a call banner, none of which is "opening the app"
+    /// (#458). Only a return from `.background` re-arms the on-entry pass; true
+    /// at launch so the first activation still sweeps.
+    @State private var sweepOnActivate = true
+
     /// Selected tab — #457: 0 Connect, 1 Servers, 2 Settings.
     // #294 was: also drove the Logs-tab visibility gate (#289) for the
     // merged-stream rebuild. With per-source Logs tabs (#294) each tab only
@@ -115,14 +124,6 @@ struct MainTabView: View {
             connections: store, tunnel: tunnel, hosts: serverStore))
     }
 
-    /// (audit) explicit font override → that exact size; "System" → the full
-    /// range (identity), so the user's iOS Text Size — including the Larger
-    /// Accessibility Sizes — drives the app. See `.dynamicTypeSize` below.
-    private var appTypeRange: ClosedRange<DynamicTypeSize> {
-        if let size = settings.resolvedTypeSize { return size...size }
-        return DynamicTypeSize.xSmall...DynamicTypeSize.accessibility5
-    }
-
     var body: some View {
         // #457: three tabs — Connect / Servers / Settings. Everything else is a
         // pushed destination, entered FROM its subject.
@@ -164,17 +165,10 @@ struct MainTabView: View {
         // but without this modifier the keyboard safe area can bleed through
         // and push scrollable content under the tab bar on some configurations.
         .ignoresSafeArea(.keyboard)
-        // App-wide font scaling. DynamicTypeSize cascades into every system
-        // font in the view tree — caption, headline, body, etc. — so this
-        // single modifier rescales the whole app.
-        // (audit, HIG typography) was: .dynamicTypeSize(settings.resolvedTypeSize)
-        // — an unconditional override that ignored the iOS Text Size setting and
-        // made AX1–AX5 unreachable. resolvedTypeSize is Optional now: an explicit
-        // slider pick clamps to exactly that size (s...s); "System" (nil) applies
-        // the full range, a no-op that lets the device setting through. A single
-        // range modifier (instead of an if/else branch) keeps one stable view
-        // identity, so crossing the System boundary doesn't reset child state.
-        .dynamicTypeSize(appTypeRange)
+        // #470 was: `.dynamicTypeSize(appTypeRange)` — an app-level override of
+        // the device's Text Size, driven by a Settings slider that duplicated
+        // iOS › Display & Brightness. The slider is gone; the device setting
+        // applies unmodified, Larger Accessibility Sizes included.
         // #340: appearance from the Settings picker (nil = follow the system).
         // The Info.plist UIUserInterfaceStyle=Dark enforcement is gone — it
         // would have overridden this modifier.
@@ -196,7 +190,10 @@ struct MainTabView: View {
                 // needs credentials and runs when the Servers tab appears.
                 // Debounced by `shouldProbe`, so returning to the foreground
                 // repeatedly costs nothing, and it obeys the user's switch.
-                if SettingsStore.shared.refreshOnEntry {
+                // #470 was: `if SettingsStore.shared.refreshOnEntry { … }` on
+                // EVERY `.active` — see `sweepOnActivate`.
+                if SettingsStore.shared.refreshOnEntry, sweepOnActivate {
+                    sweepOnActivate = false
                     HealthCoordinator.shared.verifyDue(store.connections, using: tunnel)
                 }
                 // #465: the interesting case is a phone that spent the night
@@ -207,6 +204,7 @@ struct MainTabView: View {
                 // then fsync the logs so a following suspend/kill can't drop the tail.
                 tunnel.noteBackground()
                 LogStore.shared.flush()
+                sweepOnActivate = true   // #470: the next activation is a real re-open
             case .inactive:
                 break
             @unknown default:
@@ -253,7 +251,9 @@ struct MainTabView: View {
             // (a forgettable step). It's now injected at construction in `init()`.
             guard !didAutoConnect else { return }
             didAutoConnect = true
-            LogStore.shared.log(.connection, "▶ \(LogStore.appVersionString())")
+            // #470: the catalog files this launch banner under OLC-1001, but
+            // nothing ever passed the code, so the documented search found nothing.
+            LogStore.shared.log(.connection, "▶ \(LogStore.appVersionString())", code: .sessionStart)  // OLC-1001
             if settings.autoConnectOnLaunch, let p = store.primary {
                 LogStore.shared.log(.connection,
                     "▶ Auto-connect on launch → \(p.displayName)")
@@ -507,6 +507,20 @@ struct MainTabView: View {
         fullAccessPrompt = nil
     }
 
+    /// #470: the record a plain olcrtc:// import already holds for this node, if
+    /// any — matched on the same five connection-defining fields as
+    /// `OlcrtcSubscription.Entry.nodeKey` (carrier, transport, room, key,
+    /// clientID), never on the display name. Pure → tested (Review470Chunk3Tests).
+    static func existingRecord(matching params: OlcrtcConnection,
+                               in records: [ConnectionRecord]) -> ConnectionRecord? {
+        records.first { rec in
+            guard case .olcrtc(let q) = rec.details else { return false }
+            return q.carrier == params.carrier && q.transport == params.transport
+                && q.roomID == params.roomID && q.key == params.key
+                && q.clientID == params.clientID
+        }
+    }
+
     /// Confirmed import. A real subscription (`subSourceLink != nil`) goes
     /// through the diffing store import (#356: add/update/remove, no dup); a
     /// plain olcrtc:// link (#354) is a one-off add of its single entry.
@@ -517,16 +531,35 @@ struct MainTabView: View {
         } else {
             // #354: single connection, no subscription provenance.
             let group = sub.name ?? ConnectionRecord.defaultGroupName
+            // boc #470: `store.add` has no dedup, so tapping the same shared link
+            // twice (or scanning the same QR twice) grew two identical rows with
+            // two Keychain entries, splitting the health chip, the primary and
+            // the host link between them. Reuse the row for a node already saved.
+            var added = 0
+            var duplicate: ConnectionRecord?
             for entry in sub.entries {
                 // #355: sei params carried through (defaults when a key is absent).
                 // #401: via the shared Parsed → connection mapping.
                 let params = OlcrtcConnection(from: entry.parsed)
+                if let same = Self.existingRecord(matching: params, in: store.connections) {
+                    duplicate = same
+                    LogStore.shared.log(.connection,
+                        "⬇ olcrtc:// import: \(same.displayName) is already saved — reused")
+                    continue
+                }
                 store.add(ConnectionRecord(name: entry.recordName,
                                            groupName: group,
                                            details: .olcrtc(params)))
+                added += 1
             }
             LogStore.shared.log(.connection,
-                "⬇ imported \(sub.entries.count) connection(s) from olcrtc:// link")
+                "⬇ imported \(added) of \(sub.entries.count) connection(s) from olcrtc:// link")
+            // The user confirmed an "Add" that added nothing — say so, the same
+            // way a bad full-access link reports through this alert (#383).
+            if added == 0, let same = duplicate {
+                subError = L10n.subImportAlreadySaved_fmt.formatted(same.displayName)
+            }
+            // eoc #470
         }
         subPrompt     = nil
         subSourceLink = nil

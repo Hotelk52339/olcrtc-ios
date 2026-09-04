@@ -143,6 +143,23 @@ final class LogFileWriter {
     static let maxFileBytes  = 2 * 1024 * 1024   // 2 MiB ceiling
     static let keepBytes     = 1 * 1024 * 1024   // keep newest ~1 MiB on rotate
 
+    // boc #470: `handle` / `mirrorHandle` are confined to `ioQueue`. They used
+    // to be opened synchronously in `init` (on MainActor): rotation, then
+    // `FileHandle(forWritingTo:)` — O_WRONLY, no O_APPEND — then `seekToEnd()`.
+    // But a replaced writer still had queued lines on `ioQueue` (the whole
+    // point of #332), and `startSession(.connection)` runs in `preflight` on
+    // every attempt — right after the core's teardown log storm, when that
+    // queue is deepest. So the new handle seeked to EOF `S` while the old
+    // writer's lines were still unwritten; they then landed at S…S+N, and the
+    // new writer's first lines ("── new session ──", the version stamp) went to
+    // its stale offset S, over the top of them: torn, mixed lines on disk. Over
+    // the 2 MiB cap it was worse — `rotateIfNeeded` rewrote the file `.atomic`
+    // (a new inode) from a mid-write snapshot, and every still-queued write of
+    // the old writer went to the unlinked inode and vanished. Now rotation and
+    // the open are ONE block on the same serial queue, enqueued after the old
+    // writer's lines: they drain first, then the file rotates, then the new
+    // handle opens at the true EOF. Every write/flush/close block reads the
+    // handle on that queue, so nothing here is touched off it.
     private var handle: FileHandle?
     private var mirrorHandle: FileHandle?
     private(set) var fileURL: URL?
@@ -167,13 +184,6 @@ final class LogFileWriter {
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
-        // #352: bound on-disk growth — truncate an over-cap file to its newest
-        // `keepBytes` before we open it in append mode. Runs once per session
-        // (each session creates a fresh writer), so the cost is one stat + at
-        // most one rewrite per operation start, never per line.
-        Self.rotateIfNeeded(at: url)
-        handle = try? FileHandle(forWritingTo: url)
-        _ = try? handle?.seekToEnd()
         fileURL = url
 
         #if targetEnvironment(simulator)
@@ -184,11 +194,30 @@ final class LogFileWriter {
         if !FileManager.default.fileExists(atPath: mirrorPath) {
             FileManager.default.createFile(atPath: mirrorPath, contents: nil)
         }
-        Self.rotateIfNeeded(at: URL(fileURLWithPath: mirrorPath))   // #352
-        mirrorHandle = try? FileHandle(forWritingTo: URL(fileURLWithPath: mirrorPath))
-        _ = try? mirrorHandle?.seekToEnd()
+        let mirrorURL: URL? = URL(fileURLWithPath: mirrorPath)
+        #else
+        let mirrorURL: URL? = nil
         #endif
+
+        // #352: bound on-disk growth — truncate an over-cap file to its newest
+        // `keepBytes` before we open it in append mode. Runs once per session
+        // (each session creates a fresh writer), so the cost is one stat + at
+        // most one rewrite per operation start, never per line.
+        // #470 was: `Self.rotateIfNeeded(at: url); handle = try? FileHandle(
+        // forWritingTo: url); _ = try? handle?.seekToEnd()` (and the same for
+        // the mirror) — synchronously, here. See the note on `handle`.
+        Self.ioQueue.async { [self] in
+            Self.rotateIfNeeded(at: url)
+            self.handle = try? FileHandle(forWritingTo: url)
+            _ = try? self.handle?.seekToEnd()
+            if let mirrorURL {
+                Self.rotateIfNeeded(at: mirrorURL)   // #352
+                self.mirrorHandle = try? FileHandle(forWritingTo: mirrorURL)
+                _ = try? self.mirrorHandle?.seekToEnd()
+            }
+        }
     }
+    // eoc #470
 
     /// #352: if the file at `url` exceeds `maxFileBytes`, rewrite it keeping
     /// only its newest `keepBytes` (rounded up to the next newline so the first
@@ -211,9 +240,11 @@ final class LogFileWriter {
         let data = (line + "\n").data(using: .utf8) ?? Data()
         // #332 was: handle?.write(data) + mirrorHandle?.write(data) inline —
         // synchronous disk I/O on the main actor, twice per log line.
-        Self.ioQueue.async { [handle, mirrorHandle] in
-            handle?.write(data)
-            mirrorHandle?.write(data)
+        // #470 was: `[handle, mirrorHandle]` captured at enqueue time — the
+        // handles are set on the queue now, so the block reads them there.
+        Self.ioQueue.async { [self] in
+            self.handle?.write(data)
+            self.mirrorHandle?.write(data)
         }
     }
 
@@ -223,16 +254,19 @@ final class LogFileWriter {
     /// lines survive even if iOS suspends then kills the process — the ordinary
     /// `.utility` async writes would otherwise be lost mid-queue.
     func flush() {
-        Self.ioQueue.sync { [handle, mirrorHandle] in
-            try? handle?.synchronizeFile()
-            try? mirrorHandle?.synchronizeFile()
+        Self.ioQueue.sync { [self] in   // #470: read the handles on their queue
+            try? self.handle?.synchronizeFile()
+            try? self.mirrorHandle?.synchronizeFile()
         }
     }
 
     deinit {
         // #332: close on the same serial queue so every queued write lands
         // before the handle closes (writing to a closed FileHandle raises).
-        Self.ioQueue.async { [handle, mirrorHandle] in
+        // #470: every queued block holds `self`, so by the time deinit runs
+        // they have all finished on the queue and the handles are final.
+        let handle = handle, mirrorHandle = mirrorHandle
+        Self.ioQueue.async {
             handle?.closeFile()
             mirrorHandle?.closeFile()
         }
@@ -624,6 +658,10 @@ final class LogStore: ObservableObject {
         if _debugMarkers.contains(where: { s.contains($0) }) { return .debug }
         if s.contains("✗") || s.contains("❌") { return .error }
         if s.contains("⚠") { return .warn }
+        // #470: "♡" is the keep-alive's own healthy prefix ("♡ Keep-alive OK",
+        // "♡ Keep-alive skipped — tunnel busy (180s reserved)"); the keyword
+        // fallback painted the busy-skip orange on every tick of a speed test.
+        if s.contains("♡") { return .info }
         if _errorMarkers.contains(where: { s.contains($0) }) { return .error }
         if _warnMarkers.contains(where: { s.contains($0) }) { return .warn }
         return .info
@@ -666,12 +704,22 @@ final class LogStore: ObservableObject {
     // #385: the leading `\b` anchors the marker to a word boundary so interior
     // `pass` substrings — `bypass=`, `compass:`, `surpass=` — keep their value.
     // (#385 was: no `\b`, so those got their value <redacted> on every line.)
-    private static let _passwordRegex = try! NSRegularExpression(pattern: #"(?i)\b(pass(?:wd|word)?\s*[=:]\s*)\S+"#)
+    // #470: the marker may be a QUOTED JSON key (`"password":"…"`, `"token":"…"`,
+    // `"Session_id":"…"`) — the closing quote sat between the marker and the
+    // separator and none of the three passes matched, although this function is
+    // applied to server output the app does not control (every `_execute` line,
+    // raw core error text), and the bot config on the VPS is exactly such a
+    // JSON. An optional `"?` before the separator admits it; a quoted value is
+    // consumed as a whole (`"[^"]*"`) so the character after it — the comma or
+    // the closing brace — survives, and an unquoted value keeps the `\S+` rule.
+    // #470 was: #"(?i)\b(pass(?:wd|word)?\s*[=:]\s*)\S+"#
+    private static let _passwordRegex = try! NSRegularExpression(pattern: #"(?i)\b(pass(?:wd|word)?"?\s*[=:]\s*)("[^"]*"|\S+)"#)
     // #436: wbstream account token. Redact `OLCRTC_WB_TOKEN=<v>` (install-command
     // preview) and YAML `token: "<v>"` (auth.token in a config echo) — defence in
     // depth, gated on a cheap "token" pre-check like the password pass.
     private static let _wbTokenEnvRegex  = try! NSRegularExpression(pattern: #"(OLCRTC_WB_TOKEN=)\S+"#)
-    private static let _wbTokenYamlRegex = try! NSRegularExpression(pattern: #"(?i)(\btoken:\s*")[^"]*(")"#)
+    // #470 was: #"(?i)(\btoken:\s*")[^"]*(")"#
+    private static let _wbTokenYamlRegex = try! NSRegularExpression(pattern: #"(?i)(\btoken"?\s*:\s*")[^"]*(")"#)
     // #463: the Yandex session cookie. `Session_id` is a bearer credential for
     // the WHOLE Yandex identity (mail, Disk, Pay) — usable without the password
     // and past 2FA — and its value (`3:1712…:…`) matches NONE of the passes
@@ -683,8 +731,9 @@ final class LogStore: ObservableObject {
     // error echo or a careless line would otherwise land it in the log buffer,
     // the log FILE and the Logs-tab export. Gated on a cheap "session"
     // pre-check like the others.
+    // #470 was: #"(?i)(\bsession_?id2?\s*[=:]\s*)\S+"# — see the password pass.
     private static let _yandexSessionRegex =
-        try! NSRegularExpression(pattern: #"(?i)(\bsession_?id2?\s*[=:]\s*)\S+"#)
+        try! NSRegularExpression(pattern: #"(?i)(\bsession_?id2?"?\s*[=:]\s*)("[^"]*"|\S+)"#)
     static func redactSecrets(_ s: String) -> String {
         var out = s
         let r = NSRange(out.startIndex..<out.endIndex, in: out)

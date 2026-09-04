@@ -94,8 +94,6 @@ enum L10n: String, CaseIterable {
     // Connections screen, so the header lost its section and its last use.
     case unitSeconds                        // "s" unit after numeric fields
     case sshTestInvalidPort                 // add-host SSH reachability test: bad port
-    case sshTestReachable_fmt               // add-host SSH test: reachable (%@ = rtt)
-    case sshTestUnreachable                 // add-host SSH test: unreachable
     // #455: localise LogLevel.label (was English-only — CLAUDE.md flagged it)
     case logLevelOff
     case logLevelErrors
@@ -181,7 +179,7 @@ enum L10n: String, CaseIterable {
     case actionContainerLogs               // "Container logs" (server overflow menu)
     case actionDone
     case actionRemoveFromList               // "Remove host from list"
-    case removeHostConfirmTitle             // "Remove %@?"
+    case removeHostConfirmTitle_fmt         // "Remove %@?" — #470: the placeholder rule keys on the suffix
     case removeHostConfirmMessage           // explanation about Keychain/uninstall
     case uninstallConfirmTitle             // "Uninstall container?"
     case uninstallConfirmBody              // explanation about what is removed vs kept
@@ -365,13 +363,10 @@ enum L10n: String, CaseIterable {
     case clearAllLogsAction
     case copyAllAction                      // "Copy all" (#258 logs overflow)
     case clearCategoryAction                // "Clear this category" (#258 logs overflow)
-    case fontSizeLabel, fontPreviewText
     // (audit) leftmost slider position: follow iOS Text Size (no app override,
     // AX sizes reachable). The XS…XXXL positions stay an explicit override.
-    case fontSizeSystem                     // "System"
     // #460 was: `fontFooter` — "Applied app-wide (via SwiftUI dynamicTypeSize)"
     // named a framework API in a Settings footer (finding 18).
-    case fontNote
     case languageLabel
     // #299 was: themeRefined/themeConsole/directionLabel — the Refined/Console
     // "design direction" picker was removed when Theme became real colour schemes.
@@ -518,7 +513,6 @@ enum L10n: String, CaseIterable {
     // MARK: AddServerHostView
     case nameSettingLabel                   // "Name"
     case sectionDescription                 // "Description"
-    case testSSHAction                      // "Test SSH"
     // #451: SSH auth-method picker + private-key entry UI.
     case authMethodPickerLabel              // "Authentication"
     case authMethodPassword                 // "Password" (segment title)
@@ -993,6 +987,16 @@ enum L10n: String, CaseIterable {
     // on the server — the card's own button is the one that says "server".
     // #468: picker label for a host whose primary protocol the app cannot name.
     case logsContainerPrimary
+
+    // #470: strings the review-batch fixes reference
+    case protocolRecreateAction             // row menu: re-create a protocol whose container is gone
+    case carrierFooterSharedKey             // add-protocol sheet footer
+    case subImportAlreadySaved_fmt          // %@ = the record's display name
+    case logsScanAmbiguous_fmt              // %d = number of olcrtc containers found
+    case healthLatencyNoResponse            // chip text when the probe got nothing back
+    case sshTunnelLoginTimedOut_fmt         // %@ = host, %d = port
+    case dnsInvalidNote                     // Settings › DNS: the draft is not a valid host:port
+    case speedTunnelDropped                 // speed test: the tunnel died mid-run
 
     // #469: the card names WHY the silent probe failed instead of "Checking…"
     case vpsHeadlineProbeFailed

@@ -54,29 +54,6 @@ struct SettingsView: View {
     @State private var socksPassLoaded = false
     @FocusState private var anyFieldFocused: Bool
 
-    /// #280: live slider position while dragging the font size. Non-nil only
-    /// during a drag; the committed value lands in `settings.fontSizeIndex` on
-    /// release, so the whole app re-lays out once instead of on every tick.
-    @State private var fontDragIndex: Double?
-
-    private var fontLiveIndex: Int {
-        let raw = Int((fontDragIndex ?? Double(settings.fontSizeIndex)).rounded())
-        // (audit) the leftmost position is the -1 "System" sentinel — follow
-        // the iOS Text Size setting instead of overriding it.
-        return max(SettingsStore.systemFontSizeIndex, min(SettingsStore.fontSizes.count - 1, raw))
-    }
-
-    /// Display label for the live slider position ("System" at the sentinel).
-    private var fontLiveLabel: String {
-        fontLiveIndex == SettingsStore.systemFontSizeIndex
-            ? L10n.fontSizeSystem.localized()
-            : SettingsStore.fontSizeLabels[fontLiveIndex]
-    }
-
-    /// #298: scroll anchor for the Font control. Committing the font size relayouts
-    /// the whole app (dynamic type), moving the viewport — we scroll back here to
-    /// keep the control in place.
-    private static let fontAnchorID = "settingsFontAnchor"
 
     /// #455: confirm before "Reset all settings" — restores defaults (incl.
     /// tunnel mode → proxy), which unsticks any state that would otherwise
@@ -154,14 +131,6 @@ struct SettingsView: View {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button(L10n.done.localized()) { anyFieldFocused = false }
-                }
-            }
-            // #298: committing the font size triggers the app-wide dynamic-type
-            // relayout, which shifted the Settings viewport (it jumped). Pull the
-            // Font control back into view so the scroll position stays stable.
-            .onChange(of: settings.fontSizeIndex) { _, _ in
-                DispatchQueue.main.async {
-                    withAnimation { proxy.scrollTo(Self.fontAnchorID, anchor: .center) }
                 }
             }
     }
@@ -283,6 +252,10 @@ struct SettingsView: View {
         } header: {
             Text(L10n.sectionSOCKS5.localized())
         }
+        // #470: the verdict describes the port that was CHECKED. Typing a new
+        // one or tapping "Random port" left "free" / "in use" beside a port
+        // nobody had checked — the next connect could then fail with OLC-1026.
+        .onChange(of: settings.socksPort) { _, _ in portCheck = nil }
     }
 
     private var portCheckLabel: some View {
@@ -458,6 +431,13 @@ struct SettingsView: View {
             TunnelSettingsNote(text: L10n.backgroundAudioNote.localized())
         } header: {
             Text(L10n.settingsSectionStayConnected.localized())
+        } footer: {
+            // #470: all three rows are in-app-proxy machinery — `TunnelManager`
+            // starts keep-alive, the wedge reset and the audio keeper only when
+            // `activeMode == .proxy`; in VPN mode the core runs in the appex and
+            // none of them ever fires. The Connections failover card already
+            // says so with this sentence; these notes promised otherwise.
+            Text(L10n.configFailoverProxyOnlyFooter.localized()).font(.caption2)
         }
     }
 
@@ -581,68 +561,13 @@ struct SettingsView: View {
                 }
             }
 
-            HStack {
-                Text(L10n.fontSizeLabel.localized())
-                Spacer()
-                Text(fontLiveLabel)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .id(Self.fontAnchorID)   // #298: re-anchor here after the relayout
-            fontSlider
-            fontPreview
+            // #470 was: the font-size row, slider and live preview. The app now
+            // follows the device's Text Size (iOS › Display & Brightness) instead
+            // of duplicating that setting behind a custom slider.
         } header: {
-            // #343 was: sectionFont ("Font") — the section holds language +
-            // theme + font now.
+            // #343 was: sectionFont ("Font"). #470: and the font control itself
+            // is gone — the section is language + theme.
             Text(L10n.appearanceLabel.localized())
-        } footer: {
-            // #460 (finding 18) was: `fontFooter`, which explained the control
-            // by naming the SwiftUI API it calls ("via SwiftUI dynamicTypeSize").
-            Text(L10n.fontNote.localized())
-                .font(.caption2)
-        }
-    }
-
-    // #280: drag updates local @State (cheap — only this row + the preview
-    // re-render); the app-wide `fontSizeIndex` (and its UserDefaults write +
-    // full-tree relayout) commits once, on release.
-    // (audit) range starts at the -1 "System" position: no app override, the
-    // device's Text Size (incl. AX sizes) applies; XS…XXXL stay an explicit
-    // override.
-    // #460: extracted from the section body — the Slider's six trailing
-    // closures were the heaviest single expression on this screen.
-    private var fontSlider: some View {
-        Slider(
-            value: Binding(
-                get: { fontDragIndex ?? Double(settings.fontSizeIndex) },
-                set: { fontDragIndex = $0 }
-            ),
-            in: Double(SettingsStore.systemFontSizeIndex)...Double(SettingsStore.fontSizes.count - 1),
-            step: 1,
-            label: { Text(L10n.fontSizeLabel.localized()) },
-            minimumValueLabel: { Text("A").font(.caption2) },
-            maximumValueLabel: { Text("A").font(.title3) },
-            onEditingChanged: { editing in
-                if !editing {
-                    if let v = fontDragIndex { settings.fontSizeIndex = Int(v.rounded()) }
-                    fontDragIndex = nil
-                }
-            }
-        )
-    }
-
-    // Live preview without committing: scope the dragged size to this text.
-    // (audit) the "System" position has no override — the preview renders at the
-    // inherited size (a leaf Text, so the branch swap is harmless).
-    @ViewBuilder
-    private var fontPreview: some View {
-        if fontLiveIndex == SettingsStore.systemFontSizeIndex {
-            Text(L10n.fontPreviewText.localized())
-                .foregroundStyle(.secondary)
-        } else {
-            Text(L10n.fontPreviewText.localized())
-                .foregroundStyle(.secondary)
-                .environment(\.dynamicTypeSize, SettingsStore.fontSizes[fontLiveIndex])
         }
     }
 
@@ -803,6 +728,44 @@ struct DNSSettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @FocusState private var fieldFocused: Bool
 
+    // boc #470
+    /// The free-form field edits a DRAFT; only a valid `host:port` reaches the
+    /// store. Master's `SetDNS` rejects anything else (`validateHostPort`:
+    /// net.SplitHostPort, non-empty host, port 1…65535), so a bare "8.8.8.8" or
+    /// a trailing space failed EVERY connect with the raw Go error, and
+    /// `installEnv` baked the same string into the server's `dns:` line.
+    @State private var dnsDraft: String = SettingsStore.shared.dnsServer
+
+    private var dnsDraftBinding: Binding<String> {
+        Binding(get: { dnsDraft }, set: { value in
+            dnsDraft = value
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if Self.isValidResolver(trimmed) { settings.dnsServer = trimmed }
+        })
+    }
+
+    private var draftIsValid: Bool {
+        Self.isValidResolver(dnsDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// PURE: the Go runtime's rule, so the field refuses exactly what the core
+    /// would refuse. Tested in Tests/Review470Chunk5Tests.swift.
+    static func isValidResolver(_ value: String) -> Bool {
+        guard let colon = value.lastIndex(of: ":") else { return false }
+        var host = String(value[..<colon])
+        let portText = String(value[value.index(after: colon)...])
+        if host.hasPrefix("[") {
+            guard host.hasSuffix("]") else { return false }
+            host = String(host.dropFirst().dropLast())
+        } else if host.contains(":") {
+            return false   // an unbracketed IPv6 literal — "too many colons" to SplitHostPort
+        }
+        guard !host.isEmpty, host.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let port = Int(portText), (1...65535).contains(port) else { return false }
+        return true
+    }
+    // eoc #470
+
     /// Global presets + RU-carrier presets (labels localized). Keyed by label
     /// — values are NOT unique (Yota shares MegaFon's resolver).
     private var presets: [(label: String, value: String)] {
@@ -816,6 +779,7 @@ struct DNSSettingsView: View {
                 ForEach(presets, id: \.label) { preset in
                     Button {
                         settings.dnsServer = preset.value
+                        dnsDraft = preset.value   // #470: the field mirrors the pick
                     } label: {
                         HStack {
                             Text(preset.label)
@@ -839,11 +803,18 @@ struct DNSSettingsView: View {
             }
 
             Section {
-                TextField(L10n.dnsFreeFormPlaceholder.localized(), text: $settings.dnsServer)
+                // #470 was: `text: $settings.dnsServer` — every keystroke reached the store.
+                TextField(L10n.dnsFreeFormPlaceholder.localized(), text: dnsDraftBinding)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
                     .focused($fieldFocused)
+                // #470: the row says WHY the value is not taking effect.
+                if !draftIsValid {
+                    Text(L10n.dnsInvalidNote.localized())
+                        .font(.footnote)
+                        .foregroundStyle(Theme.Palette.red)
+                }
             }
         }
         // (audit #299) token ground, like the parent Settings Form.

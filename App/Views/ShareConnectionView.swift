@@ -93,7 +93,9 @@ struct ShareConnectionView: View {
                         NavigationLink {
                             QRCodeView(uri: uri)
                                 .padding(32)
-                                .navigationTitle(conn.displayName)
+                                // #470: service first, like every other surface
+                                // (#461) — the record label repeats the server.
+                                .navigationTitle(ConnectionNaming.service(conn.details))
                                 .navigationBarTitleDisplayMode(.inline)
                         } label: {
                             Label(L10n.actionQR.localized(), systemImage: "qrcode")

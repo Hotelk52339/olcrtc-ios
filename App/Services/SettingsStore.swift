@@ -92,11 +92,18 @@ final class SettingsStore: ObservableObject {
         static let vp8FPSRange          = 1...60
         static let vp8BatchSize         = 64            // tested on Telemost + wbstream
         static let vp8BatchRange        = 1...256
+        // #470: SEI transport ranges, shared by the install / add / edit sheets
+        // (upstream rejects ack_timeout_ms == 0 and fragment_size > 60000; the
+        // ACK value is milliseconds, not a count).
+        static let seiFPSRange          = 1...120
+        static let seiBatchRange        = 1...256
+        static let seiFragRange         = 100...60000
+        static let seiACKRange          = 1...10000
         static let logBufferSize        = 5000
         static let logBufferRange       = 50...10000
         static let containerLogsTail    = 200
         static let containerLogsTailRange = 50...2000
-        static let fontSizeIndex        = 3
+        static let fontSizeIndex        = SettingsStore.systemFontSizeIndex   // #470: no app override; the slider is gone
         static let vpsAutoPingEnabled   = true
         static let vpsAutoPingInterval  = 30
         static let earlyRestartOnWedge  = false   // #440: opt-in, brittle log-signature feature
@@ -223,10 +230,17 @@ final class SettingsStore: ObservableObject {
     @Published var localSocksUser: String {
         didSet { Self.persist(localSocksUser, forKey: Keys.localSocksUser) }
     }
+    /// #470: the Keychain slot behind `localSocksPass` — one definition, so
+    /// `reset()` deletes exactly the item the getter/setter use.
+    private static let localSocksKeychain = (service: "olcrtc.local.socks", account: "password")
+
     /// Password is NOT @Published — stored and read via Keychain only.
     var localSocksPass: String {
-        get { KeychainHelper.get(service: "olcrtc.local.socks", account: "password") ?? "" }
-        set { _ = KeychainHelper.set(newValue, service: "olcrtc.local.socks", account: "password") }
+        // #470 was: the literal "olcrtc.local.socks" / "password" pair in both accessors.
+        get { KeychainHelper.get(service: Self.localSocksKeychain.service,
+                                 account: Self.localSocksKeychain.account) ?? "" }
+        set { _ = KeychainHelper.set(newValue, service: Self.localSocksKeychain.service,
+                                     account: Self.localSocksKeychain.account) }
     }
     @Published var vpsAutoPingEnabled: Bool {
         didSet { Self.persist(vpsAutoPingEnabled, forKey: Keys.vpsAutoPingEnabled) }
@@ -373,6 +387,11 @@ final class SettingsStore: ObservableObject {
         maskIPs                = false   // #337
         localSocksAuthEnabled  = false
         localSocksUser         = ""
+        // #470: the copy promises "every setting", but the Keychain-backed
+        // password survived a reset and was live again the moment auth was
+        // re-enabled (the SecureField even prefilled it).
+        KeychainHelper.delete(service: Self.localSocksKeychain.service,
+                              account: Self.localSocksKeychain.account)
         language               = Self.defaultLanguage()
         appearanceMode         = .dark   // #340
         tunnelMode             = .proxy  // #vpn

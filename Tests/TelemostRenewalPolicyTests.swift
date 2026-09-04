@@ -177,9 +177,13 @@ final class TelemostRenewalPolicyTests: XCTestCase {
             .ageUnknown)
     }
 
-    func testTheStampIsNotWrittenIntoTheSecretlessEncoding() throws {
+    // #470 was: `testTheStampIsNotWrittenIntoTheSecretlessEncoding` — the name
+    // stated the opposite of the assertion (the stamp IS written; only the
+    // secrets are absent), inviting a "fix" of CodingKeys in the wrong direction.
+    func testTheStampIsPersistedWhileSecretsAreNot() throws {
         // Guards the opposite mistake: adding a CodingKey next to the deliberately
-        // excluded ones is easy to get wrong in either direction.
+        // excluded ones is easy to get wrong in either direction — the stamp must
+        // be in the encoding, `key` / `socksPass` must not.
         let data = try JSONEncoder().encode(
             OlcrtcConnection(carrier: "telemost", transport: "vp8channel", roomID: "1",
                              key: "SECRET", clientID: "default", socksPass: "SECRET",

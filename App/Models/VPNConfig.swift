@@ -41,11 +41,29 @@ struct VPNConfig: Codable, Equatable, Sendable {
     var wbToken:   String        // setProviderToken — empty for non-wbstream carriers
     var waitReadyTimeoutMs: Int  // Runtime.waitReady; 0 = core default (8 s)
     var socksPort: Int           // in-extension loopback SOCKS port (defaultSocksPort)
+    // boc #470: the resolver the OS is handed (NEDNSSettings) — "host:port",
+    // same shape as `dns`. They differ in WHERE the query is answered from:
+    // `dns` is the core's own resolver, dialled from the PHONE (provider-process
+    // sockets bypass the tunnel), while the OS's DNS rides the default route
+    // THROUGH the tunnel and is dialled by the olcrtc SERVER. The Russian-
+    // carrier presets (AppConstants.ruCarrierDnsPresets, "resolve only from
+    // inside the carrier's network") are right for the first and unreachable
+    // for the second: MTS + VPN mode reported "Connected" while every hostname
+    // on the device failed to resolve. The bridge init substitutes a public
+    // resolver here for those; every other choice passes through unchanged.
+    var systemDNS: String
+    // eoc #470
 
     /// DNS server host with the port stripped, for NEDNSSettings(servers:).
     /// Handles "8.8.8.8:53", bracketed IPv6 "[2001:db8::1]:53", and a bare
     /// host with no port.
-    var dnsHost: String {
+    var dnsHost: String { Self.host(of: dns) }   // #470: shared helper
+
+    /// #470: `systemDNS` with the port stripped — what `NEDNSSettings` takes.
+    var systemDNSHost: String { Self.host(of: systemDNS) }
+
+    /// #470: the `dnsHost` rule, factored so both resolvers use it.
+    static func host(of dns: String) -> String {
         let raw = dns.trimmingCharacters(in: .whitespaces)
         if raw.hasPrefix("["), let close = raw.firstIndex(of: "]") {
             return String(raw[raw.index(after: raw.startIndex)..<close])
@@ -59,11 +77,14 @@ struct VPNConfig: Codable, Equatable, Sendable {
 
     // MARK: Construction
 
+    /// #470: `systemDNS` is last so every existing call keeps its argument
+    /// order; nil ⇒ the same resolver as `dns`.
     init(carrier: String, transport: String, roomID: String, clientID: String,
          keyHex: String, dns: String, vp8FPS: Int? = nil, vp8Batch: Int? = nil,
          seiFPS: Int = 30, seiBatch: Int = 10, seiFrag: Int = 1200, seiACK: Int = 1,
          wbToken: String = "", waitReadyTimeoutMs: Int = 0,
-         socksPort: Int = VPNConfig.defaultSocksPort) {
+         socksPort: Int = VPNConfig.defaultSocksPort,
+         systemDNS: String? = nil) {
         self.carrier   = carrier
         self.transport = transport
         self.roomID    = roomID
@@ -79,6 +100,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
         self.wbToken   = wbToken
         self.waitReadyTimeoutMs = waitReadyTimeoutMs
         self.socksPort = socksPort
+        self.systemDNS = systemDNS ?? dns   // #470
     }
 
     // App-target-only bridge. OlcrtcConnection is NOT compiled into the
@@ -113,7 +135,19 @@ struct VPNConfig: Codable, Equatable, Sendable {
             seiACK:    connection.seiACK,
             wbToken:   connection.wbToken,
             waitReadyTimeoutMs: timeoutMs,
-            socksPort: socksPort)
+            socksPort: socksPort,
+            systemDNS: Self.systemResolver(for: dns))   // #470
+    }
+
+    /// #470: the resolver the OS may use THROUGH the tunnel. A carrier-internal
+    /// preset (answerable only from inside that carrier's network) cannot be
+    /// reached from the VPS the tunnel exits at, so it becomes the app's
+    /// default public resolver; anything else is the user's own choice and
+    /// stays. Compared by host, so a hand-typed preset without a port matches.
+    static func systemResolver(for dns: String) -> String {
+        let chosen = host(of: dns)
+        let carrierInternal = AppConstants.ruCarrierDnsPresets.contains { host(of: $0.value) == chosen }
+        return carrierInternal ? SettingsStore.Defaults.dnsServer : dns
     }
     #endif
 
@@ -126,11 +160,19 @@ struct VPNConfig: Codable, Equatable, Sendable {
         case vp8FPS, vp8Batch
         case seiFPS, seiBatch, seiFrag, seiACK
         case wbToken, waitReadyTimeoutMs, socksPort
+        case systemDNS   // #470
     }
 
     /// Plist/JSON-safe dictionary for NETunnelProviderProtocol
     /// .providerConfiguration. Values are String/Int only; nil vp8 overrides
     /// are omitted entirely (absence = core default).
+    /// #470: the two `providerConfiguration` entries that carry a secret. The
+    /// app blanks them in the SAVED profile once a session ends (VPNController),
+    /// so the room key and the WB token do not sit in the system's VPN
+    /// preferences between sessions; `start()` writes them again every launch.
+    static let secretConfigKeys: [String] = [CodingKeys.keyHex.rawValue,
+                                             CodingKeys.wbToken.rawValue]
+
     func providerConfiguration() -> [String: Any] {
         var dict: [String: Any] = [
             CodingKeys.carrier.rawValue:   carrier,
@@ -146,6 +188,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
             CodingKeys.wbToken.rawValue:   wbToken,
             CodingKeys.waitReadyTimeoutMs.rawValue: waitReadyTimeoutMs,
             CodingKeys.socksPort.rawValue: socksPort,
+            CodingKeys.systemDNS.rawValue: systemDNS,   // #470
         ]
         if let vp8FPS   { dict[CodingKeys.vp8FPS.rawValue]   = vp8FPS }
         if let vp8Batch { dict[CodingKeys.vp8Batch.rawValue] = vp8Batch }
@@ -180,6 +223,8 @@ struct VPNConfig: Codable, Equatable, Sendable {
             seiACK:    dict[CodingKeys.seiACK.rawValue]   as? Int ?? 1,
             wbToken:   dict[CodingKeys.wbToken.rawValue]  as? String ?? "",
             waitReadyTimeoutMs: dict[CodingKeys.waitReadyTimeoutMs.rawValue] as? Int ?? 0,
-            socksPort: dict[CodingKeys.socksPort.rawValue] as? Int ?? VPNConfig.defaultSocksPort)
+            socksPort: dict[CodingKeys.socksPort.rawValue] as? Int ?? VPNConfig.defaultSocksPort,
+            // #470: absent in a profile saved by an older build ⇒ same as `dns`.
+            systemDNS: dict[CodingKeys.systemDNS.rawValue] as? String)
     }
 }

@@ -529,7 +529,7 @@ echo "[*] Using Go cache: $CACHE_DIR"
 
 echo "[*] Cloning repository..."
 # boc olcrtc-ios: the app ships a Mobile.xcframework built from ONE specific upstream commit; the server core must be that exact commit or the wire protocol mismatches (there is no version negotiation) and every tunnel dies right after the handshake. `git clone --branch` cannot take a bare SHA, so init an empty repo and fetch the pinned commit. OLCRTC_PIN is supplied by the app (SSHRunner.installEnv <- AppConstants.upstreamCorePin); the literal default keeps the script runnable standalone and MUST match the olcrtc-upstream submodule pin.
-OLCRTC_PIN="${OLCRTC_PIN:-f616f57bb3a90740f1755922ffeaa7acc5cfe4ed}"
+OLCRTC_PIN="${OLCRTC_PIN:-54bd269bbc8c1c97c966307e0bca733366694a09}"
 git init -q "$WORK_DIR"
 git -C "$WORK_DIR" remote add origin "$REPO_URL"
 git -C "$WORK_DIR" fetch --depth 1 origin "$OLCRTC_PIN"

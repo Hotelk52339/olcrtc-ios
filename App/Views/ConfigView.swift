@@ -76,8 +76,14 @@ struct TunnelSettingsModeSection: View {
         }
         return [
             OlcOption(value: TunnelMode.proxy, label: TunnelMode.proxy.title),
+            // #470 was: `disabled: vpnUnavailableReason != nil`. The capability
+            // flips to `.unavailable` both when the entitlement is missing AND
+            // when the user simply declined the system consent alert — and a
+            // declined consent is retryable, but the chip locked them out until
+            // relaunch. The reason is still spelled out under the picker
+            // (`TunnelSettingsUnavailableNote`) and in VoiceOver.
             OlcOption(value: TunnelMode.vpn, label: TunnelMode.vpn.title,
-                      disabled: vpnUnavailableReason != nil,
+                      disabled: false,
                       disabledReason: vpnUnavailableReason),
         ]
     }

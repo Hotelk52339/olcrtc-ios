@@ -122,9 +122,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             try rt.setLivenessOptions(30_000, timeoutMillis: 10_000, failures: 3)
             // Unconditional: empty clears a previous token (same rule as #436).
             rt.setProviderToken(config.wbToken)
-            // Loopback listener, private to this process. NO SOCKS credentials:
-            // the core requires them only for non-loopback binds, and the
-            // tunstack SOCKS client deliberately sends none.
+            // Loopback listener. NO SOCKS credentials: the core requires them
+            // only for non-loopback binds, and the tunstack SOCKS client
+            // deliberately sends none.
+            // #470 was: "private to this process" — loopback is DEVICE-wide on
+            // iOS: any app can dial 127.0.0.1:<socksPort> while the tunnel is
+            // up (and gains nothing by it — every app's traffic already rides
+            // the tunnel), and a listener another process already holds on
+            // that port fails the bind inside the run goroutine, which
+            // `waitReady` below reports with the Go text ("address already in
+            // use") into the ring buffer.
             try rt.setSocksListenHost("127.0.0.1")
             try rt.setSocksPort(config.socksPort)
         } catch {
@@ -142,9 +149,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         runtime = rt
 
+        // #470: a stop that arrived before this point wins — do not wait at all.
+        guard beginWait(on: rt) else {
+            logBuffer.append("start abandoned: stopTunnel arrived before the carrier answered")
+            try? rt.stop(Self.stopTimeoutMs)
+            runtime = nil
+            completionHandler(NEVPNError(.connectionFailed))
+            return
+        }
         do {
+            defer { endWait() }   // #470
             // Blocks until the carrier rendezvoused and the SOCKS listener is
-            // up (0 -> core default 8 s). Safe to block: we are on workQueue.
+            // up (0 -> core default 8 s). Safe to block: we are on workQueue —
+            // and interruptible, see `interruptPendingStart` (#470).
             try rt.waitReady(config.waitReadyTimeoutMs)
         } catch {
             logBuffer.append("waitReady failed: \(error.localizedDescription)")
@@ -167,7 +184,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         tunnel = tun
 
-        setTunnelNetworkSettings(Self.makeSettings(dnsHost: config.dnsHost)) { [weak self] settingsError in
+        // #470 was: `config.dnsHost` — the core's resolver, which the OS's DNS
+        // then reached THROUGH the tunnel from the VPS; a carrier-internal
+        // preset answered nothing from there. `systemDNS` is the app's choice
+        // for this path (VPNConfig.systemResolver).
+        setTunnelNetworkSettings(Self.makeSettings(dnsHost: config.systemDNSHost)) { [weak self] settingsError in
             guard let self else {
                 completionHandler(NEVPNError(.connectionFailed))
                 return
@@ -221,14 +242,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func startPacketPump() {
         packetFlow.readPackets { [weak self] packets, protocols in
-            guard let self, let tunnel = self.tunnel else { return }  // stops the pump after teardown
-            for (index, packet) in packets.enumerated() {
-                // AF_INET only in v1 — matches the IPv4-only settings above.
-                if index < protocols.count, protocols[index].int32Value == AF_INET {
-                    try? tunnel.writePacket(packet)
+            guard let self else { return }
+            // boc #470: hop onto workQueue — `tunnel` is written there by
+            // `teardownLocked`, and this completion runs on the flow's own
+            // queue. Reading it here raced the teardown: a stale reference
+            // re-armed the pump against a device that was already closed (its
+            // `writePacket` failing into `try?`), and it was a Swift data race
+            // on a class reference. On the queue, "nil ⇒ stop" is exact.
+            // #470 was: guard let self, let tunnel = self.tunnel else { return }
+            self.workQueue.async {
+                guard let tunnel = self.tunnel else { return }   // stops the pump after teardown
+                for (index, packet) in packets.enumerated() {
+                    // AF_INET only: IPv6 enters the tunnel (#469 claims ::/0) and
+                    // is dropped here — a blackhole, never a bypass.
+                    if index < protocols.count, protocols[index].int32Value == AF_INET {
+                        try? tunnel.writePacket(packet)
+                    }
                 }
+                self.startPacketPump()
             }
-            self.startPacketPump()
+            // eoc #470
         }
     }
 
@@ -249,12 +282,59 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason,
                              completionHandler: @escaping () -> Void) {
+        interruptPendingStart()   // #470: unblock a start still waiting on the carrier
         workQueue.async {
             self.logBuffer.append("stopTunnel: reason \(reason.rawValue)")
             self.teardownLocked()
             completionHandler()
         }
     }
+
+    // boc #470: a stop that arrives while `doStart` is blocked in `waitReady`
+    // (up to the user's start timeout — 600 s at the clamp) used to queue
+    // BEHIND it on workQueue, together with every app message. "Cancel" a few
+    // seconds into a connect against a dead room left the system VPN icon on
+    // "connecting" for the rest of that timeout, and a carrier that answered
+    // late brought the tunnel UP with the app already showing Disconnected.
+    // `Runtime.Stop` cancels the generation, and `WaitReady` returns as soon as
+    // the run goroutine exits (ErrStoppedBeforeReady — mobile/runtime.go), so
+    // the stop is issued straight away, off the queue, against the runtime the
+    // wait holds; the queued teardown then finds a stopped runtime. Lock-
+    // guarded: `stopTunnel` runs on the system's thread, not on workQueue.
+    private let startLock = NSLock()
+    /// The runtime `doStart` is blocked on, while it is.
+    private var waitingRuntime: MobileRuntime?
+    /// A stop arrived before the wait began (or while it ran) — the start must
+    /// not proceed. Cleared by `teardownLocked` so a later start is unaffected.
+    private var stopArrivedEarly = false
+
+    /// Registers the runtime a wait is about to block on. False ⇒ a stop
+    /// already arrived, and the caller must not wait at all.
+    private func beginWait(on rt: MobileRuntime) -> Bool {
+        startLock.lock(); defer { startLock.unlock() }
+        if stopArrivedEarly { return false }
+        waitingRuntime = rt
+        return true
+    }
+
+    private func endWait() {
+        startLock.lock()
+        waitingRuntime = nil
+        startLock.unlock()
+    }
+
+    /// Called from `stopTunnel` before it queues the teardown. The bounded
+    /// `stop` runs on a global queue: it blocks up to `stopTimeoutMs`, and the
+    /// system's callback thread must not.
+    private func interruptPendingStart() {
+        startLock.lock()
+        stopArrivedEarly = true
+        let rt = waitingRuntime
+        startLock.unlock()
+        guard let rt else { return }
+        DispatchQueue.global(qos: .userInitiated).async { try? rt.stop(Self.stopTimeoutMs) }
+    }
+    // eoc #470
 
     /// Must run on workQueue. Order matters: close the tun2socks device first
     /// (releases the lwIP per-process singleton and ends the pump), then stop
@@ -296,6 +376,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         try? runtime?.stop(Self.stopTimeoutMs)
         runtime = nil
         startedAt = nil
+        // #470: this stop is done with; a later start on this instance must
+        // not read it as "arrived early".
+        startLock.lock()
+        stopArrivedEarly = false
+        waitingRuntime = nil
+        startLock.unlock()
     }
 
     // MARK: App messages ("stats" / "logs" from VPNController)

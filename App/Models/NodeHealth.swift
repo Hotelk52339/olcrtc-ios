@@ -155,10 +155,15 @@ enum HealthDisplay: Equatable, Sendable {
         // to prevent. `.fading` now says it in the past tense.
         case .verified(let ms, let age):
             let a = HealthAge.short(age)                                // #459 was: .label(age)
-            return ms.map { "\($0) ms · \(a)" } ?? a
+            // #470: the unit goes through `healthLatencyMs_fmt` ("%d ms" / "%d мс"),
+            // the key the Diagnostics latency row prints — a Russian chip used to
+            // read "215 ms · 2 мин" two cards above a row that said "215 мс".
+            // #470 was: return ms.map { "\($0) ms · \(a)" } ?? a
+            return ms.map { "\(L10n.healthLatencyMs_fmt.formatted($0)) · \(a)" } ?? a
         case .fading(let ms, let age):
             let a = HealthAge.short(age)                                // #459 was: .label(age)
-            return ms.map { L10n.healthChipFaded_fmt.formatted("\($0) ms", a) }
+            // #470 was: L10n.healthChipFaded_fmt.formatted("\($0) ms", a)
+            return ms.map { L10n.healthChipFaded_fmt.formatted(L10n.healthLatencyMs_fmt.formatted($0), a) }
                 // #459: "worked %@" — the string no longer appends "ago" itself.
                 ?? L10n.healthChipFadedNoRTT_fmt.formatted(HealthAge.phrase(age))
         case .handshakeOnly(let age): return L10n.healthChipHandshake_fmt.formatted(HealthAge.short(age))   // #459
@@ -167,6 +172,11 @@ enum HealthDisplay: Equatable, Sendable {
         case .inconclusive:           return L10n.healthChipUnchecked.localized()
         // #459 was: "%@ old" + .label → "just now old". `.stale` is only reached
         // past HealthPolicy.staleSeconds, so "last seen 3 h ago" is always exact.
+        // #470: exact in TIME, not in kind — `HealthCoordinator.display` files
+        // EVERY kind as `.stale` past staleSeconds, so a key mismatch from 45 min
+        // ago read "last seen 45 min ago", i.e. "it worked then". The key's text
+        // is "checked %@" now (L10nTable), true of a stale failure and a stale
+        // success alike; Review470Chunk4Tests pins that it never says "seen".
         case .stale(let age):         return L10n.healthChipStale_fmt.formatted(HealthAge.phrase(age))
         }
     }

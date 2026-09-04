@@ -100,7 +100,14 @@ struct ServerCardMetrics {
 /// #461 was: TWO of them, Check server first. `quickRow` still renders however
 /// many it is handed, and only compacts them when there is more than one.
 struct ServerQuickAction: Identifiable {
-    let id = UUID()
+    // #470 was: `let id = UUID()` — a fresh identity on every parent render.
+    // `ServersView.quickActions(host)` rebuilds this array on every body
+    // evaluation (each provisioner line, each health tick, each tunnel
+    // publish), so `ForEach(quickActions)` removed and re-inserted the button
+    // every time — animated whenever the render was the one `.animation(value:
+    // headline)` covers, and dropping a press held on it. The verb IS the
+    // identity: same symbol + title ⇒ same button.
+    var id: String { "\(systemImage)|\(title)" }
     let title: String
     let systemImage: String
     let action: () -> Void
@@ -267,7 +274,13 @@ struct ServerCardView: View {
     @ViewBuilder
     private var failureBanner: some View {
         if failingCount > 0 {
-            Label(L10n.vpsProtocolsFailing_fmt.formatted(failingCount, protocolCount),
+            // #470: the denominator is the number of rows drawn right below.
+            // `protocolCount` counts the rows that resolved to a record, so a
+            // row with none (record deleted, sibling made outside the app) made
+            // the banner say "1 of 2" above three rows. Records ⊆ rows, so the
+            // larger of the two is always the row count when rows are present.
+            // #470 was: formatted(failingCount, protocolCount)
+            Label(L10n.vpsProtocolsFailing_fmt.formatted(failingCount, max(protocolCount, rows.count)),
                   systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(Theme.Palette.orange)

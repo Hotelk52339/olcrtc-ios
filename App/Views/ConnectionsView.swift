@@ -420,7 +420,12 @@ struct ConnectionsView: View {
     /// away (`ConnectActionSite.elsewhereNote`). ~54 pt.
     @ViewBuilder
     private var onlyOneProtocolNote: some View {
-        if !hasAnyVisibleRow {
+        // #470: a subscription import has no server on the Servers tab and no
+        // SSH access to install anything with — "Install a second one on the
+        // Servers tab" was an instruction that could not be followed. Gated on
+        // the one record's provenance (a pasted link carries none, see the
+        // report: the full gate needs `ServerHostStore` linkage).
+        if !hasAnyVisibleRow, heroSubject?.subSourceURL == nil {
             Section {
                 VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
                     Label(L10n.connectSwitcherOnlyOne.localized(),
@@ -490,6 +495,12 @@ struct ConnectionsView: View {
     }
 
     private func remove(_ conn: ConnectionRecord) {
+        // #470: the hero carries this menu for the LIVE record too. Removing it
+        // used to leave the session up and the hero showing the deleted record
+        // as "Connected" with Edit/Share/QR on a ghost (`connectedRecord` kept
+        // the snapshot; `store.update` on a gone id was a silent no-op). A
+        // record that no longer exists cannot stay connected honestly.
+        if tunnel.connectedRecord?.id == conn.id { tunnel.disconnect() }
         if let i = store.connections.firstIndex(where: { $0.id == conn.id }) {
             store.remove(at: IndexSet([i]))
         }
@@ -684,8 +695,14 @@ struct ConnectionsView: View {
                 store.add($0)
             }
         case .edit(let conn):
-            AddConnectionView(existing: conn, existingGroups: store.allGroupNames) {
-                store.update($0)
+            AddConnectionView(existing: conn, existingGroups: store.allGroupNames) { updated in
+                store.update(updated)
+                // #470: the stored verdict was measured against the OLD
+                // room/key/carrier and kept the same id — the row stayed green
+                // "48 ms · 1m" for a configuration nobody had measured, and the
+                // debounced sweep refused to re-check it for two minutes. A
+                // changed `details` is unmeasured until proven otherwise.
+                if updated.details != conn.details { verify(updated) }
             }
         case .qr(let conn):
             qrSheet(conn)
@@ -697,10 +714,14 @@ struct ConnectionsView: View {
     }
 
     private func qrSheet(_ conn: ConnectionRecord) -> some View {
-        NavigationStack {
+        // #470: service first, host last — the #461 identity rule the hero, the
+        // rows and the Servers card already follow ("Yandex Telemost · zaza").
+        // #470 was: `.navigationTitle(conn.displayName)` ("zaza · Telemost")
+        let title = "\(ConnectionNaming.service(conn.details)) · \(ConnectionNaming.host(conn))"
+        return NavigationStack {
             QRCodeView(uri: Self.uriOf(conn))
                 .padding(32)
-                .navigationTitle(conn.displayName)
+                .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {

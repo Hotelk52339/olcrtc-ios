@@ -94,6 +94,12 @@ struct ConnectHero: View {
     /// it ("starting… 6 s") instead of printing a bare, undatable "Connecting…".
     @State private var connectingSince: Date?
 
+    /// #470: when `exitPlace` last changed. The exit is looked up once per connect
+    /// (and on pull), so the line that prints it must carry its age — it is the
+    /// hero's ONE line of DATED evidence, and a six-hour-old lookup in green with
+    /// no date read as a present-tense fact.
+    @State private var exitSince: Date?
+
     var body: some View {
         OlcCard {
             // #459 was: spacing 10. The card lost two lines, so the rhythm it
@@ -122,6 +128,7 @@ struct ConnectHero: View {
         .onChange(of: state, initial: true) { _, new in
             connectingSince = new.isConnecting ? (connectingSince ?? Date()) : nil
         }
+        .onChange(of: exitPlace, initial: true) { _, new in exitSince = new == nil ? nil : Date() }   // #470
     }
 
     // MARK: 1. The answer
@@ -296,15 +303,26 @@ struct ConnectHero: View {
     @ViewBuilder
     private var connectedEvidence: some View {
         if let place = exitPlace {
-            evidenceText(exitFlag.map { "\($0) \(place)" } ?? place,
-                         tone: health.isVerified ? Theme.Palette.green
-                                                 : Theme.Palette.textSecondary)
+            // #470 was: `evidenceText(…)` with no age — see `exitSince`.
+            ConnectHeroExitLine(text: exitFlag.map { "\($0) \(place)" } ?? place,
+                                since: exitSince ?? Date(),
+                                tone: sessionVerified ? Theme.Palette.green
+                                                      : Theme.Palette.textSecondary)
         } else {
             evidenceText(heroEvidenceHasReading ? health.subtitle
                                                 : L10n.heroEvidenceUnverified.localized(),
-                         tone: health.isVerified ? Theme.Palette.green
-                                                 : Theme.Palette.textSecondary)
+                         tone: sessionVerified ? Theme.Palette.green   // #470 was: health.isVerified
+                                               : Theme.Palette.textSecondary)
         }
+    }
+
+    /// #470: green and the aurora ring need proof about THIS session. Nothing
+    /// verifies a system-VPN session — `verifyTunnel`, keep-alive and the
+    /// Diagnostics latency loop are all proxy-only — so in VPN mode a `.verified`
+    /// verdict can only be a probe or proxy-era reading ≤ 5 min old, which then
+    /// faded mid-session. A live VPN session reads connected, never verified.
+    private var sessionVerified: Bool {
+        state.isConnected && health.isVerified && mode == .proxy
     }
 
     /// #457 (audit fix): does this verdict carry an actual end-to-end reading to
@@ -441,7 +459,7 @@ struct ConnectHero: View {
 
     @ViewBuilder
     private var auroraVerdictRing: some View {
-        if state.isConnected && health.isVerified {
+        if sessionVerified {   // #470 was: state.isConnected && health.isVerified
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
                 .strokeBorder(Theme.Palette.auroraGradient, lineWidth: 2)
                 .allowsHitTesting(false)
@@ -465,6 +483,29 @@ private struct ConnectHeroElapsed: View {
                     .formatted(Int(max(0, ctx.date.timeIntervalSince(since)))))
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(Theme.Palette.textSecondary)
+                .frame(minHeight: 18, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - ConnectHeroExitLine (#470)
+//
+// #470: the connected evidence line WITH its age — "🇳🇱 Amsterdam, NL · 2 h ago",
+// re-rendered once a minute like `ConnectHeroElapsed`, so the exit place is dated
+// evidence rather than a present-tense claim from a lookup made at connect time.
+
+private struct ConnectHeroExitLine: View {
+    let text: String
+    let since: Date
+    let tone: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: since, by: 60)) { ctx in
+            let line = "\(text) · \(HealthAge.phrase(ctx.date.timeIntervalSince(since)))"
+            Text(line)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(tone)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 18, alignment: .leading)
         }
     }

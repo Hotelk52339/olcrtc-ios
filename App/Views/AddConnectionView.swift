@@ -80,7 +80,23 @@ struct AddConnectionView: View {
     private var isValid: Bool {
         !name.isEmpty && !groupName.isEmpty && !carrier.isEmpty && !transport.isEmpty
             && !roomID.isEmpty && !key.isEmpty && !clientID.isEmpty
+            && validationError == nil   // #470
     }
+
+    // boc #470
+    /// The structural rules the engine applies at connect time
+    /// (`TunnelManager.validate`, run by `OlcrtcEngine.validate`): a 64-hex key,
+    /// a client ID without whitespace. #470 was: Save required only non-empty
+    /// fields, so a key with one character clipped was stored, sat in the list
+    /// looking valid, and failed at Connect with "key length 63". Silent while
+    /// the three fields are still blank — the emptiness rule above already
+    /// disables Save.
+    private var validationError: String? {
+        guard !roomID.isEmpty, !key.isEmpty, !clientID.isEmpty else { return nil }
+        return TunnelManager.validate(params: OlcrtcConnection(
+            carrier: carrier, transport: transport, roomID: roomID, key: key, clientID: clientID))
+    }
+    // eoc #470
 
     /// (audit) transport chips with the ✗ combos for the current carrier
     /// disabled (OlcOption.disabled) and the reason surfaced to VoiceOver.
@@ -239,6 +255,13 @@ struct AddConnectionView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             FormField(label: L10n.keyHexLabel.localized(), placeholder: L10n.keyPlaceholder.localized(), text: $key, secure: true)
+            // boc #470: the sentence Connect would have shown, shown here instead.
+            if let why = validationError {
+                Text(why)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Palette.red)
+            }
+            // eoc #470
         }
 
         if isVP8 {
@@ -311,7 +334,7 @@ struct AddConnectionView: View {
                 Stepper("", value: Binding(
                     get: { vp8FPS ?? SettingsStore.shared.vp8FPS },
                     set: { vp8FPS = $0 }
-                ), in: 1...120)
+                ), in: SettingsStore.Defaults.vp8FPSRange)   // #470 was: 1...120 — the global setting clamps to the room limit (60)
                 .labelsHidden()
                 if vp8FPS != nil {
                     Button { vp8FPS = nil } label: {
@@ -329,7 +352,7 @@ struct AddConnectionView: View {
                 Stepper("", value: Binding(
                     get: { vp8BatchSize ?? SettingsStore.shared.vp8BatchSize },
                     set: { vp8BatchSize = $0 }
-                ), in: 1...64)
+                ), in: SettingsStore.Defaults.vp8BatchRange)   // #470 was: 1...64 — the global setting allows 256
                 .labelsHidden()
                 if vp8BatchSize != nil {
                     Button { vp8BatchSize = nil } label: {
@@ -354,8 +377,12 @@ struct AddConnectionView: View {
     private var seiSection: some View {
         Section {
             seiRow(L10n.seiFpsLabel.localized(),   value: $seiFPS,   range: 1...120)
-            seiRow(L10n.seiBatchLabel.localized(), value: $seiBatch, range: 1...64)
-            seiRow(L10n.seiFragLabel.localized(),  value: $seiFrag,  range: 1...8192, step: 100)
+            // #470: the bounds the install sheet (InstallOptionsView) and upstream's
+            // validator accept — a URI carrying sei batch=200 (installable) could
+            // not be re-edited here without the stepper clamping it to 64.
+            // #470 was: range: 1...64 / range: 1...8192, step: 100
+            seiRow(L10n.seiBatchLabel.localized(), value: $seiBatch, range: 1...256)
+            seiRow(L10n.seiFragLabel.localized(),  value: $seiFrag,  range: 100...60000, step: 100)
             seiRow(L10n.seiAckLabel.localized(),   value: $seiACK,   range: 0...10000, step: 1)
         } header: {
             Text(L10n.seiParamsHeader.localized())

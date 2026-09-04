@@ -68,6 +68,16 @@ final class HealthCoordinator: ObservableObject {
     /// The current automatic/`verifyAll` sweep — cancelled by the next sweep and
     /// by `cancelAll()`.
     private var sweepTask: Task<Void, Never>?
+    /// #470: is the running sweep the one the USER asked for ("Check all",
+    /// pull-to-refresh)? Every foreground transition and tab entry calls
+    /// `verifyDue`, which cancelled whatever was running — so a forced sweep was
+    /// routinely killed a few rows in and the user's own request never finished.
+    /// An automatic pass now yields to a forced one; a forced pass supersedes
+    /// anything.
+    private var sweepForced = false
+    private var forcedSweepRunning: Bool {
+        sweepForced && sweepTask != nil && !(sweepTask?.isCancelled ?? true)
+    }
 
     /// #456 (audit fix): the ageing clock. `HealthDisplay` is derived from
     /// `Date()` at render time, but the only redraw trigger is `$revision`, which
@@ -208,6 +218,17 @@ final class HealthCoordinator: ObservableObject {
             // effect is unambiguous to the compiler. Same semantics.
             if let previous { await previous.value }
             guard let self else { return }
+            // boc #470: `cancelAll()` cancels this link while it is QUEUED behind
+            // `previous`, but awaiting a `Task<Void, Never>` never throws and
+            // nothing here consulted the flag — so the "cancelled" link ran its
+            // full conference join anyway (the `MobilePing` inside `runProbe`
+            // is a detached task and inherits nothing). Honour it before the
+            // dial: the row stops saying "Checking…" and keeps its old verdict.
+            if Task.isCancelled {
+                self.inFlight.remove(id); self.bump()
+                return
+            }
+            // eoc #470
             await self.runProbe(record, using: tunnel, deep: force)
         }
         tail = task
@@ -267,12 +288,15 @@ final class HealthCoordinator: ObservableObject {
             LogStore.shared.log(.connection,
                 "Health: \(record.displayName) verified end to end — \(ms) ms")
         case .failure(let raw):
+            // #470: a sentence the probe LAYER produced is classified here, in
+            // whatever language it came, before the English-needle mapper sees it.
+            let classified = Self.probeSideReason(forRaw: raw)
             if deep {
                 let ready = await tunnel.checkReady(probe.details, timeoutMs: HealthPolicy.probeTimeoutMs)
                 if case .success = ready {
                     store[record.id.uuidString] = NodeHealth(
                         kind: .handshake,
-                        reason: HealthFailureMapper.reason(forRaw: raw),
+                        reason: classified ?? HealthFailureMapper.reason(forRaw: raw),   // #470
                         detail: LogStore.redactSecrets(raw),
                         source: "probe")
                     save(); bump()
@@ -289,14 +313,18 @@ final class HealthCoordinator: ObservableObject {
             // (retry) instead of red "nobody answered" (recover). `.noPeer` was
             // unreachable from a probe. A raw error the mapper recognises is a
             // verdict; only an unclassified timeout is our deadline talking.
-            let mapped = HealthFailureMapper.reason(forRaw: raw)
+            let mapped = classified ?? HealthFailureMapper.reason(forRaw: raw)   // #470
             if hitOurCap, mapped == .timedOut || mapped == .unknown {
                 noteInconclusive(recordID: record.id, reason: .timedOut)
+                // #470: `level: .info` — the keyword classifier saw "failure" in
+                // a sentence whose whole point is that this is NOT one, and
+                // painted it red.
                 LogStore.shared.log(.connection,
-                    "Health: \(record.displayName) — no answer within the \(HealthPolicy.probeTimeoutMs / 1000)s check budget; not treating that as a failure")
+                    "Health: \(record.displayName) — no answer within the \(HealthPolicy.probeTimeoutMs / 1000)s check budget; not treating that as a failure",
+                    level: .info)
                 return
             }
-            noteFailure(recordID: record.id, raw: raw, source: "probe")
+            noteFailure(recordID: record.id, raw: raw, source: "probe", classified: classified)   // #470
             LogStore.shared.log(.connection,
                 "Health: \(record.displayName) failed — \(LogStore.redactSecrets(raw))")
         }
@@ -317,7 +345,9 @@ final class HealthCoordinator: ObservableObject {
         }
         let batch = Array(due.prefix(limit))
         guard !batch.isEmpty else { return }
+        guard !forcedSweepRunning else { return }   // #470
         sweepTask?.cancel()
+        sweepForced = false                        // #470
         sweepTask = Task { @MainActor in
             for r in batch {
                 if Task.isCancelled { return }
@@ -335,7 +365,9 @@ final class HealthCoordinator: ObservableObject {
     func verifyDue(_ records: [ConnectionRecord], using tunnel: TunnelManager) {
         let batch = records.filter { !inFlight.contains($0.id) }
         guard !batch.isEmpty else { return }
+        guard !forcedSweepRunning else { return }   // #470
         sweepTask?.cancel()
+        sweepForced = false                        // #470
         sweepTask = Task { @MainActor in
             for r in batch {
                 if Task.isCancelled { return }
@@ -350,7 +382,9 @@ final class HealthCoordinator: ObservableObject {
         let batch = records.filter { !inFlight.contains($0.id) }
         guard !batch.isEmpty else { return }
         sweepTask?.cancel()
+        sweepForced = true                         // #470: this one owns the lane
         sweepTask = Task { @MainActor in
+            defer { self.sweepForced = false }      // #470
             for r in batch {
                 if Task.isCancelled { return }
                 await self.verify(r, using: tunnel, force: true)
@@ -382,10 +416,31 @@ final class HealthCoordinator: ObservableObject {
     //           inFlight.removeAll()
     func cancelAll() {
         sweepTask?.cancel(); sweepTask = nil
-        tail?.cancel()          // stops a QUEUED link; the chain's tail is kept
+        sweepForced = false   // #470
+        // #470: the link checks `Task.isCancelled` after its wait, so this now
+        // really does stop a QUEUED tail link (it used to be a no-op — nothing
+        // in the chain consulted the flag). The chain's tail is kept.
+        tail?.cancel()
         bump()
     }
     // eoc #456 (audit)
+
+    /// #470: the two sentences the PROBE LAYER itself can return (never the
+    /// core): `OlcrtcEngine.ping` answers `pingNoFreePort` when the EPHEMERAL
+    /// port pool is exhausted and `pingFailed` for a negative RTT. Both are
+    /// localized, and `HealthFailureMapper` matches English needles — so an
+    /// English UI filed the first as `.portBusy` ("open port settings", about
+    /// the configured SOCKS port, which a probe never uses) while a Russian UI
+    /// filed the same fault as `.unknown`. One verdict whatever the language:
+    /// the app could not run its check — `.unknown`, i.e. inconclusive, retry.
+    /// Compared at call time, never cached (the L10n rule); a Go-core line
+    /// returns nil and goes to the mapper as before.
+    nonisolated static func probeSideReason(forRaw raw: String) -> HealthReason? {
+        if raw == L10n.pingNoFreePort.localized() || raw == L10n.pingFailed.localized() {
+            return .unknown
+        }
+        return nil
+    }
 
     /// #456: test hook. Deliberately NOT `#if DEBUG`-gated — the test bundle is
     /// built in the same configuration as the app here (TEST_HOST), and gating it

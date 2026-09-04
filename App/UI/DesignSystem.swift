@@ -493,7 +493,10 @@ struct OlcOverflowMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(items) { item in
+            // #470: `OlcMenuItem`'s id is derived from its content, so two
+            // dividers (or two same-labelled actions) collided and SwiftUI
+            // dropped one. Position is the stable identity inside one menu.
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 switch item.kind {
                 case .divider:
                     Divider()
