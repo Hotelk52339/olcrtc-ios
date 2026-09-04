@@ -256,6 +256,37 @@ struct SettingsView: View {
         }
     }
 
+    // boc #475
+    @ViewBuilder
+    private var updateCheckNowRow: some View {
+        Button {
+            Task { await updateChecker.checkNow() }
+        } label: {
+            HStack {
+                Text(L10n.updateCheckNowAction.localized())
+                Spacer()
+                if updateChecker.manual == .checking { ProgressView() }
+            }
+        }
+        .disabled(updateChecker.manual == .checking)
+        updateCheckNowResult
+    }
+
+    /// The answer, when there is one. A newer release opens the update sheet
+    /// instead, so this only ever reports "nothing new" or "could not ask".
+    @ViewBuilder
+    private var updateCheckNowResult: some View {
+        switch updateChecker.manual {
+        case .upToDate(let version):
+            TunnelSettingsNote(text: L10n.updateUpToDate_fmt.formatted(version))
+        case .failed:
+            TunnelSettingsNote(text: L10n.updateCheckFailed.localized())
+        case .idle, .checking:
+            EmptyView()
+        }
+    }
+    // eoc #475
+
     // MARK: About (#471 — was `infoSection`)
 
     // #471: the version, the unscoped way into the log reader, the one door to
@@ -464,37 +495,6 @@ struct SettingsAdvancedView: View {
                 .textSelection(.enabled)
         }
     }
-
-    // boc #475
-    @ViewBuilder
-    private var updateCheckNowRow: some View {
-        Button {
-            Task { await updateChecker.checkNow() }
-        } label: {
-            HStack {
-                Text(L10n.updateCheckNowAction.localized())
-                Spacer()
-                if updateChecker.manual == .checking { ProgressView() }
-            }
-        }
-        .disabled(updateChecker.manual == .checking)
-        updateCheckNowResult
-    }
-
-    /// The answer, when there is one. A newer release opens the update sheet
-    /// instead, so this only ever reports "nothing new" or "could not ask".
-    @ViewBuilder
-    private var updateCheckNowResult: some View {
-        switch updateChecker.manual {
-        case .upToDate(let version):
-            TunnelSettingsNote(text: L10n.updateUpToDate_fmt.formatted(version))
-        case .failed:
-            TunnelSettingsNote(text: L10n.updateCheckFailed.localized())
-        case .idle, .checking:
-            EmptyView()
-        }
-    }
-    // eoc #475
 
     private var portRow: some View {
         HStack {
