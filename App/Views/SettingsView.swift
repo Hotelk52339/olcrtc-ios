@@ -1112,12 +1112,14 @@ struct BotEditorView: View {
 #if DEBUG
 #Preview("Settings — Dark") {
     SettingsView(tunnel: TunnelManager(), botStore: BotStore(),
-                 serverStore: ServerHostStore(), connections: ConnectionStore())
+                 serverStore: ServerHostStore(), connections: ConnectionStore(),
+                 updateChecker: UpdateChecker())
         .preferredColorScheme(.dark)
 }
 #Preview("Settings — Light") {
     SettingsView(tunnel: TunnelManager(), botStore: BotStore(),
-                 serverStore: ServerHostStore(), connections: ConnectionStore())
+                 serverStore: ServerHostStore(), connections: ConnectionStore(),
+                 updateChecker: UpdateChecker())
         .preferredColorScheme(.light)
 }
 // #471: the Advanced screen is seven sections deep behind a push — previewing
