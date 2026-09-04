@@ -124,6 +124,31 @@ final class HealthCoordinator: ObservableObject {
 
     func isChecking(_ recordID: UUID) -> Bool { inFlight.contains(recordID) }
 
+    // boc #472: a verdict describes ONE deployment — this protocol, in this room,
+    // under this key. Change any of them and the verdict is no longer about this
+    // record, but nothing dropped it: after "generate new key", after a manual
+    // key edit, after a room change, the row kept showing the PREVIOUS failure
+    // (usually "Key no longer matches") until the user pressed Verify by hand.
+    // The server was fine; the app was quoting a measurement of something that
+    // no longer existed. Forgetting is the honest move: the row falls back to
+    // "not checked", which is true, and the next sweep re-measures it — with no
+    // debounce to wait out, because `shouldProbe` has nothing to debounce
+    // against once the entry is gone.
+    func forget(recordID: UUID) {
+        guard store.removeValue(forKey: recordID.uuidString) != nil else { return }
+        save(); bump()
+    }
+
+    /// What a verdict is about. Two records with the same fingerprint can be
+    /// measured interchangeably; a different one needs its own measurement.
+    /// The key is HASHED — `NodeHealth` is persisted to UserDefaults and a
+    /// secret must never land there (CLAUDE.md).
+    nonisolated static func fingerprint(_ record: ConnectionRecord) -> String? {
+        guard case .olcrtc(let p) = record.details else { return nil }
+        return "\(p.carrier)|\(p.transport)|\(p.roomID)|\(p.clientID)|\(p.key.hashValue)"
+    }
+    // eoc #472
+
     /// Aggregated verdict for a set of nodes — the Manage VPS card headline.
     func summary(for recordIDs: [UUID], now: Date = Date()) -> HealthDisplay {
         Self.summarize(recordIDs.map { display(for: $0, now: now) })
@@ -262,12 +287,39 @@ final class HealthCoordinator: ObservableObject {
         // #456: a probe under a live system VPN is a mixed-path measurement —
         // its signalling rides the tunnel it is measuring. Honest answer: we
         // could not check.
-        if tunnel.activeMode == .vpn && tunnel.state.isConnected {
-            noteInconclusive(recordID: record.id, reason: .vpnActive)
-            LogStore.shared.log(.connection,
-                "Health: skipped \(record.displayName) — can't probe while the system VPN is up")
-            return
+        // boc #472 was: `tunnel.state.isConnected`. The system installs the VPN
+        // routes when the provider answers `startTunnel`, which is BEFORE the
+        // app's own state machine reaches `.connected` — and again while it sits
+        // in `.waitingForNetwork`. In that window the guard was off but the
+        // whole device was already tunnelled, so a Telemost probe went out
+        // through the tunnel, reached Yandex from the SERVER's address, and was
+        // refused (403) — recorded as a hard "the service refused you" verdict
+        // about a node that is perfectly fine. Reported from the field: connect
+        // through jitsi, turn the VPN on, and the telemost row goes red.
+        // In VPN mode the only states where the routes are provably NOT ours are
+        // idle and failed.
+        if tunnel.activeMode == .vpn {
+            switch tunnel.state {
+            case .disconnected, .failed:
+                break   // no tunnel: a direct probe measures what it claims to
+            case .connecting, .connected, .waitingForNetwork:
+                // #472: "I cannot check right now" must not erase "I verified
+                // this two minutes ago" — a fresh measurement is better evidence
+                // than the absence of one, and overwriting it made a working
+                // node go grey the moment the VPN came up.
+                if let seen = store[record.id.uuidString],
+                   Date().timeIntervalSince(seen.checkedAt) < HealthPolicy.freshSeconds {
+                    LogStore.shared.log(.connection,
+                        "Health: kept the fresh verdict for \(record.displayName) — the system VPN is up, so no new measurement is possible")
+                    return
+                }
+                noteInconclusive(recordID: record.id, reason: .vpnActive)
+                LogStore.shared.log(.connection,
+                    "Health: skipped \(record.displayName) — can't probe while the system VPN is up")
+                return
+            }
         }
+        // eoc #472
 
         let probe = TunnelManager.recordForBatchPing(
             record, clientID: TunnelManager.batchPingClientID(recordID: record.id))

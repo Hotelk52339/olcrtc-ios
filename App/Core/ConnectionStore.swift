@@ -102,6 +102,13 @@ final class ConnectionStore: ObservableObject {
 
     func update(_ r: ConnectionRecord) {
         if let i = connections.firstIndex(where: { $0.id == r.id }) {
+            // #472: every path that corrects a record goes through here — rotate
+            // key, recover, reconfigure, the editor, a subscription refresh. If
+            // the connection this record describes changed, the stored health
+            // verdict measured something else; drop it rather than show it.
+            let before = HealthCoordinator.fingerprint(connections[i])
+            let after  = HealthCoordinator.fingerprint(r)
+            if before != after { HealthCoordinator.shared.forget(recordID: r.id) }
             connections[i] = r
             // boc #470: `save()` never deletes a Keychain item for a secret that
             // is "" — on purpose: a Keychain READ failure (device locked before
