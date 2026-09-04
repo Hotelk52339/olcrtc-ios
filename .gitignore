@@ -174,3 +174,6 @@ local/
 # Project-specific
 olcrtc-ios.xcodeproj/
 App/Mobile.xcframework/
+
+# Local editor/tooling context; the project context itself is AGENTS.md
+CLAUDE.md

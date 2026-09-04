@@ -6,7 +6,7 @@ import SwiftUI
 // #456: the ONE owner of verified-health evidence. Nothing else in the app is
 // allowed to run a health probe, and nothing else writes `NodeHealth`.
 //
-// WHY A SINGLETON (a deliberate deviation from CLAUDE.md's "app-wide stores are
+// WHY A SINGLETON (a deliberate deviation from AGENTS.md's "app-wide stores are
 // @StateObject on MainTabView, passed by initializer"):
 //   • it is read by views on TWO tabs (Manage VPS + Connections) AND written by
 //     NON-view code (`TunnelManager`, from `runEngine` and the keep-alive loop),
@@ -176,7 +176,7 @@ final class HealthCoordinator: ObservableObject {
     /// What a verdict is about. Two records with the same fingerprint can be
     /// measured interchangeably; a different one needs its own measurement.
     /// The key is HASHED — `NodeHealth` is persisted to UserDefaults and a
-    /// secret must never land there (CLAUDE.md).
+    /// secret must never land there (AGENTS.md).
     nonisolated static func fingerprint(_ record: ConnectionRecord) -> String? {
         guard case .olcrtc(let p) = record.details else { return nil }
         return "\(p.carrier)|\(p.transport)|\(p.roomID)|\(p.clientID)|\(p.key.hashValue)"

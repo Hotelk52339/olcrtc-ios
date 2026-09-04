@@ -92,7 +92,7 @@ enum L10n: String, CaseIterable {
     // Connections screen, so the header lost its section and its last use.
     case unitSeconds                        // "s" unit after numeric fields
     case sshTestInvalidPort                 // add-host SSH reachability test: bad port
-    // #455: localise LogLevel.label (was English-only — CLAUDE.md flagged it)
+    // #455: localise LogLevel.label (was English-only — AGENTS.md flagged it)
     case logLevelOff
     case logLevelErrors
     case logLevelNormal

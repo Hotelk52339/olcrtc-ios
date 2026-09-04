@@ -40,7 +40,7 @@ final class CarrierTransportMatrixTests: XCTestCase {
     // (telemost/videochannel, wbstream/seichannel, wbstream/videochannel) were
     // not, so a submodule bump or a stray edit flipping one of them — which
     // disables a chip and changes `failoverRank` — left every assertion green.
-    // CLAUDE.md names this test as the sole guard of the hand-synced table, so
+    // AGENTS.md names this test as the sole guard of the hand-synced table, so
     // it iterates carriers × transports: any cell change fails here. Update the
     // table and this snapshot together on every submodule bump.
     func testMatrixMatchesUpstream() {

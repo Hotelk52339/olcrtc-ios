@@ -398,7 +398,7 @@ struct ConnectionsView: View {
     }
 
     /// #459: the hero's subject is skipped. `excluded` is read once per SECTION,
-    /// never per row (CLAUDE.md: don't derive in `body` on a view that
+    /// never per row (AGENTS.md: don't derive in `body` on a view that
     /// re-evaluates ~10×/s during a speed test), and the filtering is a per-row
     /// `if` rather than a `filter` so no new array is built either.
     private func connectionRows(_ items: [ConnectionRecord]) -> some View {

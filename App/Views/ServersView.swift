@@ -2509,7 +2509,7 @@ struct ServersView: View {
     /// id or the CURRENT label only — so a record installed in Russian kept
     /// «zaza · Яндекс Телемост» under an English hero that already said
     /// "Yandex Telemost" above it. A persisted token stays locale-stable
-    /// (CLAUDE.md); the service's name is drawn at render time from the id.
+    /// (AGENTS.md); the service's name is drawn at render time from the id.
     /// #470 was: multi ? "\(host.label) · \(CarrierTransportMatrix.carrierLabel(carrier))" : host.label
     static func recordName(host: ServerHost, carrier: String, multi: Bool) -> String {
         multi ? "\(host.label) · \(carrier)" : host.label

@@ -10,7 +10,7 @@ enum LogLevel: Int, CaseIterable, Codable, Comparable {
     case debug   = 3   // current debugLogging=true
     case verbose = 4   // everything including Pion noise
 
-    // #455: localised (was English-only — CLAUDE.md flagged it). Computed at the
+    // #455: localised (was English-only — AGENTS.md flagged it). Computed at the
     // point of use (the log-level Picker), so it follows settings.language live.
     var label: String {
         switch self {

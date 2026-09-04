@@ -209,15 +209,15 @@ block once it is clearly obsolete — tag that removal with the new task ID.
 
 ---
 
-## AI-assisted contributions
+## Generated and assisted contributions
 
-Using an AI assistant is welcome, and these conventions apply to AI-written code
-exactly as to hand-written code. Two rules:
+Code written with the help of tooling is welcome, and these conventions apply to
+it exactly as to hand-written code. Two rules:
 
 - You are responsible for what you submit. Review and understand every line, run
   the tests and the parity check, and be ready to answer review questions about
-  the change — the model having written it is not a defense.
-- Point your assistant at **[AGENTS.md](AGENTS.md)**, the project-context file:
+  the change — not having written it yourself is not a defense.
+- Point your tooling at **[AGENTS.md](AGENTS.md)**, the project-context file:
   the build/test/generate commands, the `srv.sh` parity rule, the task-marker
   convention, the versioning invariant, and the hard don'ts. Keep it and this
   file consistent.
