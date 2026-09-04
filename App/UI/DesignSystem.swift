@@ -289,8 +289,12 @@ struct OlcSectionHeader<Trailing: View>: View {
             Spacer(minLength: 8)
             trailing()
         }
-        .padding(.horizontal, 4)
-        .padding(.bottom, 7)
+        // boc #471: B8 — the app's ONE section-header treatment was itself off
+        // the grid, with two ad-hoc literals. Same values, through the tokens.
+        // #471 was: .padding(.horizontal, 4) / .padding(.bottom, 7)
+        .padding(.horizontal, Theme.Metrics.s1)
+        .padding(.bottom, Theme.Metrics.s2)
+        // eoc #471
     }
 }
 
@@ -493,7 +497,10 @@ struct OlcOverflowMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(items) { item in
+            // #470: `OlcMenuItem`'s id is derived from its content, so two
+            // dividers (or two same-labelled actions) collided and SwiftUI
+            // dropped one. Position is the stable identity inside one menu.
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 switch item.kind {
                 case .divider:
                     Divider()
@@ -735,113 +742,14 @@ struct FlowLayout: Layout {
     }
 }
 
-// MARK: - OlcIconButton (#341)
-//
-// 44×44 icon-only button on the standard fill with a per-action tint, so a
-// row of quick actions reads apart at a glance (the Manage VPS card's
-// Check / Container logs / Reconfigure). Parent `.disabled` dims to 0.35.
-
-struct OlcIconButton: View {
-    // #427: a button now shows either an SF Symbol or a custom asset symbol (e.g.
-    // the robot — there is no robot SF Symbol). Exactly one is set per init.
-    private let systemImage: String?
-    private let assetImage: String?
-    var tint: Color = Theme.Palette.accent
-    let action: () -> Void
-
-    init(systemImage: String, tint: Color = Theme.Palette.accent, action: @escaping () -> Void) {
-        self.systemImage = systemImage; self.assetImage = nil; self.tint = tint; self.action = action
-    }
-    // #427: custom template asset (asset catalog), rendered + tinted like a symbol.
-    init(assetImage: String, tint: Color = Theme.Palette.accent, action: @escaping () -> Void) {
-        self.systemImage = nil; self.assetImage = assetImage; self.tint = tint; self.action = action
-    }
-
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        Button(action: action) {
-            glyph
-                .foregroundStyle(tint)
-                .frame(minWidth: Theme.Metrics.controlHeight,
-                       minHeight: Theme.Metrics.controlHeight)
-                .background(Theme.Palette.fill)
-                .clipShape(plate)
-                // #457: an edge, so the plate survives Light (see OlcButton).
-                .overlay { plate.strokeBorder(Theme.Palette.fillBorder, lineWidth: 1) }
-                .contentShape(plate)
-        }
-        .buttonStyle(OlcPressStyle())
-        .opacity(isEnabled ? 1 : 0.35)
-    }
-
-    private var plate: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous)
-    }
-
-    @ViewBuilder
-    private var glyph: some View {
-        if let assetImage {
-            // #457 was: a fixed 23×23 asset frame beside a fixed 17pt symbol —
-            // neither moved with the app's font-size slider. `.scaledToFit()`
-            // inside a Dynamic-Type square keeps the asset and the SF Symbol the
-            // same size at every setting.
-            Image(assetImage)
-                .resizable()
-                .renderingMode(.template)
-                .scaledToFit()
-                .frame(width: assetSide, height: assetSide)
-        } else if let systemImage {
-            // #457 was: .system(size: 17, weight: .semibold) — a fixed point size.
-            Image(systemName: systemImage)
-                .font(Theme.Typography.bodyStrong)
-        }
-    }
-
-    /// #457: the asset glyph tracks Dynamic Type through `@ScaledMetric`, which
-    /// is the only way a raster asset can follow the text-size setting.
-    @ScaledMetric(relativeTo: .body) private var assetSide: CGFloat = 21
-}
-
-// MARK: - OlcMiniStat (#341)
-//
-// One-line compact metric for dense strips: an uppercase caption label + a
-// footnote (≈13pt) monospaced value, side by side. The Manage VPS card uses
-// these where the two-deck OlcMetric row used to be.
-
-struct OlcMiniStat: View {
-    let label: String
-    let value: String
-    var tone: Color? = nil
-
-    var body: some View {
-        // (audit) was: HStack(spacing: 4) with default center alignment — the
-        // caption2 label and footnote value sat optically misaligned once RAM
-        // values got longer (ServersView.shortRAM is the paired data-side fix).
-        // First-text-baseline alignment + a gentle scale floor on the value.
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            // #457 was: `.caption2` on `textTertiary` — a 30%-opacity 11pt label
-            // that all but disappeared on a white card. Step 5 of the scale, on
-            // `textSecondary`.
-            Text(label)
-                .font(Theme.Typography.captionStrong)
-                .textCase(.uppercase)
-                .tracking(0.4)
-                .foregroundStyle(Theme.Palette.textSecondary)
-            // #457 was: + .minimumScaleFactor(0.85) — shrinking a measured value
-            // rather than letting it size honestly.
-            Text(value)
-                .font(.system(.footnote, design: .monospaced).weight(.semibold))
-                .foregroundStyle(tone ?? Theme.Palette.textPrimary)
-        }
-        .lineLimit(1)
-        // #369: the label + value were two separate Text nodes, so VoiceOver
-        // read e.g. "Disk" and "36/40G" as disconnected fragments. Speak each
-        // mini-stat as one element ("Disk 36/40G").
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label) \(value)")
-    }
-}
+// boc #471: B8 — `OlcIconButton` (#341) and `OlcMiniStat` (#341) were deleted.
+// Both were built for a Manage-VPS card layout that no longer exists, and a
+// repo-wide grep found ZERO call sites outside this file's own preview: they
+// made the design system look larger than the app that draws it, which is how
+// a system stops describing the app. If a row of tinted icon-only actions or a
+// one-line label+value strip is ever wanted again, `OlcButton` (icon-only,
+// `role: .ghost`) and `OlcMetric` already cover both shapes.
+// eoc #471
 
 // MARK: - OlcProgressBar (#338)
 //
@@ -890,8 +798,9 @@ struct OlcMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                // #457 was: `textTertiary` — see OlcMiniStat; a metric's label
-                // is what makes its number mean anything.
+                // #457 was: `textTertiary` — a metric's label is what makes its
+                // number mean anything. (#471: the sibling this pointed at,
+                // `OlcMiniStat`, is gone; the reasoning is unchanged.)
                 Text(label)
                     .tracking(0.4)
                     .font(Theme.Typography.metricLabel)
@@ -986,7 +895,12 @@ extension View {
             // Settings. The 16pt stacked *on top* of that ~20pt section inset, so
             // Connections / Manage VPS / Config cards were ~16pt narrower per side.
             // #426 was: .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+            // #471: B10 — the SAME 8pt, now spelled as the grid step it always
+            // was, so the card-to-card gap (s2 + the list's section spacing + s2)
+            // reads as one sum on the grid instead of a literal plus a default.
+            // #471 was: EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
+            .listRowInsets(EdgeInsets(top: Theme.Metrics.s2, leading: 0,
+                                      bottom: Theme.Metrics.s2, trailing: 0))
             .listRowSeparator(.hidden)
     }
 
@@ -1074,7 +988,8 @@ private extension View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Diagnostics").foregroundStyle(Theme.Palette.textPrimary)
             Text("Sources agree · 203.0.113.7")
-                .font(.system(.caption, design: .monospaced))
+                // #471: step 6 through its token, not a re-spelled raw font.
+                .font(Theme.Typography.mono)
                 .foregroundStyle(Theme.Palette.textSecondary)
         }
     }
@@ -1218,23 +1133,7 @@ private extension View {
     .olcPreview()
 }
 
-#Preview("OlcIconButton + OlcMiniStat") {
-    VStack(alignment: .leading, spacing: 20) {
-        HStack(spacing: 8) {
-            OlcIconButton(systemImage: "antenna.radiowaves.left.and.right") {}
-            OlcIconButton(systemImage: "arrow.down.doc", tint: Theme.Palette.green) {}
-            OlcIconButton(systemImage: "slider.horizontal.3", tint: Theme.Palette.orange) {}
-            OlcIconButton(systemImage: "slider.horizontal.3", tint: Theme.Palette.orange) {}.disabled(true)
-        }
-        HStack(spacing: 8) {
-            OlcMiniStat(label: "Ping", value: "27ms", tone: Theme.Palette.green)
-            OlcMiniStat(label: "Disk", value: "36/40G")
-            OlcMiniStat(label: "RAM", value: "241/2048M")
-            OlcMiniStat(label: "Up", value: "11d")
-        }
-    }
-    .olcPreview()
-}
+// #471: the preview of the two deleted components went with them.
 
 #Preview("OlcEmptyState") {
     OlcEmptyState(systemImage: "network",

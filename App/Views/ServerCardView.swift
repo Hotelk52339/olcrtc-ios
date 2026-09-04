@@ -10,12 +10,29 @@ import SwiftUI
 // closure, explicitly typed, and every sub-view here stays under ~20 lines.
 //
 // Reading order on the card is the order of the questions the owner asks:
-//   1 which server is this        → header
-//   2 what is true right now      → verdict (headline + how old it is + failures)
-//   3 what runs on it, does it work → PROTOCOLS (the content, above the numbers)
-//   4 how is the machine doing    → metrics, demoted (#461 was: + the read stamp)
-//   5 what do I do next           → one frequent verb + ONE full-width action
-//   6 what else can I do to it    → "Manage server ›", a push (#459)
+//   1 which server is this        → header (+ the machine, as ONE caption)
+//   2 what is true right now      → the status pill, and nothing else
+//   3 what runs on it, does it work → PROTOCOLS (the content)
+//   4 what do I do next           → ONE full-width action
+//   5 what else can I do to it    → "Logs" / "Manage ›", one row of links
+//
+// boc #471: five answers, not six — and each of them stated ONCE. The card used
+// to say its one claim three times (pill → `readStamp` → `failureBanner`), its
+// one age three times (pill subtitle, read stamp, each row's chip) and a
+// millisecond value twice in two different units (the health chip's end-to-end
+// latency, and PING — a TCP-22 round-trip — in the metrics grid beside it).
+// What left the card in this pass, and where each fact went:
+//   • `readStamp` → `HostHeadline.reduce` dates the claim it qualifies;
+//   • `failureBanner` → the same headline's tally ("2 of 2 protocols
+//     verified 2 min ago"), so "Working" and "not working" never share a card;
+//   • `ServerMetricsGrid` → one tertiary caption under the address
+//     (disk / RAM / uptime) plus read-only rows on the Manage screen;
+//   • PING → the Manage screen only. The pill's `.unreachable` state already
+//     says whether the host answers, and a TCP-22 round-trip is not a user
+//     fact — it only ever contradicted the verified latency on the row below;
+//   • `quickRow` → a text link beside "Manage ›", so the card ends on ONE
+//     filled button instead of three action treatments.
+// eoc #471
 //
 // boc #459: the card grows into the empty half of the Servers screen instead of
 // something new being invented to fill it — 20pt between blocks, roomier
@@ -24,6 +41,9 @@ import SwiftUI
 // rather than buried in a 13-item ⋯ menu.
 // #461 was: "the four affordances", Check server among them — it duplicated
 // pull-to-refresh, so it is gone (ServersView.quickActions).
+// #471 was: "roomier protocol rows" meant each row drew its own plate; and the
+// last of the promoted affordances (Container logs) was still a full-width
+// button. Rows separate with a hairline now and the verb is a link.
 // What LEFT the card in the same pass:
 //   • the process caption ("Server process is running · read 2m ago") — it
 //     restated the status pill and each protocol row already says whether its
@@ -76,31 +96,44 @@ enum ServerPrimaryAction: Equatable {
     var role: OlcButton.Role {
         switch self {
         case .busy: return .secondary
-        case .stop: return .danger
+        // #471 was: `.danger`. On a healthy server the LOUDEST element of the
+        // whole card was the action the owner wants least often, painted in the
+        // colour this app reserves for destruction ("Wipe all olcrtc data").
+        // Stopping is undone by the same button one tap later; red stays on the
+        // Manage screen, where the irreversible verbs live.
+        case .stop: return .secondary
         default:    return .primary
         }
     }
 }
 
-/// #457: the numbers strip, pre-formatted by ServersView — its `shortUsage` /
-/// `shortRAM` / `shortUptime` statics stay there because `VPSStatFormattingTests`
-/// pins them by name.
-struct ServerCardMetrics {
-    let ping: String
-    let pingTone: Color
-    let disk: String
-    let ram: String
-    let uptime: String
-}
+// #471 was: `struct ServerCardMetrics` — the input to `ServerMetricsGrid`,
+// both deleted below. The type survives as `ServerMachineStats`
+// (App/Views/ServerAdvancedView.swift), where the four readings are now
+// read-only Form rows; the card keeps only the three that describe the MACHINE,
+// pre-joined by ServersView into one caption (`machineLine`).
 
-/// #459: one visible quick action. It sits above the primary button — the verb
+/// #471 was: the card's `quickRow` input. `ServerCardView` no longer draws a
+/// quick-action button at all — "Container logs" is a text link in `manageRow`
+/// — so nothing in the app builds one of these any more. The type stays because
+/// `Review470Chunk6Tests.testQuickActionIdentityIsStableAcrossRebuilds` pins its
+/// identity rule by name; delete both together.
+///
+/// #459: one visible quick action. It sat above the primary button — the verb
 /// the owner reaches for constantly (Container logs), which used to cost a ⋯ tap
 /// plus a scan of thirteen items. Value-driven and explicitly typed, like every
 /// other input on this card, so the row costs the type-checker nothing.
 /// #461 was: TWO of them, Check server first. `quickRow` still renders however
 /// many it is handed, and only compacts them when there is more than one.
 struct ServerQuickAction: Identifiable {
-    let id = UUID()
+    // #470 was: `let id = UUID()` — a fresh identity on every parent render.
+    // `ServersView.quickActions(host)` rebuilds this array on every body
+    // evaluation (each provisioner line, each health tick, each tunnel
+    // publish), so `ForEach(quickActions)` removed and re-inserted the button
+    // every time — animated whenever the render was the one `.animation(value:
+    // headline)` covers, and dropping a press held on it. The verb IS the
+    // identity: same symbol + title ⇒ same button.
+    var id: String { "\(systemImage)|\(title)" }
     let title: String
     let systemImage: String
     let action: () -> Void
@@ -116,34 +149,41 @@ struct ServerCardView: View {
     let headline: HostHeadline
     /// Progress-bar fraction while an op runs; nil leaves the slot empty.
     let progress: Double?
-    /// #459: how old everything this card claims is ("read 2 min ago"), or the
-    /// honest "nothing has been read yet". The ONLY survivor of the deleted
-    /// process caption: an age the user can see is the age of the reading.
-    /// #459 was: `processCaption` — "Server process is running · read 2m ago".
-    /// #461: rendered by `readStamp`, under the status pill — one probe produced
-    /// the pill, the protocol rows and the numbers, so it dates all three from
-    /// the top instead of the bottom edge of the card.
-    let readCaption: String
-    /// Protocols on this server that a probe found BROKEN or data-less.
-    let failingCount: Int
-    /// How many protocols that count is out of.
-    let protocolCount: Int
-    let metrics: ServerCardMetrics
+    // boc #471: four inputs became one caption.
+    // #471 was: `readCaption` (drawn by `readStamp`), `failingCount` /
+    // `protocolCount` (drawn by `failureBanner`) and `metrics`
+    // (`ServerMetricsGrid`). The age and the tally are arguments to
+    // `HostHeadline.reduce` now, so they reach the card already folded into the
+    // ONE claim the pill makes; the machine numbers reach it as one line.
+    /// Disk / RAM / uptime, pre-joined by ServersView ("Disk 3.5/8.0G · RAM
+    /// 0.4/1.9G · up 14 h"), or "" when nothing has been read — three em-dashes
+    /// are noise, not honesty, and the pill already says the host has not
+    /// answered. Built from the same `shortUsage` / `shortRAM` / `shortUptime`
+    /// statics `VPSStatFormattingTests` pins by name.
+    let machineLine: String
+    // eoc #471
     let rows: [SSHRunner.CarrierInfo]
     /// A protocol-level op (add / remove / sibling start-stop) is in flight.
     let rowsBusy: Bool
     let canAddProtocol: Bool
     let actionsDisabled: Bool
     let primary: ServerPrimaryAction
-    /// #459: the frequent verbs, promoted out of the menu. Empty ⇒ the row is
-    /// not drawn at all (nothing is installed yet, so Logs would read an empty
-    /// server and the card's whole offer is its primary CTA).
-    let quickActions: [ServerQuickAction]
+    /// #471: there is a container on this server to read logs FROM. Before an
+    /// install the card's whole offer is its primary CTA, so the Logs link is
+    /// absent rather than opening an empty server — the same gate
+    /// `ServersView.quickActions` used to apply to the button it replaces.
+    /// #471 was: `quickActions: [ServerQuickAction]` — a full-width grey button
+    /// stacked above the primary one, a THIRD action treatment on a card that
+    /// has two.
+    let canOpenLogs: Bool
     /// The safe, occasional action set for this server (5 items). Everything
     /// rare or destructive lives behind `onManage` (#459).
     let menuItems: [OlcMenuItem]
     let onPrimary: () -> Void
     let onAddProtocol: () -> Void
+    /// #471: the container log — a text link beside "Manage ›" now, not a
+    /// full-width button above the primary action.
+    let onLogs: () -> Void
     /// #459: push the full server-management screen.
     let onManage: () -> Void
     /// Row factory — ServersView owns the resolution from a container to a record.
@@ -157,16 +197,19 @@ struct ServerCardView: View {
     var body: some View {
         OlcCard {
             // #459: 12 → 20 between blocks (Theme.Metrics.s5, "block ↔ block
-            // inside a card"). Six children, five gaps: the card reads as five
-            // answers instead of one dense slab, and the ~40pt it costs comes
-            // straight out of the empty half of the screen.
+            // inside a card"). #471: FIVE children, four gaps — the card reads
+            // as five answers instead of one dense slab, and the ~40pt that
+            // costs comes straight out of the empty half of the screen.
+            // #471 was: "Six children, five gaps" — `metricsBlock` was one.
             // #459 was: VStack(alignment: .leading, spacing: 12) { header;
             // verdict; protocolsSection; metricsStrip; footer }
             VStack(alignment: .leading, spacing: Theme.Metrics.s5) {
                 header
-                verdict
+                // #471 was: `verdict` (statusRegion + readStamp +
+                // failureBanner) and, two blocks lower, `metricsBlock`. The
+                // pill IS the verdict; the machine rides in `header`.
+                statusRegion
                 protocolsSection
-                metricsBlock
                 actions
                 manageRow
             }
@@ -177,79 +220,75 @@ struct ServerCardView: View {
     // MARK: 1 — identity
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
+        // #471: `8` / `1` → the grid. Same rhythm, through the tokens that name it.
+        HStack(alignment: .top, spacing: Theme.Metrics.s2) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
                 Text(name)
-                    .font(.headline)
+                    // #471 was: `.font(.headline)` — the card's SUBJECT, drawn
+                    // one step below the type scale's subject step.
+                    .font(Theme.Typography.title)
                     .foregroundStyle(Theme.Palette.textPrimary)
                 Text(addressLine)
-                    .font(.system(.caption, design: .monospaced))
+                    // #471 was: `.system(.caption, design: .monospaced)` — the
+                    // same step, now through the token that names it (mono is
+                    // for addresses and ports; this is one).
+                    .font(Theme.Typography.mono)
                     .foregroundStyle(Theme.Palette.textSecondary)
+                machineCaption
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Theme.Metrics.s2)
             OlcOverflowMenu(items: menuItems)
                 .disabled(actionsDisabled)
         }
     }
 
-    // MARK: 2 — what is true right now
-
-    /// #459 was: a third line here, `Text(processCaption)` — "Server process is
-    /// running · read 2m ago". The pill directly above it already answers "what
-    /// is true right now", and each protocol row answers it per container, so
-    /// the sentence was the same claim written a third time.
-    /// #461: its AGE comes back to this block — see `readStamp`.
-    private var verdict: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            statusRegion
-            readStamp
-            failureBanner
+    /// #471: the machine, demoted for real. `.monospacedDigit()` aligns the
+    /// digits from card to card without putting a mono FACE on a sentence.
+    /// No `lineLimit` and no `minimumScaleFactor`, for the reason the deleted
+    /// grid had neither: a measured value that shrinks or truncates is a value
+    /// the owner cannot read, and an unreadable truth was the whole failure.
+    /// It dims with `isBusy` exactly as the grid did — a reading taken before
+    /// the running op is the one thing on the card the op may already have
+    /// invalidated.
+    /// #471 was: `ServerMetricsGrid` — four uppercase tracked labels over
+    /// body-size monospaced semibold values in a 2×2 grid: `df` / `free` /
+    /// `uptime` at data-display weight inside a consumer card.
+    @ViewBuilder
+    private var machineCaption: some View {
+        if !machineLine.isEmpty {
+            Text(machineLine)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Palette.textTertiary)
+                .monospacedDigit()
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(isBusy ? 0.45 : 1)
         }
     }
 
-    // boc #461: "why is *checked 4 min ago* down at the bottom there, where you
-    // can barely see it?" — two defects in one line, and this is the first.
+    // MARK: 2 — what is true right now
     //
-    // WRONG PLACE. The stamp dated the four machine numbers, so #459 pinned it
-    // to their top-right corner: a right-aligned tertiary caption ~65% down a
-    // ~560pt card, which on the LAST card also ends up under the tab bar (that
-    // half is fixed on the list side — `ServersView.listBars`). But the card's
-    // CLAIM is the status pill, and how old a claim is belongs beside the claim:
-    // IVPN puts exactly this freshness caption directly above the name it
-    // qualifies, never at the bottom. The numbers below come from the very same
-    // reading, so nothing down there is left undated.
+    // boc #471: the pill, and nothing else.
     //
-    // WRONG WEIGHT. `textTertiary` is the palette's lowest-contrast step, and
-    // "you can barely see it" is the other half of the complaint.
-    // `textSecondary` is the step for a supporting fact meant to be readable.
+    // #471 was: `verdict` — a VStack of `statusRegion` + `readStamp` +
+    // `failureBanner`, i.e. the card's one claim ("Working"), how old that
+    // claim is ("read 2 min ago") and a contradiction of it ("1 of 2 protocols
+    // are not working") stacked 8pt apart in three different weights and two
+    // different tones. The age and the count are inputs to
+    // `HostHeadline.reduce` now (App/Models/HostDisplay.swift), which folds
+    // both into the pill's own subtitle — "2 of 2 protocols verified 2 min
+    // ago" — and flips the title to "Partly working" when they disagree. One
+    // claim, dated once, counted once.
     //
-    // LEADING-aligned, matching the pill above it — a trailing caption under a
-    // leading pill floats against nothing.
-    //
-    // It does NOT dim with `isBusy` the way the metrics below it do: an op in
-    // flight has not replaced the last real reading yet, so its age is still the
-    // truth, and the block it now lives in is the one the card never dims.
-    //
-    // #461 was: the first child of `metricsBlock`, with
-    // `.multilineTextAlignment(.trailing)` + `.frame(maxWidth: .infinity,
-    // alignment: .trailing)` + `Theme.Palette.textTertiary`.
-    private var readStamp: some View {
-        Text(readCaption)
-            // No `lineLimit` and no `minimumScaleFactor`, for the reason the
-            // metrics grid below has neither: the Russian never-read stamp is a
-            // whole sentence, and a stamp that truncates is a stamp that lies
-            // about how old the reading is (#459).
-            .font(Theme.Typography.caption)
-            .foregroundStyle(Theme.Palette.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-    // eoc #461
+    // #461's placement argument survives the deletion intact: how old a claim
+    // is belongs BESIDE the claim, never at the bottom edge of the card. The
+    // subtitle is as beside it as a line can get.
+    // eoc #471
 
     /// #341/#335: fixed footprint — the pill always occupies the same slot and
     /// the bar below only fades its opacity, so starting an op never reflows the
     /// card or animates the pill from one anchor to another.
     private var statusRegion: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471 was: 8
             OlcStatusPill(tone: headline.tone, title: headline.title, subtitle: headline.subtitle) {
                 if isBusy { ProgressView().controlSize(.small) }
             }
@@ -259,226 +298,138 @@ struct ServerCardView: View {
         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
     }
 
-    /// #457: the headline reports the BEST evidence on purpose ("at least one
-    /// protocol works" is the useful sentence), which on its own lets a server
-    /// with one working and one dead protocol read as simply fine — a known
-    /// failure hidden behind an average. It is never allowed to be silent:
-    /// glyph + sentence + count, right under the claim it qualifies.
-    @ViewBuilder
-    private var failureBanner: some View {
-        if failingCount > 0 {
-            Label(L10n.vpsProtocolsFailing_fmt.formatted(failingCount, protocolCount),
-                  systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(Theme.Palette.orange)
-        }
-    }
-
     // MARK: 3 — the protocols (the content)
 
     @ViewBuilder
     private var protocolsSection: some View {
         if !rows.isEmpty || canAddProtocol {
-            // #459 was: spacing 6 — see ProtocolRowView's own padding note.
-            VStack(alignment: .leading, spacing: Theme.Metrics.s2 + 2) {
+            // #471 was: `Theme.Metrics.s2 + 2` between rows that each drew their
+            // own inset plate. The plate is gone (ProtocolRowView), so the rows
+            // separate the way an inset list does — one grid step and a
+            // hairline — and a protocol looks the same object here as it does
+            // on Connect.
+            VStack(alignment: .leading, spacing: Theme.Metrics.s3) {
                 protocolsHeader
-                ForEach(rows) { info in row(info) }
+                ForEach(rows) { info in protocolRow(info) }
             }
             .opacity(isBusy ? 0.45 : 1)
         }
     }
 
+    /// #471: the hairline goes ABOVE every row but the first, so the header
+    /// keeps its own gap and the list never ends on a dangling separator.
+    @ViewBuilder
+    private func protocolRow(_ info: SSHRunner.CarrierInfo) -> some View {
+        if info.id != rows.first?.id { Divider().overlay(Theme.Palette.separator) }
+        row(info)
+    }
+
+    /// #471: the design system's ONE section-header treatment, which until now
+    /// had zero call sites while five views hand-rolled their own small-caps
+    /// label. This one was caption2 / tertiary / no tracking; the component is
+    /// captionStrong / secondary / 0.6 and uppercases through `textCase`, so the
+    /// string is passed as written.
+    /// #471 was: an HStack + `.uppercased()` + `.font(.caption2)`, with the
+    /// busy spinner beside the title; it rides with the + button now, which is
+    /// the only place `OlcSectionHeader` offers and the end of the row the
+    /// spinner's work belongs to anyway.
     private var protocolsHeader: some View {
-        HStack(spacing: 8) {
-            Text(L10n.protocolsSectionHeader.localized().uppercased())
-                .font(.caption2)
-                .foregroundStyle(Theme.Palette.textTertiary)
-            if rowsBusy { ProgressView().controlSize(.mini) }
-            Spacer(minLength: 0)
-            if canAddProtocol { addProtocolButton }
+        OlcSectionHeader(L10n.protocolsSectionHeader.localized()) {
+            HStack(spacing: Theme.Metrics.s2) {
+                if rowsBusy { ProgressView().controlSize(.mini) }
+                if canAddProtocol { addProtocolButton }
+            }
         }
     }
 
     private var addProtocolButton: some View {
         Button(action: onAddProtocol) {
             Label(L10n.addProtocolAction.localized(), systemImage: "plus.circle")
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471 was: `.font(.caption)`
         }
         .disabled(actionsDisabled)
     }
 
-    // MARK: 4 — the machine (supporting numbers, below the protocols)
+    // MARK: 4 — what do I do next (#471: ONE filled button)
 
-    // #458: the four readings used to sit in ONE row with each label and value
-    // side by side, so a cell cost the SUM of their widths and the row could not
-    // fit on a phone in Russian. `ServerMetricsGrid` puts the label ABOVE the
-    // value (a cell costs the wider of the two) in two columns, and folds to one
-    // column at accessibility text sizes. Nothing shrinks — scaling text down
-    // makes the reading unreadable, which defeats the point of showing it.
-    /// #459: `ServerMetricsGrid` (#458) is what makes these values structurally
-    /// un-truncatable and must not be regressed.
-    /// #461 was: the grid with `readCaption` pinned above it, trailing-aligned.
-    /// The stamp moved up to `readStamp`, under the claim it dates; these
-    /// numbers come from the same reading, so they are still dated — one block
-    /// further away, by the line that now qualifies the whole card.
-    private var metricsBlock: some View {
-        ServerMetricsGrid(metrics: metrics)
-            .opacity(isBusy ? 0.45 : 1)
-    }
-
-    // MARK: 5 — what do I do next (two frequent verbs + the one primary action)
+    // #471 was: `metricsBlock` (`ServerMetricsGrid`, deleted with this block)
+    // sat here, and `actions` wrapped `quickRow` — a full-width grey "Container
+    // logs" — above the primary button. A healthy card therefore ended in THREE
+    // action treatments: a grey full-width button, a RED full-width button, a
+    // hairline, and a tiny grey caption link. Two now, and the loud one is the
+    // only one the card is actually offering.
 
     private var actions: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.s3) {
-            quickRow
-            OlcButton(primary.title, systemImage: primary.systemImage,
-                      role: primary.role, isBusy: primary.isBusy,
-                      fillWidth: true, action: onPrimary)
-                .disabled(actionsDisabled && !primary.isBusy)
-        }
+        OlcButton(primary.title, systemImage: primary.systemImage,
+                  role: primary.role, isBusy: primary.isBusy,
+                  fillWidth: true, action: onPrimary)
+            .disabled(actionsDisabled && !primary.isBusy)
     }
 
-    /// #459: the verbs that were reached for constantly through the ⋯ menu.
-    /// They can never duplicate the primary button: `primary == .check` happens
-    /// only on `HostBase.unknown`, and a host nothing has read carries no
-    /// container, so ServersView hands us an empty array exactly then.
-    /// #461: `compact` only while there are SEVERAL of them. With **Check
-    /// server** deleted the row holds ONE button, and a 32pt runt above a 44pt
-    /// primary reads as a gap where something used to be. At the full
-    /// `Theme.Metrics.controlHeight` the card ends on two stacked, equal,
-    /// full-width buttons — Mullvad's `ButtonPanel { locationButton;
-    /// actionButton }` at `VStack(spacing: 16)` — which reads finished.
-    /// #461 was: `compact: true`, unconditionally.
-    @ViewBuilder
-    private var quickRow: some View {
-        if !quickActions.isEmpty {
-            HStack(spacing: Theme.Metrics.s2) {
-                ForEach(quickActions) { item in
-                    OlcButton(item.title, systemImage: item.systemImage,
-                              role: .secondary, fillWidth: true,
-                              compact: quickActions.count > 1,
-                              action: item.action)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .disabled(actionsDisabled)
-        }
-    }
-
-    // MARK: 6 — everything else (#459)
+    // MARK: 5 — everything else (#459)
 
     /// #459: the way to the rare and the destructive. Eleven ⋯ items became one
     /// row: a push whose `Form` can give every destructive verb a sentence
     /// saying what it destroys — which a `Menu` cannot render at all. That is
     /// why "Wipe all olcrtc data from server" used to sit in a scrolling list
     /// with nothing but its own name to warn you.
+    /// #471 was: a `Divider` above a lone caption-weight "Manage server ›" at
+    /// 32pt — the least visible thing on the card, under the most visible. The
+    /// two links share one 44pt row at the control step now, which is where the
+    /// frequent verb (Logs) lands after losing its button.
     private var manageRow: some View {
-        VStack(spacing: Theme.Metrics.s3) {
-            Divider().overlay(Theme.Palette.separator)
+        HStack(spacing: Theme.Metrics.s2) {
+            logsButton
+            Spacer(minLength: Theme.Metrics.s2)
             manageButton
         }
     }
 
+    @ViewBuilder
+    private var logsButton: some View {
+        if canOpenLogs {
+            linkButton(L10n.logsTitle.localized(), chevron: false, action: onLogs)
+        }
+    }
+
     private var manageButton: some View {
-        Button(action: onManage) {
-            HStack {
-                Text(L10n.vpsManageServer.localized())
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
+        linkButton(L10n.vpsManageServer.localized(), chevron: true, action: onManage)
+    }
+
+    /// #471: one treatment for both links — accent, control step, a 44pt tap
+    /// target. `contentShape` is what makes the whole 44pt tappable rather than
+    /// just the glyphs inside it.
+    private func linkButton(_ title: String, chevron: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: Theme.Metrics.s1) {
+                Text(title)
+                if chevron { Image(systemName: "chevron.right") }
             }
-            .font(Theme.Typography.caption)
-            .foregroundStyle(Theme.Palette.textSecondary)
+            .font(Theme.Typography.label)
+            .foregroundStyle(Theme.Palette.accent)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
-            .frame(minHeight: 32)
         }
         .buttonStyle(.plain)
         .disabled(actionsDisabled)
     }
 }
 
-// MARK: - ServerMetricsGrid (#458)
+// #471 was: `ServerMetricsGrid` (#458) — PING / DISK / RAM / UP as a 2x2 grid
+// of uppercase tracked labels over body-size monospaced semibold values, ~85
+// lines of layout defending four readings against truncation inside a ~150pt
+// column.
 //
-// #458: the machine numbers, laid out so they cannot crowd one another.
-//
-// Two rules do the work:
-//   • label ABOVE value (OlcMetric), so a cell needs max(label, value) of width
-//     instead of their sum — the single-line pairs were what overflowed;
-//   • a fixed TWO-COLUMN grid, one column at accessibility text sizes, so four
-//     stats never share one line at any Dynamic Type setting or in any language.
-// Columns are equal-width (`maxWidth: .infinity` per cell), so the labels line up
-// down the card instead of drifting with the value beside them.
-//
-// There is no `minimumScaleFactor` anywhere in here, and there must not be: a
-// measured value that has to shrink to fit is a value the owner cannot read, and
-// an unreadable truth is the failure this whole release was about.
-//
-// #459 (re-audit, do not regress): the screenshot that reported "DISK 3.5/8.…"
-// predates this grid. Truncation is structurally impossible here only while ALL
-// FOUR rules hold together, so they are written down:
-//   1. label ABOVE value (`OlcMetric`) — a cell costs max(label, value);
-//   2. two equal-width columns (`maxWidth: .infinity` per cell), one at
-//      accessibility sizes;
-//   3. NO `minimumScaleFactor` and NO `lineLimit` on a LABEL — a label that
-//      cannot wrap is a label that truncates. Only the VALUE keeps
-//      `OlcMetric`'s own `lineLimit(1)`, because a wrapped number is a lie;
-//   4. the data side guarantees the value fits: `shortUsage` → "3.5/8.0G",
-//      `shortRAM` → "0.4/1.9G", `shortUptime` → "13:57"/"3d",
-//      `pingValue` → "255ms"/"✕"/"—" — ≤ 9 monospaced characters, i.e. ~62pt
-//      inside a ≥150pt column on the narrowest supported phone.
-
-private struct ServerMetricsGrid: View {
-    let metrics: ServerCardMetrics
-
-    /// The one thing the grid adapts to. At accessibility sizes two columns of
-    /// monospaced numbers stop fitting on any phone, so the stats stack.
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    var body: some View {
-        // Two whole layouts rather than one with `if`s inside the Grid: each
-        // stays a tiny expression, which is what this file's rule about the
-        // type-checker's budget asks for.
-        if typeSize.isAccessibilitySize { stacked } else { paired }
-    }
-
-    private var paired: some View {
-        Grid(alignment: .topLeading,
-             horizontalSpacing: Theme.Metrics.s3,
-             verticalSpacing: Theme.Metrics.s3) {
-            GridRow {
-                cell(L10n.vpsStatPing.localized(), metrics.ping, tone: metrics.pingTone)
-                cell(L10n.vpsStatDisk.localized(), metrics.disk)
-            }
-            GridRow {
-                cell(L10n.vpsStatRAM.localized(), metrics.ram)
-                cell(L10n.vpsStatUp.localized(), metrics.uptime)
-            }
-        }
-    }
-
-    private var stacked: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.s3) {
-            cell(L10n.vpsStatPing.localized(), metrics.ping, tone: metrics.pingTone)
-            cell(L10n.vpsStatDisk.localized(), metrics.disk)
-            cell(L10n.vpsStatRAM.localized(), metrics.ram)
-            cell(L10n.vpsStatUp.localized(), metrics.uptime)
-        }
-    }
-
-    /// One stat. `OlcMetric` is the existing label-above-value component (it
-    /// already speaks as one VoiceOver element, "Disk 36/40G"); the frame is what
-    /// makes the two columns equal.
-    private func cell(_ label: String, _ value: String, tone: Color? = nil) -> some View {
-        OlcMetric(label: label, value: Self.reading(value), tone: tone)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// #458: the honesty placeholder the data side already uses — every one of
-    /// `ServersView.shortUsage` / `shortRAM` / `shortUptime` / `pingValue`
-    /// returns "—" when there is no reading. This is the backstop for anything
-    /// that reaches the card empty anyway: a stat with nothing behind it says so,
-    /// and never renders as a blank slot that reads like a zero.
-    private static func reading(_ value: String) -> String {
-        value.isEmpty ? "—" : value
-    }
-}
+// #458's four rules are not regressed, they are made unnecessary: nothing has
+// to fit a narrow column any more. Disk / RAM / uptime are ONE caption under
+// the address (`machineCaption`), a single `Text` with
+// `fixedSize(horizontal: false, vertical: true)` and no `minimumScaleFactor` —
+// it wraps rather than shrinks, which is rule 3 restated for a line instead of
+// a cell. All four readings also exist as full-width, label-left/value-right
+// rows on the Manage screen (`ServerMachineStats`,
+// App/Views/ServerAdvancedView.swift), where a Form row is the width of the
+// phone and the value keeps its `lineLimit(1)` because a wrapped number is a
+// lie. `ServersView.shortUsage` / `shortRAM` / `shortUptime` are untouched —
+// `VPSStatFormattingTests` pins them by name, and rule 4 (a value that is <= 9
+// characters by construction) is why the caption fits at all.

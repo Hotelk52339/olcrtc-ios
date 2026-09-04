@@ -12,7 +12,8 @@ sees a code in the Logs tab can look up what it means and how to act — and so 
 | `OLC-2xxx` | **Server / core** — the olcrtc Go core (server side, and the same lines on-device) |
 
 **Type:** `I` info · `W` warning · `E` error · `D` debug (default-hidden noise).
-**Status:** 🟢 emitted today · 🟡 planned (to be wired by #279).
+**Status:** 🟢 emitted today **with** its `[OLC-####]` prefix · 🟡 catalogued, but the line is not
+code-prefixed (or not emitted) yet — search the message text instead; wiring is tracked under #279 (#470).
 **Source:** `app` = our Swift (`LogStore`) · `core` = the gomobile/Go olcrtc binary (captured via the log writer / `podman logs`).
 
 **Finding a code in the app (#279):** wired client (`OLC-1xxx`) lines are emitted with their
@@ -31,7 +32,7 @@ set, not exhaustive — extend it as new conditions are caught.
 
 | Code | Type | Message | Trigger / meaning | Src | Status |
 |---|---|---|---|---|---|
-| OLC-1001 | I | New log session — `olcrtc-ios <ver> build <n>` | App launched / a diagnostic action started a session | app | 🟢 |
+| OLC-1001 | I | ▶ `olcrtc-ios <ver> build <n>` | App launched — the launch banner (coded since #470). The per-operation `# olcrtc-ios …` session divider that `LogStore.startSession` writes is **not** code-prefixed | app | 🟢 |
 | OLC-1002 | I | Connecting — carrier=… transport=… clientID=… | Connect attempt began | app | 🟢 |
 | OLC-1003 | I | Native start OK — waiting for ready… | `MobileStart` returned, awaiting `WaitReady` | app | 🟢 |
 | OLC-1004 | I | SOCKS5 proxy ready on port N | Local listener bound | app | 🟢 |
@@ -43,20 +44,20 @@ set, not exhaustive — extend it as new conditions are caught.
 | OLC-1010 | I | Keep-alive OK | Periodic probe succeeded | app | 🟢 |
 | OLC-1011 | W | Keep-alive failed (n/3) — retrying next interval | Transient probe miss | app | 🟢 |
 | OLC-1012 | E | Keep-alive lost — connection dropped | 3 consecutive misses → `.failed` + recovery | app | 🟢 |
-| OLC-1013 | I | Reconnecting — attempt n/m in Ns | Backoff recovery loop (#270) | app | 🟢 |
+| OLC-1013 | I | ↻ Reconnecting (`<reason>`) · ↻ attempt n/m in Ns | Backoff recovery loop (#270): the sink-entry line and every per-attempt line carry the code (attempt lines since #470) | app | 🟢 |
 | OLC-1014 | E | Reconnect failed — tap Retry | Recovery budget spent | app | 🟢 |
 | OLC-1015 | I | Waiting for network… | Path lost, holding (#269) | app | 🟢 |
-| OLC-1016 | I | Latency (ping): N ms | Per-connection RTT probe (#234) | app | 🟢 |
-| OLC-1017 | E | Latency check failed: `<reason>` | e.g. `handshake … got "CONTROL_PING"` — isolated probe desync (#274) | app | 🟢 |
-| OLC-1018 | I | Time-to-ready: N ms | Per-connection transport-ready probe (#242) | app | 🟢 |
-| OLC-1019 | I | SOCKS port N free / busy | Pre-connect port check | app | 🟢 |
+| OLC-1016 | I | Latency (ping): N ms | Per-connection RTT probe (#234) — no `OlcCode` case, the line is uncoded (#470) | app | 🟡 |
+| OLC-1017 | E | Latency check failed: `<reason>` | e.g. `handshake … got "CONTROL_PING"` — isolated probe desync (#274) — no `OlcCode` case, uncoded (#470) | app | 🟡 |
+| OLC-1018 | I | Time-to-ready: N ms | Per-connection transport-ready probe (#242) — no `OlcCode` case, uncoded (#470) | app | 🟡 |
+| OLC-1019 | I | ✓ Port N free / ✗ Port N busy / ✓ Port N in use by olcrtc tunnel | Settings port check (`SettingsView.runPortCheck`) — no `OlcCode` case, uncoded (#470) | app | 🟡 |
 | OLC-1020 | I | Speed test via `<provider>` — `<direct\|tunnel>`, carrier/transport | Add connection-type + transport to the header (user request) | app | 🟡 |
-| OLC-1021 | W | Speed-test ping sample n failed: `<reason>` | e.g. CFNetwork 310 / timeout — narrow tunnel (#285) | app | 🟢 |
-| OLC-1022 | I | Speed result: ping=… down=… up=… | `ping=—` means latency sampling failed | app | 🟢 |
+| OLC-1021 | W | Speed-test ping sample n failed: `<reason>` | e.g. CFNetwork 310 / timeout — narrow tunnel (#285) — no `OlcCode` case, uncoded (#470) | app | 🟡 |
+| OLC-1022 | I | ping=… down=… up=… | Speed-test result line (`SpeedTest.run`); `ping=n/a` means latency sampling failed — no `OlcCode` case, uncoded (#470) | app | 🟡 |
 | OLC-1023 | I | IP check via `<providers>` — `<direct\|tunnel>` | Add connection-type to the header (user request, #286) | app | 🟡 |
 | OLC-1024 | W | Tunnel verify "bad URL" | Misleading reason — the SOCKS session couldn't be built; fix the message (#287) | app | 🟡 |
 | OLC-1025 | W | Keep-alive "active −N s ago" (future timestamp) | `noteActivity(forAtLeast:)` sets the marker ahead → negative "ago"; clamp it (#287) | app | 🟡 |
-| OLC-1026 | E | Port N is busy — free it or change the port in Settings | Configured SOCKS port held by another process; connect aborts before the engine starts (preflight `isFree`), or a late MobileStart bind race maps here (#308). The port is never auto-slid — it's the contract with external SOCKS clients | app | 🟢 |
+| OLC-1026 | E | Port N is busy — free it or change the port in Settings | Configured SOCKS port held by another process; connect aborts before the engine starts (preflight `isFree`) — that line carries the code. A late MobileStart/WaitReady bind race produces the **same message** (`OlcrtcEngine.startErrorReason`, #308) but **without** the prefix — search "is busy" for that path (#470). The port is never auto-slid — it's the contract with external SOCKS clients | app | 🟢 |
 | OLC-1027 | I | Protocol `<a>` is failing — switching to `<b>` | #453 auto-failover: the reconnect budget for the active carrier was spent, so the loop hops to another protocol on the same VPS (opt-in `settings.autoFailover`) instead of giving up | app | 🟢 |
 
 ## Server / core — `OLC-2xxx`

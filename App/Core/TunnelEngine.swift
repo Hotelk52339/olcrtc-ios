@@ -181,6 +181,35 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
         return l.contains("readiness timed out") || l.contains("stopped before becoming ready")
     }
 
+    // boc #470
+    /// The providerToken setter and `Start()` under ONE lock. Master's `Start()`
+    /// copies the SHARED defaults at that instant (mobile/runtime.go), and a
+    /// health probe pins ITS node's token on the same defaults from a detached
+    /// task (`ping` / `checkReady` below) — a probe landing between the setter
+    /// and `Start()` made the live session join with the probed node's token
+    /// (a wbstream primary auto-connecting while the launch sweep probes a
+    /// telemost sibling ⇒ an empty token ⇒ the carrier rejects the join, and a
+    /// manual retry "fixes" it). The probes take the same lock around their
+    /// setter, so neither side writes inside the other's window. The reverse
+    /// direction — a probe whose own snapshot inside `Ping` sees a token a
+    /// concurrent start just set — is left as it was: a probe false-negative,
+    /// never a wrong live session.
+    private static let tokenLock = NSLock()
+
+    private static func startLocked(_ runtime: MobileRuntime, token: String) throws {
+        tokenLock.lock()
+        defer { tokenLock.unlock() }
+        runtime.setProviderToken(token)
+        try runtime.start()
+    }
+
+    private static func setTokenLocked(_ runtime: MobileRuntime, _ token: String) {
+        tokenLock.lock()
+        defer { tokenLock.unlock() }
+        runtime.setProviderToken(token)
+    }
+    // eoc #470
+
     func start(_ details: ConnectionDetails, port: Int, settings s: EngineStartSettings) async throws {
         guard case .olcrtc(let params) = details else {
             throw TunnelEngineError("internal: OlcrtcEngine received non-olcrtc details", reason: .unknown)   // #456
@@ -234,7 +263,9 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
             // #436 wbstream account token → master's providerToken. Set
             // UNCONDITIONALLY: empty clears any token left by a previous
             // connection on this shared runtime (fixes the old leak).
-            runtime.setProviderToken(params.wbToken)
+            // #470 was: `runtime.setProviderToken(params.wbToken)` here — it now
+            // happens inside `startLocked`, in the same critical section as
+            // `Start()`, so a probe cannot slip its own token in between.
             let (socksUser, socksPass): (String, String) = s.localSocksAuthEnabled
                 ? (s.localSocksUser, s.localSocksPass)
                 : (params.socksUser, params.socksPass)
@@ -250,7 +281,8 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
         do {
             // Master Start() validates the config snapshot and spawns the run
             // goroutine — it does NOT block on the bind any more.
-            try runtime.start()
+            // #470 was: `try runtime.start()`
+            try Self.startLocked(runtime, token: params.wbToken)
         } catch {
             let raw = (error as NSError).localizedDescription
             await MainActor.run { LogStore.shared.log(.connection, L10n.mobileStartFailed_fmt.formatted(raw)) }
@@ -273,11 +305,19 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
             }
             try? runtime.stop(10_000)
             do {
-                try runtime.start()
+                // #470 was: `try runtime.start()` — a probe could have re-pinned
+                // the token during the 10 s stop above; set it again with Start().
+                try Self.startLocked(runtime, token: params.wbToken)
             } catch {
                 let raw2 = (error as NSError).localizedDescription
                 await MainActor.run { LogStore.shared.log(.connection, L10n.mobileStartFailed_fmt.formatted(raw2)) }
-                throw TunnelEngineError(L10n.errorRuntimeStillStopping.localized(), reason: .timedOut)   // #456
+                // #470: this is OUR teardown still draining, not a measurement of
+                // the node. `.timedOut` is a node-level verdict (not inconclusive),
+                // so the chip went red "failed just now" and the hero headlined
+                // "Timed out — the test ran out of time" over the actionable
+                // message. `.unknown` files it as "couldn't check" (action: retry).
+                // #470 was: `reason: .timedOut`
+                throw TunnelEngineError(L10n.errorRuntimeStillStopping.localized(), reason: .unknown)   // #456
             }
         }
         await MainActor.run { LogStore.shared.log(.connection, L10n.mobileStartOK.localized(), code: .nativeStartOK) }  // OLC-1003
@@ -328,10 +368,13 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
             // port — providerToken rides along from whatever the LAST start()
             // left behind (master mobile/probe.go), so probing a wbstream node
             // used the previous connection's token (or none before any connect).
-            // Pin this record's own token first. Safe: start() re-sets every
-            // field unconditionally; a probe overlapping a concurrent start() is
-            // a benign last-write race on a mutex-guarded setter.
-            runtime.setProviderToken(params.wbToken)
+            // Pin this record's own token first.
+            // #470 was: a bare `runtime.setProviderToken(params.wbToken)` and the
+            // claim that overlapping a concurrent start() was "a benign last-write
+            // race" — it was not: Start() snapshots the defaults, so this write
+            // landing between start()'s setter and its Start() gave the LIVE
+            // session this node's token. Same lock as `startLocked`.
+            Self.setTokenLocked(runtime, params.wbToken)
             var result: Int64 = -1
             do {
                 try runtime.ping(
@@ -361,7 +404,8 @@ final class OlcrtcEngine: TunnelEngine, @unchecked Sendable {
         return await Task.detached {
             // #445 (audit fix 8): same token pinning as `ping` above — Check's
             // probe config inherits providerToken from the shared runtime defaults.
-            runtime.setProviderToken(params.wbToken)
+            // #470 was: `runtime.setProviderToken(params.wbToken)` — see `ping`.
+            Self.setTokenLocked(runtime, params.wbToken)
             var result: Int64 = -1
             do {
                 try runtime.check(

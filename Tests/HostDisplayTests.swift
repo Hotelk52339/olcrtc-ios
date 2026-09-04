@@ -216,7 +216,7 @@ final class HostDisplayTests: XCTestCase {
                                     lastProbeAge: 900, health: .never)
         XCTAssertEqual(h, .unreachable(age: 900))
         XCTAssertEqual(h.tone, .unknown, "couldn't check is GREY, never red/amber")
-        XCTAssertNotEqual(h, .containerStopped)
+        XCTAssertNotEqual(h, .containerStopped(age: 900))   // #471
         XCTAssertEqual(h.title, L10n.vpsHeadlineUnreachable.localized())
     }
 
@@ -239,7 +239,7 @@ final class HostDisplayTests: XCTestCase {
     func testStoppedContainerIsAmberOnceActuallyProbed() {
         let h = HostHeadline.reduce(display: .base(.stopped), reachable: true,
                                     lastProbeAge: 5, health: .never)
-        XCTAssertEqual(h, .containerStopped)
+        XCTAssertEqual(h, .containerStopped(age: 5))   // #471
         XCTAssertEqual(h.tone, .warn)
     }
 
@@ -247,7 +247,7 @@ final class HostDisplayTests: XCTestCase {
         for b in [HostBase.unknown, .noPodman, .noImage, .imageReady] {
             let h = HostHeadline.reduce(display: .base(b), reachable: true,
                                         lastProbeAge: 5, health: .verified(ms: 1, age: 1))
-            XCTAssertEqual(h, .noContainer(b))
+            XCTAssertEqual(h, .noContainer(b, age: 5))   // #471
             XCTAssertEqual(h.tone, b.tone)
             XCTAssertEqual(h.title, b.title)
         }
@@ -257,7 +257,7 @@ final class HostDisplayTests: XCTestCase {
         let verified = HealthDisplay.verified(ms: 42, age: 30)
         let h = HostHeadline.reduce(display: .base(.running), reachable: true,
                                     lastProbeAge: 5, health: verified)
-        XCTAssertEqual(h, .health(verified))
+        XCTAssertEqual(h, .health(verified, verified: 0, total: 0, age: nil))   // #471
         XCTAssertEqual(h.tone, .ok)          // the ONLY route to green on the card
         XCTAssertEqual(h.title, verified.title)
     }
@@ -266,7 +266,7 @@ final class HostDisplayTests: XCTestCase {
         // The exact fake-green: podman says Up, nothing has verified anything.
         let h = HostHeadline.reduce(display: .base(.running), reachable: true,
                                     lastProbeAge: 5, health: .never)
-        XCTAssertEqual(h, .health(.never))
+        XCTAssertEqual(h, .health(.never, verified: 0, total: 0, age: nil))   // #471
         XCTAssertNotEqual(h.tone, .ok)
     }
 

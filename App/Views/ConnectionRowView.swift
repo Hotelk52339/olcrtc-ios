@@ -43,6 +43,15 @@ import SwiftUI
 // `isLive` / `liveBadge` / `auroraSpine` are gone because the live node is
 // never in this list: a "Live" badge that can never render is dead code.
 //
+// #471: AND THE HOST LINE IS CONDITIONAL. One VPS runs several protocol
+// containers here — the premise of the whole #461 inversion — so on a
+// single-server install the host label was the same word printed under every
+// name. `showHost` is decided once by the caller
+// (`ConnectionNaming.spansMultipleHosts`); the row's title moves to
+// `Theme.Typography.bodyStrong`, the identical value through the token, which is
+// the pair `ProtocolRowView` on the Servers tab now draws too — one protocol,
+// one look, on both tabs.
+//
 // A failing row still carries its FIX, and grows to do it. `HealthDisplay
 // .suggestedAction` was already computed and simply never rendered, so the key
 // mismatch headline was a dead end unless the user thought to open an overflow
@@ -62,6 +71,15 @@ struct ConnectionRowView: View {
     let onConnect: () -> Void
     /// Tap on the chip, and the inline "Check" / "Retry" on a failing row.
     let onVerify: () -> Void
+    /// #471: does the HOST line carry information on this screen? A line that
+    /// prints the same word on every row carries none — and the whole rationale
+    /// for the #461 identity inversion (see `ConnectionNaming`) is that one VPS
+    /// runs several protocols, so the server label IS the same everywhere. The
+    /// caller decides once, in `ConnectionsView.recompute()`
+    /// (`ConnectionNaming.spansMultipleHosts`), because this view is rebuilt
+    /// ~10×/s during a speed test and may not derive it per row.
+    /// `var` (not `let`) so the memberwise init keeps the default.
+    var showHost = true
 
     var body: some View {
         OlcCard {
@@ -115,9 +133,14 @@ struct ConnectionRowView: View {
     /// label is a NAME, not a measurement, and mono is this app's mark for
     /// measured data (ages, milliseconds, ports).
     private var infoColumn: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471 was: 2
             Text(ConnectionNaming.protocolLine(record.details))
-                .font(.system(.body, design: .rounded).weight(.semibold))
+                // #471: the identical value, through the token — a locally
+                // re-declared font is how a six-step scale drifts back into
+                // "two sizes plus a lot of weight". `ProtocolRowView` (Servers)
+                // is aligned to the same two tokens, so one protocol reads the
+                // same on both tabs.
+                .font(Theme.Typography.bodyStrong)
                 .foregroundStyle(Theme.Palette.textPrimary)
                 // #461 (audit) was: `.lineLimit(1)`, carried over from the line
                 // that used to live here. That line was `record.displayName`
@@ -130,16 +153,27 @@ struct ConnectionRowView: View {
                 // with the same guarantee as `ProtocolRowView.labels`: the
                 // break falls on the space around " · ", never inside a word.
                 .lineLimit(2)
-            Text(ConnectionNaming.host(record))
-                .font(Theme.Typography.caption)
-                .foregroundStyle(Theme.Palette.textSecondary)
-                .lineLimit(1)
+            hostLine   // #471: only when the list spans more than one host
             metaLine
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
     // eoc #461
+
+    /// #471: WHOSE machine — drawn only when the answer differs between rows.
+    /// With one server (the common install, and the shape this product is built
+    /// around) every row printed the same label under its own name, which is a
+    /// line of chrome pretending to be a fact.
+    @ViewBuilder
+    private var hostLine: some View {
+        if showHost {
+            Text(ConnectionNaming.host(record))
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .lineLimit(1)
+        }
+    }
 
     // boc #461
     // #461 was: `detailLine` — this row's private carrier·transport helper, with
@@ -154,15 +188,15 @@ struct ConnectionRowView: View {
     @ViewBuilder
     private var metaLine: some View {
         if record.subIP != nil || record.subComment != nil {
-            HStack(spacing: 6) {
+            HStack(spacing: Theme.Metrics.s2) {   // #471 was: 6
                 if let ip = record.subIP, !ip.isEmpty {
                     Text(IPMask.display(ip, masked: maskIPs))
-                        .font(.system(.caption2, design: .monospaced))
+                        .font(Theme.Typography.mono)   // #471: an address — mono stays
                         .foregroundStyle(Theme.Palette.textTertiary)
                 }
                 if let comment = record.subComment, !comment.isEmpty {
                     Text(comment)
-                        .font(.caption2)
+                        .font(Theme.Typography.caption)   // #471 was: .caption2
                         .foregroundStyle(Theme.Palette.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -192,9 +226,9 @@ struct ConnectionRowView: View {
     @ViewBuilder
     private var problemBlock: some View {
         if let action = fixAction {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471 was: 4
                 Text(display.title)
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .font(Theme.Typography.captionStrong)   // #471: same value, via the token
                     .foregroundStyle(display.tone.color)
                     .fixedSize(horizontal: false, vertical: true)
                 inlineFix(action)
@@ -207,7 +241,7 @@ struct ConnectionRowView: View {
     private func inlineFix(_ action: HealthAction) -> some View {
         if let note = ConnectActionSite.elsewhereNote(for: action) {
             Label(note, systemImage: "arrow.forward.circle")
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471 was: .caption2
                 .foregroundStyle(Theme.Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         } else {
@@ -240,7 +274,9 @@ struct ConnectionRowView: View {
 // WHY IT EXISTS. Our product is Amnezia's shape — ONE VPS running SEVERAL
 // protocol containers — with Mullvad's identity question: which service am I
 // hiding inside? We inherited Amnezia's "server name first" while our identity
-// is the carrier. `ServersView.recordName` writes "zaza · Telemost" into
+// is the carrier. `ServersView.recordName` writes "zaza · telemost" into
+// (#470: the RAW carrier id — a persisted token stays locale-stable, and the
+// service's name is drawn from it at render time)
 // `ConnectionRecord.name`, and every venue printed that verbatim.
 //
 // NOTHING HERE REWRITES STORED DATA. `ConnectionRecord.name`,
@@ -293,6 +329,32 @@ enum ConnectionNaming {
             return stripCarrierSuffix(name: record.displayName, carrier: p.carrier)
         }
     }
+
+    // boc #471
+    /// #471: does a list of connections span MORE THAN ONE host label?
+    ///
+    /// The switcher rows print `host` under each name, and with one server —
+    /// this product's own shape, one VPS running several protocol containers —
+    /// that is the same word on every row. `ConnectionsView.recompute()` asks
+    /// this once and passes the answer down as `ConnectionRowView.showHost`;
+    /// nothing derives it inside a `body`.
+    ///
+    /// Short-circuits on the first disagreement, so the common answer (one host)
+    /// still walks the list but the interesting one stops early. An empty list
+    /// and a one-record list both span one host, i.e. `false`.
+    static func spansMultipleHosts(_ records: [ConnectionRecord]) -> Bool {
+        var first: String?
+        for record in records {
+            let label = host(record)
+            if let first {
+                if first != label { return true }
+            } else {
+                first = label
+            }
+        }
+        return false
+    }
+    // eoc #471
 
     /// The pure, testable core of `host`. Conservative by construction: it
     /// strips ONLY when the trailing segment really is this record's carrier,

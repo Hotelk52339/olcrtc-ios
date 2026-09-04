@@ -80,7 +80,23 @@ struct AddConnectionView: View {
     private var isValid: Bool {
         !name.isEmpty && !groupName.isEmpty && !carrier.isEmpty && !transport.isEmpty
             && !roomID.isEmpty && !key.isEmpty && !clientID.isEmpty
+            && validationError == nil   // #470
     }
+
+    // boc #470
+    /// The structural rules the engine applies at connect time
+    /// (`TunnelManager.validate`, run by `OlcrtcEngine.validate`): a 64-hex key,
+    /// a client ID without whitespace. #470 was: Save required only non-empty
+    /// fields, so a key with one character clipped was stored, sat in the list
+    /// looking valid, and failed at Connect with "key length 63". Silent while
+    /// the three fields are still blank — the emptiness rule above already
+    /// disables Save.
+    private var validationError: String? {
+        guard !roomID.isEmpty, !key.isEmpty, !clientID.isEmpty else { return nil }
+        return TunnelManager.validate(params: OlcrtcConnection(
+            carrier: carrier, transport: transport, roomID: roomID, key: key, clientID: clientID))
+    }
+    // eoc #470
 
     /// (audit) transport chips with the ✗ combos for the current carrier
     /// disabled (OlcOption.disabled) and the reason surfaced to VoiceOver.
@@ -145,7 +161,7 @@ struct AddConnectionView: View {
     // manual fields below (was an inline TextEditor paste box).
     private var uriSection: some View {
         Section {
-            HStack(spacing: 8) {
+            HStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
                 OlcButton(L10n.scanQRAction.localized(), systemImage: "qrcode.viewfinder",
                           role: .secondary, fillWidth: true) {
                     showQRScan = true
@@ -160,7 +176,9 @@ struct AddConnectionView: View {
             // #265: manual entry — type or paste-and-edit a URI here; auto-parses
             // into the fields below (the redesign had left only Scan/Paste).
             TextField("olcrtc://…", text: $uriText, axis: .vertical)
-                .font(.system(.footnote, design: .monospaced))
+                // #471: B9 — a URI is step 6, and `.footnote` is not a step on
+                // the scale. #471 was: .font(.system(.footnote, design: .monospaced))
+                .font(Theme.Typography.mono)
                 .lineLimit(1...3)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -172,13 +190,16 @@ struct AddConnectionView: View {
                 }
 
             if !parseError.isEmpty {
-                Text(parseError).font(.caption).foregroundStyle(Theme.Palette.red) // #317 was: .foregroundStyle(.red) — status colors via Theme.Palette (#258 invariant)
+                // #471: B9 — step 5 through its token. was: .font(.caption)
+                Text(parseError).font(Theme.Typography.caption).foregroundStyle(Theme.Palette.red) // #317 was: .foregroundStyle(.red) — status colors via Theme.Palette (#258 invariant)
             }
         } header: {
             Text(L10n.importByURI.localized())
         } footer: {
+            // #471: B9 — a Form footer already renders at the right step; the
+            // `.caption2` only pushed it BELOW the scale.
+            // #471 was: Text(L10n.importHint.localized()).font(.caption2)
             Text(L10n.importHint.localized())
-                .font(.caption2)
         }
     }
 
@@ -192,9 +213,9 @@ struct AddConnectionView: View {
 
             // #258: carrier / transport via OlcChipPicker (was Picker). The
             // per-transport compatibility symbols live in the Manage VPS matrix.
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471: B9 — 6 → s2
                 Text(L10n.sectionCarrier.localized())
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Theme.Typography.caption).foregroundStyle(.secondary)   // #471 was: .font(.caption)
                 // (audit) guarded transport reset: only a USER carrier pick runs
                 // through this Binding's setter. applyParsed / prefill write the
                 // @State directly (carrier + transport together), so an imported
@@ -213,15 +234,16 @@ struct AddConnectionView: View {
                     }
                 ), options: CarrierTransportMatrix.carriers.map { ($0, CarrierTransportMatrix.carrierLabel($0)) })
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471: B9 — 6 → s2
                 Text(L10n.labelTransport.localized())
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Theme.Typography.caption).foregroundStyle(.secondary)   // #471 was: .font(.caption)
                 // (audit) ✗ combos are disabled for NEW picks; an existing /
                 // imported record already holding one stays selected + savable
                 // (red chip outline + the red footer below carry the warning).
                 OlcChipPicker(selection: $transport, options: transportOptions)
                 Text(transportFooter)
-                    .font(.caption2)
+                    // #471: B9 — `.caption2` is the seventh step Theme abolished.
+                    .font(Theme.Typography.caption)
                     .foregroundStyle(currentCompatFails ? Theme.Palette.red
                                                         : Theme.Palette.textSecondary)
             }
@@ -236,9 +258,16 @@ struct AddConnectionView: View {
             roomSuggestion()   // #456: stop asking for a room the app already knows
             FormField(label: L10n.clientIDLabel.localized(), placeholder: "default", text: $clientID)
             Text(L10n.clientIDFooter.localized())
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .foregroundStyle(.secondary)
             FormField(label: L10n.keyHexLabel.localized(), placeholder: L10n.keyPlaceholder.localized(), text: $key, secure: true)
+            // boc #470: the sentence Connect would have shown, shown here instead.
+            if let why = validationError {
+                Text(why)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
+                    .foregroundStyle(Theme.Palette.red)
+            }
+            // eoc #470
         }
 
         if isVP8 {
@@ -265,7 +294,7 @@ struct AddConnectionView: View {
                 roomID = last
             } label: {
                 Text(L10n.roomIDLastUsed_fmt.formatted(last))
-                    .font(.caption)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                     .foregroundStyle(Theme.Palette.accent)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -311,7 +340,7 @@ struct AddConnectionView: View {
                 Stepper("", value: Binding(
                     get: { vp8FPS ?? SettingsStore.shared.vp8FPS },
                     set: { vp8FPS = $0 }
-                ), in: 1...120)
+                ), in: SettingsStore.Defaults.vp8FPSRange)   // #470 was: 1...120 — the global setting clamps to the room limit (60)
                 .labelsHidden()
                 if vp8FPS != nil {
                     Button { vp8FPS = nil } label: {
@@ -329,7 +358,7 @@ struct AddConnectionView: View {
                 Stepper("", value: Binding(
                     get: { vp8BatchSize ?? SettingsStore.shared.vp8BatchSize },
                     set: { vp8BatchSize = $0 }
-                ), in: 1...64)
+                ), in: SettingsStore.Defaults.vp8BatchRange)   // #470 was: 1...64 — the global setting allows 256
                 .labelsHidden()
                 if vp8BatchSize != nil {
                     Button { vp8BatchSize = nil } label: {
@@ -341,8 +370,8 @@ struct AddConnectionView: View {
         } header: {
             Text(L10n.vp8ParamsHeader.localized())
         } footer: {
+            // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
             Text(L10n.overrideHint.localized())
-                .font(.caption2)
         }
     }
 
@@ -354,14 +383,18 @@ struct AddConnectionView: View {
     private var seiSection: some View {
         Section {
             seiRow(L10n.seiFpsLabel.localized(),   value: $seiFPS,   range: 1...120)
-            seiRow(L10n.seiBatchLabel.localized(), value: $seiBatch, range: 1...64)
-            seiRow(L10n.seiFragLabel.localized(),  value: $seiFrag,  range: 1...8192, step: 100)
+            // #470: the bounds the install sheet (InstallOptionsView) and upstream's
+            // validator accept — a URI carrying sei batch=200 (installable) could
+            // not be re-edited here without the stepper clamping it to 64.
+            // #470 was: range: 1...64 / range: 1...8192, step: 100
+            seiRow(L10n.seiBatchLabel.localized(), value: $seiBatch, range: 1...256)
+            seiRow(L10n.seiFragLabel.localized(),  value: $seiFrag,  range: 100...60000, step: 100)
             seiRow(L10n.seiAckLabel.localized(),   value: $seiACK,   range: 0...10000, step: 1)
         } header: {
             Text(L10n.seiParamsHeader.localized())
         } footer: {
+            // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
             Text(L10n.seiParamsHint.localized())
-                .font(.caption2)
         }
     }
 

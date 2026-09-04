@@ -18,9 +18,9 @@ struct FormField: View {
     @State private var isRevealed: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471: B9 — 2 → s1
             Text(label)
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
                 input

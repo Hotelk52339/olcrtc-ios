@@ -28,6 +28,10 @@ final class IPChecker: ObservableObject {
     // #454: the tunnel exit's geo, surfaced to the Connection-health card (the
     // same lookup was previously fetched only to write one connect-log line).
     @Published var exitGeo   : ExitGeo?
+    /// #470: when `exitGeo` was last (re)measured. A refresh that returns the
+    /// SAME place used to leave the view's stamp untouched, so a fresh reading
+    /// showed an old age; the checker dates every measurement itself now.
+    @Published private(set) var exitGeoAt: Date?
 
     // Endpoints live in AppConstants.ipCheckServices; the user enables a subset
     // in Settings (#286). Preserve the catalogue order; if the user disabled
@@ -158,12 +162,13 @@ final class IPChecker: ObservableObject {
         let session = SOCKSSession.make(mode: mode)
         defer { session.finishTasksAndInvalidate() }
         exitGeo = await Self.fetchExitGeo(session: session)
+        exitGeoAt = exitGeo == nil ? nil : Date()   // #470
         if exitGeo != nil, mode == .tunnel { SOCKSSession.noteTunnelActivity() }
     }
 
     /// #454: drop the exit geo on disconnect so the next session never briefly
     /// shows the previous exit's location.
-    func clearExitGeo() { exitGeo = nil }
+    func clearExitGeo() { exitGeo = nil; exitGeoAt = nil }   // #470
 
     /// Strict IP parsing via Apple's Network framework — rejects garbage like
     /// "Hello.World" or "Error: 500" that the old `contains(".")` check accepted.

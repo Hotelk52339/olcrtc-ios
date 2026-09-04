@@ -223,7 +223,14 @@ final class BackgroundRuntimeKeeper {
             try rebuildAndRestart()
             LogStore.shared.log(.connection, "✓ keep-alive: audio rebuilt after media reset")
         } catch {
-            running = false
+            // #470: a real teardown, not just the flag. With `running = false`
+            // alone, `stop()`'s guard returned early on the next disconnect, so
+            // the three observers stayed registered for the process lifetime and
+            // the playback session was never deactivated (other apps' audio kept
+            // ducking under `.mixWithOthers`). `stop()` removes them, deactivates,
+            // and clears `running` itself; `restartIfNeeded()` re-arms via `start()`.
+            // #470 was: running = false
+            stop()
             LogStore.shared.log(.connection,
                 "⚠ keep-alive: audio rebuild failed after media reset (\(error.localizedDescription)) — app may suspend",
                 level: .warn)

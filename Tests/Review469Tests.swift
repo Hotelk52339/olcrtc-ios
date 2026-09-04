@@ -85,13 +85,13 @@ final class Review469Tests: XCTestCase {
         // "Server stopped · tap Start" above a green row was a lie.
         let h = HostHeadline.reduce(display: .base(.stopped), reachable: true,
                                     lastProbeAge: 10, health: .verified(ms: 120, age: 30))
-        if case .health(let hd) = h { XCTAssertTrue(hd.isVerified) } else { XCTFail("got \(h)") }
+        if case .health(let hd, _, _, _) = h { XCTAssertTrue(hd.isVerified) } else { XCTFail("got \(h)") }   // #471
     }
 
     func testHeadlineStillSaysStoppedWhenNothingIsVerified() {
         let h = HostHeadline.reduce(display: .base(.stopped), reachable: true,
                                     lastProbeAge: 10, health: .never)
-        XCTAssertEqual(h, .containerStopped)
+        XCTAssertEqual(h, .containerStopped(age: 10))   // #471
     }
 
     func testHeadlineNamesAFailedProbeInsteadOfCheckingForever() {

@@ -78,7 +78,6 @@ enum L10n: String, CaseIterable {
     // ("Speed") and `healthRefresh` ("Refresh"). The card lost its own title to
     // `diagSessionHeader`, its throughput row moved into the speed test it
     // belongs to, and its refresh glyph was replaced by pull-to-refresh.
-    case healthProtocolLabel                // row: protocol
     case healthExitLabel                    // row: exit ip/geo
     // #460 was: `healthLatencyLabel` ("Latency"). The row measured a whole
     // fresh request — connect, handshake and answer — through the live tunnel,
@@ -86,7 +85,6 @@ enum L10n: String, CaseIterable {
     // per-connection round-trip, which it is ~8× larger than by construction
     // (findings 2 / 15). It is now `diagResponseLabel` + `diagResponseNote`.
     case healthLatencyMs_fmt                // "%d ms"
-    case healthLocationUnknown              // geo lookup empty/failed
     // #455: premium redesign — editorial-consistency additions
     case carrierChoiceFooter                // install/reconfigure carrier guidance footer
     // #460 was: `configReliabilityHeader` ("Reliability") — the Settings
@@ -94,8 +92,6 @@ enum L10n: String, CaseIterable {
     // Connections screen, so the header lost its section and its last use.
     case unitSeconds                        // "s" unit after numeric fields
     case sshTestInvalidPort                 // add-host SSH reachability test: bad port
-    case sshTestReachable_fmt               // add-host SSH test: reachable (%@ = rtt)
-    case sshTestUnreachable                 // add-host SSH test: unreachable
     // #455: localise LogLevel.label (was English-only — CLAUDE.md flagged it)
     case logLevelOff
     case logLevelErrors
@@ -178,10 +174,9 @@ enum L10n: String, CaseIterable {
     // assumption the server card would open the container log as a detail view,
     // but no partition wired that route, so container logs became unreachable.
     // The menu item now pushes LogsView(subject: .container(host)).
-    case actionContainerLogs               // "Container logs" (server overflow menu)
     case actionDone
     case actionRemoveFromList               // "Remove host from list"
-    case removeHostConfirmTitle             // "Remove %@?"
+    case removeHostConfirmTitle_fmt         // "Remove %@?" — #470: the placeholder rule keys on the suffix
     case removeHostConfirmMessage           // explanation about Keychain/uninstall
     case uninstallConfirmTitle             // "Uninstall container?"
     case uninstallConfirmBody              // explanation about what is removed vs kept
@@ -365,13 +360,10 @@ enum L10n: String, CaseIterable {
     case clearAllLogsAction
     case copyAllAction                      // "Copy all" (#258 logs overflow)
     case clearCategoryAction                // "Clear this category" (#258 logs overflow)
-    case fontSizeLabel, fontPreviewText
     // (audit) leftmost slider position: follow iOS Text Size (no app override,
     // AX sizes reachable). The XS…XXXL positions stay an explicit override.
-    case fontSizeSystem                     // "System"
     // #460 was: `fontFooter` — "Applied app-wide (via SwiftUI dynamicTypeSize)"
     // named a framework API in a Settings footer (finding 18).
-    case fontNote
     case languageLabel
     // #299 was: themeRefined/themeConsole/directionLabel — the Refined/Console
     // "design direction" picker was removed when Theme became real colour schemes.
@@ -518,7 +510,6 @@ enum L10n: String, CaseIterable {
     // MARK: AddServerHostView
     case nameSettingLabel                   // "Name"
     case sectionDescription                 // "Description"
-    case testSSHAction                      // "Test SSH"
     // #451: SSH auth-method picker + private-key entry UI.
     case authMethodPickerLabel              // "Authentication"
     case authMethodPassword                 // "Password" (segment title)
@@ -704,7 +695,6 @@ enum L10n: String, CaseIterable {
     // column too narrow for it, which SwiftUI resolved by hyphenating:
     // "Connec-ted". The badge says the same thing in a word that fits.
     case protocolLiveBadge                 // "Live" — the badge on the running protocol row
-    case protocolPrimaryBadge              // "primary" tag on the base protocol row
     case protocolRecordMissing             // no matching saved connection — suggest Recover
     case protocolAdded_fmt                 // "Added %@/%@ — connection saved"
     case protocolRemoved_fmt               // "Removed %@ from the server"
@@ -828,7 +818,6 @@ enum L10n: String, CaseIterable {
     // MARK: #457 Connect hero
     case actionDisconnect                   // mirrors actionConnect
     case heroSubjectNone                    // no connection saved yet
-    case heroLastUsedLabel                  // label above the remembered connection
     case heroPickAConnection                // what to do when there is nothing to connect to
     case heroEvidenceStarting_fmt           // "starting… %d s" (elapsed seconds)
     case heroEvidenceUnverified             // live, but nothing measured through it
@@ -849,7 +838,6 @@ enum L10n: String, CaseIterable {
     case healthNeverMeasured                // age clause when nothing was ever measured
 
     // MARK: #457 Server card — the process caption and the protocol rows
-    case vpsProtocolsFailing_fmt            // "%d of %d protocols…" (failing, total)
     // #459 was: the process-caption vocabulary — `vpsProcessRunning`,
     // `vpsProcessStopped`, `vpsProcessNothingInstalled`, `vpsProcessNotSetUp`
     // and `vpsProcessAge_fmt` ("%@ · read %@ ago"). The card's headline already
@@ -889,7 +877,6 @@ enum L10n: String, CaseIterable {
     // three words in the row's narrow right-hand value column, where it wrapped
     // into a ragged stack. The provenance is now a full-width row note, and it
     // says what was measured as well as who answered (findings 3 / 22).
-    case diagExitNote                       // #460: what the Exit row is and where it came from
     case diagIPSourceHint_fmt               // what the IP check does (%d = sources)
     // Server card: the read stamp, and the way into the pushed screen.
     case vpsReadAge_fmt                     // "read %@" (age phrase)
@@ -932,8 +919,6 @@ enum L10n: String, CaseIterable {
     // states that fact and names the screen that fixes it, following this
     // screen's rule of naming a place rather than drawing a control that
     // navigates away.
-    case connectSwitcherOnlyOne             // "Only one protocol on this server"
-    case connectSwitcherAddHint             // where to install a second one, and why
 
     // MARK: #463 One-button Telemost room renewal
     // A Telemost link dies 24 hours after it is created, and the only channel
@@ -994,10 +979,36 @@ enum L10n: String, CaseIterable {
     // #468: picker label for a host whose primary protocol the app cannot name.
     case logsContainerPrimary
 
+    // #471: the design wave — the card states one claim, Settings holds six
+    // sections, and the hero states instead of narrating.
+    case vpsHeadlineProtocolsVerified_fmt   // %d of %d, %@ = HealthAge.phrase
+    case healthPartlyWorking                // some protocols verified, some not
+    case vpsHeadlineStoppedHint_fmt         // %@ = HealthAge.phrase
+    case vpsMachineLine_fmt                 // %@ disk, %@ RAM, %@ uptime
+    case vpsAdvancedMachineHeader           // Manage screen: the read-only block
+    case vpsTitleNothingInstalled           // #471: .noPodman had to share vpsTitleReady
+    case diagAgeVia_fmt                     // %@ = age; provenance folded in
+    case subMetaUpdated_fmt                 // %@ = age (no gesture instruction)
+    case settingsAdvancedRow
+    case tunnelCompareDisclosure
+    case settingsBackgroundLabel
+    case settingsSectionAbout
+    case settingsSectionConnection
+    case settingsSectionProxy
+
+    // #470: strings the review-batch fixes reference
+    case protocolRecreateAction             // row menu: re-create a protocol whose container is gone
+    case carrierFooterSharedKey             // add-protocol sheet footer
+    case subImportAlreadySaved_fmt          // %@ = the record's display name
+    case logsScanAmbiguous_fmt              // %d = number of olcrtc containers found
+    case healthLatencyNoResponse            // chip text when the probe got nothing back
+    case sshTunnelLoginTimedOut_fmt         // %@ = host, %d = port
+    case dnsInvalidNote                     // Settings › DNS: the draft is not a valid host:port
+    case speedTunnelDropped                 // speed test: the tunnel died mid-run
+
     // #469: the card names WHY the silent probe failed instead of "Checking…"
     case vpsHeadlineProbeFailed
     // #469 (issue #17): subscription footer — when the pull last refreshed it.
-    case subMetaUpdatedPull_fmt            // %@ = HealthAge.phrase (e.g. "2 h ago")
 
     case protocolStopAction
     case protocolStartAction

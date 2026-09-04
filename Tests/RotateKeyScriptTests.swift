@@ -159,10 +159,19 @@ final class RotateKeyScriptTests: XCTestCase {
         // server-<carrier>.yaml with the SAME key — a rotation must sweep
         // every sibling yaml…
         XCTAssertTrue(rotate.contains("for SIB_CONFIG in \"$WORK_DIR\"/server-*.yaml; do"))
-        // …derive the sibling container from the shared naming convention and
-        // restart it best-effort (missing/stopped siblings are ignored)…
+        // …derive the sibling container from the shared naming convention…
         XCTAssertTrue(rotate.contains("SIB=\"${CONTAINER_NAME}-${SIB_CARRIER}\""))
-        XCTAssertTrue(rotate.contains("podman restart \"$SIB\" >/dev/null 2>&1 || true"))
+        // boc #471 was: `podman restart "$SIB" >/dev/null 2>&1 || true` — an
+        // unconditional best-effort restart. It STARTED a sibling the user had
+        // stopped on purpose, and a genuine failure was swallowed by `|| true`,
+        // so the app reported "rotated" for a container still running the old
+        // key. Restart only what is running, and say so when it fails.
+        XCTAssertTrue(rotate.contains("if podman ps --format '{{.Names}}' | grep -q \"^${SIB}$\""))
+        XCTAssertTrue(rotate.contains("podman restart \"$SIB\" >/dev/null 2>&1 \\"))
+        XCTAssertTrue(rotate.contains("[!] ${SIB} restart failed"))
+        XCTAssertTrue(rotate.contains("${SIB} is not running"))
+        XCTAssertFalse(rotate.contains("podman restart \"$SIB\" >/dev/null 2>&1 || true"))
+        // eoc #471
         // …and report each new URI as "<container>|<uri>" so the app can
         // update the matching ConnectionRecords (split on the FIRST '|').
         XCTAssertTrue(rotate.contains("OLCRTC_SIBLING_URI=${SIB}|olcrtc://"))

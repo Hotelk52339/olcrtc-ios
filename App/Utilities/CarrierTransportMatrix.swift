@@ -143,3 +143,17 @@ enum CarrierTransportMatrix {
         !autoGeneratesRoomID.contains(carrier)
     }
 }
+
+// #470: the chips every sheet shows are built HERE, from the matrix, so a test
+// can hold them against the matrix instead of against a restatement of it.
+extension CarrierTransportMatrix {
+    static func transportOptions(for carrier: String) -> [OlcOption<String>] {
+        transports.map { t -> OlcOption<String> in
+            let fails = compat(carrier: carrier, transport: t) == .fail
+            return OlcOption(value: t,
+                             label: transportLabel(t),
+                             disabled: fails,
+                             disabledReason: fails ? L10n.matrixFail_fmt.formatted(carrierLabel(carrier)) : nil)
+        }
+    }
+}

@@ -189,6 +189,16 @@ final class TelemostRenewalCoordinator: ObservableObject {
               let container = containerName(for: record, host: host)
         else { return false }
 
+        // #470: the user is running an SSH op on this host right now (install,
+        // rotation, reconfigure). Two sessions restarting the same container is
+        // how a half-written config survives. Try again on the next pass — the
+        // policy starts five hours before the room expires, so there is time.
+        guard !Provisioner.busyHostIDs.contains(host.id) else {
+            LogStore.shared.log(.provisioning,
+                "• Telemost renewal for \(record.name) deferred — the server is busy with another operation")
+            return false
+        }
+
         let room: TelemostRoom
         do {
             room = try await TelemostRoomService.createRoom()

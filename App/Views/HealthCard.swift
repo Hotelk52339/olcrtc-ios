@@ -66,6 +66,15 @@ import SwiftUI
 // list now pulls to refresh, screen-wide; a per-card refresh glyph beside a
 // screen-wide gesture is two controls for one job.
 //
+// #471: THE CARD STOPS EXPLAINING ITSELF. Three things went, and each was a
+// second copy of something still on screen: the Protocol row (the hero names the
+// carrier and the transport), the exit row's `note:` paragraph (its one clause
+// now rides the age line) and the permanent IP-source hint (the Run button's
+// accessibility hint). The exit VALUE is the IP alone — the place belongs to the
+// hero, which prints it with a flag one card up. Both block headers draw
+// `OlcSectionHeader`, the design system's one section-header treatment, instead
+// of a local look-alike.
+//
 // It stays SEPARATE view structs (not inlined into ConnectionsView.body) so that
 // file's already-large body stays under the SwiftUI type-checker budget, and so
 // each `body` here is under ~25 lines.
@@ -142,8 +151,12 @@ private struct DiagnosticsFacts: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            DiagnosticsSubheader(title: L10n.diagSessionHeader.localized())
-            protocolRow
+            // #471: the design system's ONE section-header treatment.
+            // #471 was: DiagnosticsSubheader(title:) — a local uppercase label,
+            // one of five hand-rolled recipes on two screens.
+            OlcSectionHeader(L10n.diagSessionHeader.localized())
+                .padding(.top, Theme.Metrics.s3)
+            // #471 was: `protocolRow` — see the deleted helper below.
             exitRow
             responseRow    // #460 was: latencyRow; #461: called "Latency" again
         }
@@ -156,8 +169,11 @@ private struct DiagnosticsFacts: View {
         // pull gesture and ConnectionsView's connect-transition fetch. Deliberately
         // NOT `initial: true`: a value already in the store was measured at some
         // unknown earlier moment, and stamping it on mount would date it "now".
-        .onChange(of: ipCheck.exitGeo) { _, new in
-            exitAt = new == nil ? nil : Date()
+        // #470 was: `.onChange(of: ipCheck.exitGeo)` stamping Date() here — a
+        // refresh that returned the same geo never fired it, so a fresh reading
+        // kept its old age. The checker dates each measurement (`exitGeoAt`).
+        .onChange(of: ipCheck.exitGeoAt) { _, new in
+            exitAt = new
         }
     }
 
@@ -193,7 +209,22 @@ private struct DiagnosticsFacts: View {
             }
             // eoc #461
             probing = true
-            let ms = await speed.quickPing(via: mode)
+            // boc #470: fail-closed, the way `verifyTunnel` is (#445). URLSession
+            // silently BYPASSES a loopback proxy that REFUSES the connection and
+            // completes the HEAD direct, so a sample taken after the Go listener
+            // died still succeeded — and was published below as `.working`
+            // (green "Verified just now · N ms") while `LatencyProbe` refreshed
+            // the keep-alive activity marker on what was direct traffic. The raw
+            // SOCKS greeting cannot be bypassed: no answer is a failed sample,
+            // never a direct one. `.direct` mode has no listener to ask.
+            var listens = true
+            if mode == .tunnel {
+                listens = await TunnelManager.socksListenerAnswers(port: TunnelManager.activeSocksPort)
+            }
+            let ms: Double?
+            if listens { ms = await speed.quickPing(via: mode) } else { ms = nil }
+            // #470 was: let ms = await speed.quickPing(via: mode)
+            // eoc #470
             if Task.isCancelled { return }
             latencyMs = ms
             latencyAt = Date()
@@ -242,77 +273,59 @@ private struct DiagnosticsFacts: View {
 
     // MARK: Rows
 
-    /// #461 (audit): NO LONGER THE ONE PLACE. #459's claim here — "the ONE place
-    /// this screen states the live node's carrier/transport, so this is not a
-    /// repeat of anything" — held only while the hero printed neither. #461 made
-    /// the carrier the hero's headline and the transport the line under it
-    /// (`ConnectHero.identityBlock`), so this row now says "Yandex Telemost ·
-    /// DataChannel" about the same connection the top of the same screen already
-    /// names. Deleting the row is the fix; it is left standing here because that
-    /// is a structural change, and this comment is the record that it is owed.
-    @ViewBuilder
-    private var protocolRow: some View {
-        DiagnosticsRow(label: L10n.healthProtocolLabel.localized()) {
-            if case .olcrtc(let p)? = record?.details {
-                Text("\(CarrierTransportMatrix.carrierLabel(p.carrier)) · \(CarrierTransportMatrix.transportLabel(p.transport))")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                    .lineLimit(1)
-            } else {
-                Text("—").foregroundStyle(Theme.Palette.textSecondary)
-            }
-        }
-    }
+    // boc #471
+    // #471 was: `protocolRow` — a DiagnosticsRow printing "Yandex Telemost ·
+    // DataChannel" about the same connection `ConnectHero.identityBlock` names
+    // at the top of the same screen. The #461 audit comment that stood here said
+    // it in as many words: "Deleting the row is the fix; it is left standing here
+    // because that is a structural change." This is that change. The carrier and
+    // the transport are the hero's, once.
+    // eoc #471
 
-    // boc #460
-    /// #460 (findings 3 / 22): the provenance moves OUT of the value column and
-    /// becomes the row's note. #459 answered the owner's "the country and the IP,
-    /// where do they even come from?" with a right-aligned fragment ("Asked
-    /// ipinfo.io through the tunnel") wrapped into the narrow trailing stack; the
-    /// sentence now runs the width of the card and says what was actually
-    /// measured — the tunnel's own exit IP — and that the city and country are
-    /// derived from that one lookup rather than known independently.
+    // boc #471
+    /// #471: the row is the value and its dated source, nothing else.
     ///
-    /// `IPChecker.fetchExitGeo` GETs https://ipinfo.io/json through a
-    /// `SOCKSSession.make(mode:)` session, so the sentence is true and specific.
-    /// #460 was: the hint lived inside the trailing VStack, `.multilineTextAlignment(.trailing)`.
+    /// #471 was: a `note:` argument carrying `diagExitNote` — a permanently
+    /// mounted two-line paragraph ("Your exit IP address, looked up with
+    /// ipinfo.io through the tunnel — the city and country come from that same
+    /// answer."). Provenance is one clause, not a paragraph: it now rides the
+    /// age line below the value (`DiagnosticsAge(viaIPInfo:)`), which is where
+    /// the reader already looks to ask "is this still true?".
+    ///
+    /// #460 was: the same sentence, only in the narrow trailing column.
     @ViewBuilder
     private var exitRow: some View {
-        DiagnosticsRow(label: L10n.healthExitLabel.localized(),
-                       note: L10n.diagExitNote.localized()) {
-            VStack(alignment: .trailing, spacing: 2) {
+        DiagnosticsRow(label: L10n.healthExitLabel.localized()) {
+            VStack(alignment: .trailing, spacing: Theme.Metrics.s1) {
                 exitValue
                 // #457: the exit's age. A country printed with no date is a claim
                 // about now made from evidence about then.
-                DiagnosticsAge(at: exitAt)
+                DiagnosticsAge(at: exitAt, viaIPInfo: true)   // #471
             }
         }
     }
-    // eoc #460
 
+    /// #471: THE IP, AND ONLY THE IP. #471 was: a flag + "Moscow, RU" line with
+    /// the IP demoted to a caption under it — the same flag and the same place
+    /// `ConnectHero.connectedEvidence` prints one card up, which the hero's own
+    /// source comment already called out as "the place is on this screen twice".
+    /// The hero owns the PLACE; this row owns the one exit fact that will not fit
+    /// up there. `placeString` went with it.
     @ViewBuilder
     private var exitValue: some View {
-        if let geo = ipCheck.exitGeo, geo != IPChecker.ExitGeo() {
-            HStack(spacing: 4) {
-                if let cc = geo.country, let flag = CountryFlag.emoji(iso2: cc) {
-                    Text(flag)
-                }
-                Text(placeString(geo))
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                    .lineLimit(1)
-            }
-            if let ip = geo.ip {
-                Text(IPMask.display(ip, masked: maskIPs))
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(Theme.Palette.textSecondary)
-            }
+        if let ip = ipCheck.exitGeo?.ip, !ip.isEmpty {
+            // #337: mask for display only — the value behind it stays real.
+            Text(IPMask.display(ip, masked: maskIPs))
+                .font(Theme.Typography.mono)
+                .foregroundStyle(Theme.Palette.textPrimary)
+                .lineLimit(1)
         } else {
-            Text(L10n.healthLocationUnknown.localized())
-                .font(.caption)
+            Text(L10n.healthLatencyNotMeasured.localized())
+                .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.Palette.textSecondary)
         }
     }
+    // eoc #471
 
     // boc #461
     /// #461: THE TWO CONTRADICTORY LATENCIES, closed at the source.
@@ -348,7 +361,7 @@ private struct DiagnosticsFacts: View {
     @ViewBuilder
     private var responseRow: some View {
         DiagnosticsRow(label: L10n.diagResponseLabel.localized()) {
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: Theme.Metrics.s1) {   // #471 was: 2
                 Text(responseValue)
                     .font(Theme.Typography.metricValue)
                     .foregroundStyle(responseTone)
@@ -367,6 +380,11 @@ private struct DiagnosticsFacts: View {
     private var responseValue: String {
         if let ms = latencyMs { return L10n.healthLatencyMs_fmt.formatted(Int(ms.rounded())) }
         if probing && latencyAt == nil { return L10n.healthChecking.localized() }
+        // #470: a probe that RAN and got nothing back is a data-path fact, not an
+        // absence of measurement — "not measured · checked just now" hid a wedged
+        // tunnel (in=0 out=0) under a no-measurement word while the hero above
+        // still read Connected. `latencyAt` is stamped on failure too.
+        if latencyAt != nil { return L10n.healthLatencyNoResponse.localized() }
         return L10n.healthLatencyNotMeasured.localized()
     }
 
@@ -378,12 +396,8 @@ private struct DiagnosticsFacts: View {
         latencyMs == nil ? Theme.Palette.textTertiary : Theme.Palette.textPrimary
     }
 
-    /// "City, CC" from whatever geo fields are present ("location unknown" when
-    /// neither is). The flag glyph is rendered separately, next to this.
-    private func placeString(_ geo: IPChecker.ExitGeo) -> String {
-        let place = [geo.city, geo.country].compactMap { $0 }.joined(separator: ", ")
-        return place.isEmpty ? L10n.healthLocationUnknown.localized() : place
-    }
+    // #471 was: `placeString(_:)` — "City, CC" for the exit row's headline. The
+    // place is the hero's, and this row prints the IP; nothing here needs it.
 }
 
 // MARK: - DiagnosticsTools — block B, "Checks" (#258, moved here #459)
@@ -410,7 +424,9 @@ private struct DiagnosticsTools: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            DiagnosticsSubheader(title: L10n.diagToolsHeader.localized())
+            // #471 was: DiagnosticsSubheader(title:) — see `DiagnosticsFacts.body`.
+            OlcSectionHeader(L10n.diagToolsHeader.localized())
+                .padding(.top, Theme.Metrics.s3)
             ipRow
             Divider().overlay(Theme.Palette.separator)
             speedRow   // #461 was: + a Divider and `carrierRow` below it
@@ -421,30 +437,36 @@ private struct DiagnosticsTools: View {
     }
 
     private var ipRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: Theme.Metrics.s3) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
                 Text(L10n.ipCheckTitle.localized())
-                    .font(.subheadline)
+                    .font(Theme.Typography.label)   // #471 was: .subheadline
                     .foregroundStyle(Theme.Palette.textPrimary)
-                // #459: the second half of the owner's "where do these numbers
-                // come from?" — name the method, and how many services answer.
-                Text(L10n.diagIPSourceHint_fmt.formatted(Self.ipSourceCount))
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                ConnectIPStatus(ipCheck: ipCheck, maskIPs: maskIPs)
+                // #471 was: `diagIPSourceHint_fmt` rendered here — a permanent
+                // two-line paragraph under a button whose label already says what
+                // it does. How many services answer is a Settings fact; the
+                // sentence survives where it costs no pixels, as the Run button's
+                // accessibility hint (below).
+                ConnectIPStatus(ipCheck: ipCheck, maskIPs: maskIPs, mode: mode)   // #470: + mode
                 if let t = ipCheckTime, !ipCheck.isChecking {
                     Label(t.formatted(date: .omitted, time: .shortened), systemImage: "clock")
-                        .font(.caption2)
+                        .font(Theme.Typography.caption)   // #471 was: .caption2
                         .foregroundStyle(Theme.Palette.textTertiary)
                 }
             }
-            Spacer(minLength: 8)
-            OlcButton(L10n.ipCheckRun.localized(), role: .secondary, isBusy: ipCheck.isChecking) {
-                Task { await ipCheck.checkAll(via: mode); ipCheckTime = Date() }
-            }
+            Spacer(minLength: Theme.Metrics.s2)
+            runIPCheckButton   // #471: extracted — the chain grew a hint
         }
         .padding(.vertical, Theme.Metrics.s3)
+    }
+
+    /// #471: the IP check's one control, carrying the provenance sentence the row
+    /// used to print permanently.
+    private var runIPCheckButton: some View {
+        OlcButton(L10n.ipCheckRun.localized(), role: .secondary, isBusy: ipCheck.isChecking) {
+            Task { await ipCheck.checkAll(via: mode); ipCheckTime = Date() }
+        }
+        .accessibilityHint(L10n.diagIPSourceHint_fmt.formatted(Self.ipSourceCount))
     }
 
     // boc #459
@@ -452,23 +474,24 @@ private struct DiagnosticsTools: View {
     // .pingMs`. Block A measures the same route every 8 s and stamps the result;
     // this one was taken once per speed test and could not be dated at all.
     private var speedRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: Theme.Metrics.s3) {          // #471 was: 12
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {  // #471 was: 4
+                HStack(alignment: .top, spacing: Theme.Metrics.s4) {  // #471 was: 16
+                    // #470 was: speed.lastResult?.downloadMbps / uploadMbps (any route)
                     OlcMetric(label: L10n.speedLabelDL.localized(),
-                              value: value(speed.lastResult?.downloadMbps, L10n.speedRateValue_fmt.localized()),
+                              value: value(routeResult?.downloadMbps, L10n.speedRateValue_fmt.localized()),
                               unit: L10n.speedUnitMbps.localized(), unitInLabel: true)
                     OlcMetric(label: L10n.speedLabelUL.localized(),
-                              value: value(speed.lastResult?.uploadMbps, L10n.speedRateValue_fmt.localized()),
+                              value: value(routeResult?.uploadMbps, L10n.speedRateValue_fmt.localized()),
                               unit: L10n.speedUnitMbps.localized(), unitInLabel: true)
                 }
                 // #459: the throughput figures keep the card's dating rule — a
                 // run this view watched finish, on this route, or no stamp.
-                if throughputAt != nil, speed.lastResult?.mode == mode {
+                if throughputAt != nil, routeResult != nil {   // #470 was: speed.lastResult?.mode == mode
                     DiagnosticsAge(at: throughputAt)
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Theme.Metrics.s2)   // #471 was: 8
             OlcButton(L10n.speedTestRun.localized(), role: .secondary,
                       isBusy: speed.isTesting, action: onSpeedTest)
         }
@@ -488,6 +511,19 @@ private struct DiagnosticsTools: View {
     // `carrierEndpointsRowTitle` survives as that item's title; the two hints
     // and `carrierEndpointsShowAction` lose their last use.
     // eoc #461
+
+    // boc #470
+    /// The last result ONLY when it was measured on the route this card is
+    /// about. #470 was: the DL/UL figures printed `speed.lastResult` whatever
+    /// its `mode`, and only the AGE line was gated on it — so a direct-mode run
+    /// showed as bare numbers inside the tunnel's Diagnostics, undated and
+    /// unattributed, the exact claim the file header forbids. A result from the
+    /// other route reads "—", like no result. (A same-route result from an
+    /// earlier session still shows undated: `SpeedResult` carries no timestamp.)
+    private var routeResult: SpeedResult? {
+        speed.lastResult.flatMap { $0.mode == mode ? $0 : nil }
+    }
+    // eoc #470
 
     private func value(_ v: Double?, _ format: String) -> String {
         if speed.isTesting { return "…" }
@@ -512,60 +548,39 @@ private struct DiagnosticsTools: View {
 
 // MARK: - Shared pieces
 
-/// #459: one block sub-header ("This session" / "Checks"), in the design
-/// system's section-header treatment so the two blocks read as siblings.
-private struct DiagnosticsSubheader: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(Theme.Typography.sectionHeader)
-            .textCase(.uppercase)
-            .tracking(0.4)
-            .foregroundStyle(Theme.Palette.textTertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, Theme.Metrics.s3)
-    }
-}
+// boc #471
+// #471 was: `DiagnosticsSubheader` — a local uppercase label claiming to be "the
+// design system's section-header treatment" while using a fourth (font, tint,
+// tracking) recipe of its own. Both call sites draw `OlcSectionHeader` now, which
+// is the treatment, and no view in the app had been using it.
+// eoc #471
 
 /// Label left, value right — the fact rows of block A. The explicit init (rather
 /// than an `@ViewBuilder` stored property) matches `OlcCard` / `OlcSectionHeader`
 /// in the design system.
 ///
-/// #460: an optional `note` — one full-width caption under the label/value line,
-/// inside the same vertical padding. It exists because the two rows that most
-/// needed to say WHERE THEIR NUMBER COMES FROM (exit, response time) could only
-/// squeeze that into the right-hand value column, where a sentence renders as a
-/// ragged three-word-wide stack. A provenance line is prose: it gets the row.
+/// #471 was: an optional `note` — one full-width caption under the label/value
+/// line. Its two users (exit, response time) were the reason it existed; the
+/// response note went with the discrepancy it explained (#461) and the exit note
+/// is a clause on the age now (`DiagnosticsAge.viaIPInfo`), so the parameter had
+/// no caller left. A row is a label and a value.
 private struct DiagnosticsRow<Trailing: View>: View {
     private let label: String
-    private let note: String?
     private let trailing: () -> Trailing
 
-    // #460 was: init(label:trailing:)
-    init(label: String, note: String? = nil,
-         @ViewBuilder trailing: @escaping () -> Trailing) {
+    // #471 was: init(label:note:trailing:)
+    init(label: String, @ViewBuilder trailing: @escaping () -> Trailing) {
         self.label = label
-        self.note = note
         self.trailing = trailing
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(label)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Palette.textSecondary)
-                Spacer(minLength: 12)
-                trailing()
-            }
-            if let note {
-                Text(note)
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Palette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(Theme.Typography.label)   // #471 was: .subheadline
+                .foregroundStyle(Theme.Palette.textSecondary)
+            Spacer(minLength: Theme.Metrics.s3)
+            trailing()
         }
         .padding(.vertical, Theme.Metrics.s3)
     }
@@ -580,17 +595,28 @@ private struct DiagnosticsRow<Trailing: View>: View {
 /// "checked just now ago".
 private struct DiagnosticsAge: View {
     let at: Date?
+    /// #471: fold the exit row's PROVENANCE into the age that dates it —
+    /// "checked 2 min ago · via ipinfo.io". Dating a claim answers "is this still
+    /// true?" and sourcing it answers "who says so?"; one line can carry both,
+    /// and #460's separate paragraph could not stop being a paragraph.
+    /// `var` (not `let`) so the memberwise init keeps the default.
+    var viaIPInfo = false
 
     var body: some View {
         Text(text)
-            .font(.caption2)
+            .font(Theme.Typography.caption)   // #471 was: .caption2
             .foregroundStyle(Theme.Palette.textTertiary)
-            .lineLimit(1)
+            // #471 was: `.lineLimit(1)`. The exit's line is longer now, and a
+            // provenance clause that truncates says nothing.
+            .lineLimit(2)
+            .multilineTextAlignment(.trailing)
     }
 
     private var text: String {
         guard let at else { return L10n.healthNeverMeasured.localized() }
-        return L10n.healthCheckedAgo_fmt.formatted(HealthAge.phrase(Date().timeIntervalSince(at)))
+        let aged = L10n.healthCheckedAgo_fmt.formatted(HealthAge.phrase(Date().timeIntervalSince(at)))
+        // #471: `diagAgeVia_fmt` names the ONE service the exit lookup uses.
+        return viaIPInfo ? L10n.diagAgeVia_fmt.formatted(aged) : aged
     }
 }
 
@@ -602,39 +628,62 @@ private struct DiagnosticsAge: View {
 private struct ConnectIPStatus: View {
     @ObservedObject var ipCheck: IPChecker
     let maskIPs: Bool
+    /// #470: the route the card is about NOW — a result from the other route is
+    /// attributed, and never green.
+    let mode: RouteMode
 
     var body: some View {
         if ipCheck.isChecking {
             Text(L10n.ipChecking.localized())
-                .font(.system(.caption, design: .monospaced))
+                .font(Theme.Typography.caption)   // #471 was: mono — it is a word, not an address
                 .foregroundStyle(Theme.Palette.textSecondary)
         } else if !hasResults {
             Text(L10n.ipNotChecked.localized())
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471 was: .caption
                 .foregroundStyle(Theme.Palette.textSecondary)
         } else if collapsed, let ip = summaryIP {
             // #337: mask for display only — the value behind it stays real.
-            Text(L10n.ipSourcesAgree_fmt.formatted(IPMask.display(ip, masked: maskIPs),
-                                                   ipCheck.results.filter { $0.ip != nil }.count))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Theme.Palette.green)
+            // #470: say WHICH ROUTE answered, and be green only while that is the
+            // route this card is about. `IPResult.mode` was stored and never
+            // rendered, and nothing clears results across connect / disconnect,
+            // so a real-IP check made before connecting sat green under a
+            // Connected hero (and a tunnel IP stayed green after disconnecting),
+            // reading as the current answer.
+            let agree = L10n.ipSourcesAgree_fmt.formatted(IPMask.display(ip, masked: maskIPs),
+                                                          ipCheck.results.filter { $0.ip != nil }.count)
+            Text("\(agree) · \(resultRoute.label)")
+                .font(Theme.Typography.mono)   // #471: an address — mono stays
+                .foregroundStyle(resultIsCurrentRoute ? Theme.Palette.green : Theme.Palette.textSecondary)
         } else {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471 was: 3
                 if allDone, Set(ipCheck.results.compactMap { $0.ip }).count > 1 {
                     leakWarning
                 }
                 ForEach(ipCheck.results) { r in sourceRow(r) }
+                routeCaption   // #470
             }
         }
     }
 
+    // boc #470
+    /// The route the listed answers came from (every row of one check shares it).
+    private var resultRoute: RouteMode { ipCheck.results.first?.mode ?? mode }
+    private var resultIsCurrentRoute: Bool { resultRoute == mode }
+
+    private var routeCaption: some View {
+        Text(resultRoute.label)
+            .font(Theme.Typography.caption)   // #471 was: .caption2
+            .foregroundStyle(Theme.Palette.textTertiary)
+    }
+    // eoc #470
+
     private var leakWarning: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Theme.Metrics.s2) {   // #471 was: 6
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471 was: .caption2
                 .foregroundStyle(Theme.Palette.red)
             Text(L10n.ipDnsLeak.localized())
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471 was: .caption
                 .foregroundStyle(Theme.Palette.red)
         }
     }
@@ -643,16 +692,16 @@ private struct ConnectIPStatus: View {
     private func sourceRow(_ r: IPResult) -> some View {
         HStack {
             Text(r.label)
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471 was: .caption2
                 .foregroundStyle(Theme.Palette.textSecondary)
             Spacer()
             if let ip = r.ip {
                 Text(IPMask.display(ip, masked: maskIPs))
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(Theme.Typography.mono)   // #471 was: .caption2 mono
                     .foregroundStyle(Theme.Palette.textPrimary)
             } else if let err = r.error {
                 Text(err)
-                    .font(.caption2)
+                    .font(Theme.Typography.caption)   // #471 was: .caption2
                     .foregroundStyle(Theme.Palette.red)
                     .lineLimit(1)
                     .truncationMode(.middle)

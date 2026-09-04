@@ -79,10 +79,17 @@ final class ConnectionStore: ObservableObject {
         // registered, and the next refresh (launch or pull) brought every node
         // back under fresh ids. Once no record of a source remains, forget it.
         for r in removed {
-            guard let source = r.subSourceURL, subscriptionMeta[source] != nil,
-                  !connections.contains(where: { $0.subSourceURL == source }) else { continue }
-            subscriptionMeta[source] = nil
-            LogStore.shared.log(.connection, "− forgot subscription \(source): its last server was removed")
+            // #470: the meta key and the records may hold the two link forms of
+            // one list (`canonicalSource`), so both sides compare canonically.
+            guard let source = r.subSourceURL else { continue }
+            let canon = Self.canonicalSource(source)
+            let keys = subscriptionMeta.keys.filter { Self.canonicalSource($0) == canon }
+            guard !keys.isEmpty,
+                  !connections.contains(where: { $0.subSourceURL.map(Self.canonicalSource) == canon })
+            else { continue }
+            for key in keys { subscriptionMeta[key] = nil }
+            // #470 was: `\(source)` — the full link is a capability URL (see `sourceLabel`).
+            LogStore.shared.log(.connection, "− forgot subscription \(Self.sourceLabel(source)): its last server was removed")
         }
         // eoc #469
     }
@@ -96,6 +103,29 @@ final class ConnectionStore: ObservableObject {
     func update(_ r: ConnectionRecord) {
         if let i = connections.firstIndex(where: { $0.id == r.id }) {
             connections[i] = r
+            // boc #470: `save()` never deletes a Keychain item for a secret that
+            // is "" — on purpose: a Keychain READ failure (device locked before
+            // first unlock) also leaves "" in memory, and a delete there would
+            // wipe the real value. But an explicit `update` is a decision about
+            // the whole record: a reconfigure away from wbstream (or with the
+            // token field cleared) writes `wbToken: ""` and the server drops
+            // `auth.token` — yet `hydrateSecrets` put the OLD token back on the
+            // next launch, so the engine kept sending the credential the user had
+            // removed. Blank the stored item to match. Only an item that holds a
+            // value (never create an empty one), and never while the secrets are
+            // known-unreadable. The key is left alone: "" is never a valid key,
+            // so a blank one is always the locked-Keychain symptom, not a choice.
+            if !secretsLocked, case .olcrtc(let p) = r.details {
+                if p.socksPass.isEmpty,
+                   let stored = ConnectionSecretStore.socksPass(for: r.id), !stored.isEmpty {
+                    ConnectionSecretStore.setSocksPass(connectionID: r.id, pass: "")
+                }
+                if p.wbToken.isEmpty,
+                   let stored = ConnectionSecretStore.wbToken(for: r.id), !stored.isEmpty {
+                    ConnectionSecretStore.setWBToken(connectionID: r.id, token: "")
+                }
+            }
+            // eoc #470
             LogStore.shared.log(.connection, "✎ updated connection: \(r.displayName)")
         }
     }
@@ -145,13 +175,39 @@ final class ConnectionStore: ObservableObject {
         var toRemove: [UUID] = []
     }
 
+    /// #470: one subscription, one identity. The same list reaches the app as an
+    /// `olcrtc-sub://h/p` deep link AND as the `https://h/p` it is fetched from
+    /// (App.swift keys a pasted https link on itself), and the two were separate
+    /// sources: the second import added every node again and the group footer
+    /// read "2 sources". Matching and the meta bookkeeping compare THIS form —
+    /// the fetch URL, which `fetchURL(for:)` already derives the same way. What
+    /// a record stores stays the caller's link, so nothing on disk is rewritten
+    /// and every existing key still resolves.
+    static func canonicalSource(_ source: String) -> String {
+        guard var comps = URLComponents(string: source),
+              comps.scheme?.lowercased() == "olcrtc-sub" else { return source }
+        comps.scheme = "https"
+        return comps.string ?? source
+    }
+
+    /// #470: what a log line may say about a subscription link. The link is a
+    /// capability URL — whoever holds it downloads every node's key — and the
+    /// connection log is exportable, so only the host is written (the refresh
+    /// failure path always did this; the import and skip lines did not).
+    private static func sourceLabel(_ source: String) -> String {
+        URL(string: source)?.host ?? "<subscription link>"
+    }
+
     static func diffSubscription(_ sub: OlcrtcSubscription,
                                  source: String,
                                  group: String,
                                  existing: [ConnectionRecord]) -> SubscriptionDiff {
-        // Records previously imported from this exact source, keyed by node.
+        // Records previously imported from this source, keyed by node.
+        // #470 was: `where r.subSourceURL == source` — the exact string, so the
+        // https form of an olcrtc-sub:// list matched nothing and re-added it all.
+        let canon = canonicalSource(source)
         var byKey: [String: ConnectionRecord] = [:]
-        for r in existing where r.subSourceURL == source {
+        for r in existing where r.subSourceURL.map(canonicalSource) == canon {
             if let k = r.subNodeKey { byKey[k] = r }
         }
         var diff = SubscriptionDiff()
@@ -161,7 +217,22 @@ final class ConnectionStore: ObservableObject {
             // De-dup within a single list too: keep the first occurrence.
             guard seen.insert(key).inserted else { continue }
             let params = connection(from: entry)
-            if let prior = byKey[key] {
+            // boc #470: `nodeKey` includes the encryption KEY, so a provider that
+            // rotates it produced a miss — the same node was added again and the
+            // record the user had been using (with its id, health history and
+            // primary flag) was deleted by the removal loop below. Fall back to
+            // the node's identity without the key; that IS the same node, and the
+            // update branch replaces `details` with the new key anyway.
+            var prior = byKey[key]
+            if prior == nil,
+               let (staleKey, match) = byKey.first(where: { k, r in
+                   !seen.contains(k) && Self.sameNode(r, entry)
+               }) {
+                prior = match
+                seen.insert(staleKey)   // the removal loop must skip it
+            }
+            // eoc #470
+            if let prior {
                 // Update in place: keep id (and thus keychain + primary), refresh
                 // the protocol params, name, group, provenance, and #363 metadata.
                 var updated = prior
@@ -192,6 +263,15 @@ final class ConnectionStore: ObservableObject {
             diff.toRemove.append(r.id)
         }
         return diff
+    }
+
+    /// #470: the same node under a rotated key — carrier, transport, room and
+    /// client id, i.e. `Entry.nodeKey` minus the key.
+    private static func sameNode(_ record: ConnectionRecord, _ entry: OlcrtcSubscription.Entry) -> Bool {
+        guard case .olcrtc(let p) = record.details else { return false }
+        let e = entry.parsed
+        return p.carrier == e.carrier && p.transport == e.transport
+            && p.roomID == e.roomID && p.clientID == e.clientID
     }
 
     /// Builds the protocol params for a subscription entry (#355 sei params
@@ -227,21 +307,37 @@ final class ConnectionStore: ObservableObject {
             primaryID = connections.first?.id
         }
 
+        // #470: a twin key for the same list (its other link form) is THIS source
+        // now — one meta, one refresh, one footer entry.
+        let canon = Self.canonicalSource(source)
+        for twin in subscriptionMeta.keys where twin != source && Self.canonicalSource(twin) == canon {
+            subscriptionMeta[twin] = nil
+        }
         subscriptionMeta[source] = SubscriptionMeta(
             refreshInterval: sub.refreshInterval, lastRefresh: Date(),
             name: sub.name, used: sub.used, available: sub.available,   // #363
             serverCount: sub.entries.count)
 
+        // #470 was: `\(source)` — the whole link, into the exportable log.
         LogStore.shared.log(.connection,
-            "⬇ subscription \(source): +\(diff.toAdd.count) ~\(diff.toUpdate.count) −\(diff.toRemove.count)")
+            "⬇ subscription \(Self.sourceLabel(source)): +\(diff.toAdd.count) ~\(diff.toUpdate.count) −\(diff.toRemove.count)")
         return diff
+    }
+
+    /// #470: the meta for a source under either of its link forms (exact key
+    /// first, then the canonical twin) — a group whose records still carry the
+    /// deep-link form must find the meta an https re-import re-keyed.
+    private func meta(for source: String) -> SubscriptionMeta? {
+        if let exact = subscriptionMeta[source] { return exact }
+        let canon = Self.canonicalSource(source)
+        return subscriptionMeta.first { Self.canonicalSource($0.key) == canon }?.value
     }
 
     /// Whether a source is due for a refresh, given its stored `#refresh`
     /// interval and the time of the last import (#356). Unknown source or no
     /// interval → false (we never nag about a list that didn't ask for it).
     func isRefreshDue(source: String, now: Date = Date()) -> Bool {
-        guard let meta = subscriptionMeta[source], let interval = meta.refreshInterval,
+        guard let meta = meta(for: source), let interval = meta.refreshInterval,   // #470: either link form
               interval > 0 else { return false }
         return now.timeIntervalSince(meta.lastRefresh) >= interval
     }
@@ -295,8 +391,10 @@ final class ConnectionStore: ObservableObject {
         var refreshed: [String] = []
         for source in sources {
             guard let fetchURL = Self.fetchURL(for: source) else {
+                // #470 was: `\(source)` verbatim — host (and scheme, the usual
+                // reason a fetch URL cannot be derived) only.
                 LogStore.shared.log(.connection,
-                    "⚠ subscription refresh: can't derive fetch URL for \(source) — skipped")
+                    "⚠ subscription refresh: can't derive fetch URL for \(Self.sourceLabel(source)) (scheme \(URL(string: source)?.scheme ?? "?")) — skipped")
                 continue
             }
             do {
@@ -362,11 +460,16 @@ final class ConnectionStore: ObservableObject {
     ///     the soonest-due source (smallest interval, then earliest refresh).
     func subscriptionInfo(for items: [ConnectionRecord]) -> (source: String, meta: SubscriptionMeta)? {
         // Distinct sources backing this group, in first-seen order.
+        // #470: distinct by canonical form — the deep-link and https spellings of
+        // one list are one source, not "2 sources".
         var sources: [String] = []
         for r in items {
-            if let s = r.subSourceURL, !sources.contains(s) { sources.append(s) }
+            if let s = r.subSourceURL,
+               !sources.contains(where: { Self.canonicalSource($0) == Self.canonicalSource(s) }) {
+                sources.append(s)
+            }
         }
-        let metas = sources.compactMap { subscriptionMeta[$0] }
+        let metas = sources.compactMap { meta(for: $0) }   // #470 was: subscriptionMeta[$0]
         guard let first = metas.first else { return nil }
 
         // Rows that actually came from a subscription — the real server count for
@@ -490,10 +593,28 @@ final class ConnectionStore: ObservableObject {
         // #356: subscription refresh bookkeeping. Assigned directly (not via the
         // published setter inside `load()` semantics) — the didSet re-save is a
         // harmless no-op writing the same bytes back.
-        if let data = UserDefaults.standard.data(forKey: Self.subMetaKey),
-           let decoded = try? JSONDecoder().decode([String: SubscriptionMeta].self, from: data) {
-            subscriptionMeta = decoded
+        // #470 was: `try?` with no log — a blob that failed to decode dropped
+        // EVERY source silently: no auto-refresh, no footer, and the next import
+        // re-saved a one-entry dictionary over the rest. Say so, and keep the
+        // entries that still read (one bad meta must not take the others).
+        if let data = UserDefaults.standard.data(forKey: Self.subMetaKey) {
+            do {
+                subscriptionMeta = try JSONDecoder().decode([String: SubscriptionMeta].self, from: data)
+            } catch {
+                LogStore.shared.log(.connection,
+                    "⚠ ConnectionStore: failed to decode subscription meta: \(error.localizedDescription) — keeping the entries that still read")
+                if let lenient = try? JSONDecoder().decode([String: Lenient<SubscriptionMeta>].self, from: data) {
+                    subscriptionMeta = lenient.compactMapValues(\.value)
+                }
+            }
         }
+    }
+
+    /// #470: decodes to nil instead of failing the container it sits in, so a
+    /// dictionary with one unreadable value still yields the readable ones.
+    private struct Lenient<T: Decodable>: Decodable {
+        let value: T?
+        init(from decoder: Decoder) { value = try? T(from: decoder) }
     }
 
     /// Persists `subscriptionMeta` (#356). Runs from its `didSet`.

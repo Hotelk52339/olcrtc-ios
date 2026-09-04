@@ -96,11 +96,23 @@ final class TunnelManagerStateTests: XCTestCase {
     // every other one this suite touches.
     private let healthKey = "olcrtc_health_v1"
     private var healthSnapshot: Data?
+    // #470: every valid `connect()` below launches a REAL engine task, and a
+    // raw `state = .disconnected` (the tidy-up these tests use) does not stop
+    // it — only `disconnect()` does. The previous test's Go runtime, or a real
+    // daemon on the dev Mac, could therefore still hold the shared default
+    // port (8808) when the next preflight ran its synchronous `isFree` check,
+    // which failed the attempt with OLC-1026 — `.connecting`, the epoch bump
+    // and `boundPort` all asserted false, intermittently, by scheduling order.
+    // The #313 tests already reserve a fresh free port each; now every test
+    // starts on one (the #313 tests still override it for their own reasons).
+    private var savedSocksPort = 0
     override func setUp() {
         super.setUp()
         savedLanguage = SettingsStore.shared.language
         SettingsStore.shared.language = "en"
         healthSnapshot = UserDefaults.standard.data(forKey: healthKey)   // #456
+        savedSocksPort = SettingsStore.shared.socksPort                  // #470
+        if let free = someFreePort() { SettingsStore.shared.socksPort = free }
     }
     override func tearDown() {
         // #456
@@ -108,6 +120,7 @@ final class TunnelManagerStateTests: XCTestCase {
         HealthCoordinator.flushPendingWrites()
         if let d = healthSnapshot { UserDefaults.standard.set(d, forKey: healthKey) }
         else { UserDefaults.standard.removeObject(forKey: healthKey) }
+        SettingsStore.shared.socksPort = savedSocksPort   // #470
         SettingsStore.shared.language = savedLanguage
         super.tearDown()
     }
@@ -551,19 +564,36 @@ final class TunnelManagerStateTests: XCTestCase {
     // OSAllocatedUnfairLock; hammering it from many tasks must not crash / trap, and
     // the nonisolated getter must round-trip the value the MainActor setter wrote.
 
-    func testLiveBoundPortConcurrentAccessIsSafe() {
+    // #470 was: 64 off-actor READS and no write at all (`_ = i` was a leftover)
+    // — a reads-only loop over a static cannot race even with the old
+    // `nonisolated(unsafe)` implementation, so the test could not detect the
+    // #382 bug it exists for. The setter is `private`; the MainActor paths that
+    // write it are `connect()` (preflight publishes the reserved port) and the
+    // session-ending `state` transitions (`didSet` clears `boundPort`, and every
+    // assignment mirrors into the static — `.failed("a")` → `.failed("b")` is a
+    // change, so each one is a write). Interleave those with the reads.
+    func testLiveBoundPortConcurrentAccessIsSafe() throws {
+        let s = SettingsStore.shared
+        let saved = s.socksPort
+        defer { s.socksPort = saved }
+        let free = try XCTUnwrap(someFreePort(), "no free local port to test on")
+        s.socksPort = free
+        let manager = makeManager()
+        manager.connect(record: record(with: validParams()))   // MainActor write: `free`
+        XCTAssertEqual(TunnelManager.liveBoundPort, free)
+
         let exp = expectation(description: "concurrent liveBoundPort access")
         exp.expectedFulfillmentCount = 64
         for i in 0..<64 {
             DispatchQueue.global().async {
-                // The setter is `private`, so drive writes through the MainActor
-                // `boundPort` path; reads use the nonisolated getter off-actor.
-                _ = TunnelManager.liveBoundPort
+                _ = TunnelManager.liveBoundPort   // off-actor read, racing the write below
                 exp.fulfill()
             }
-            _ = i
+            manager.state = .failed("race \(i)")   // MainActor write: nil, through the lock
         }
         wait(for: [exp], timeout: 5)
+        manager.state = .disconnected
+        XCTAssertNil(TunnelManager.liveBoundPort, "the last write must be the one that reads back")
     }
 
     func testLiveBoundPortMirrorsBoundPortAcrossASession() throws {

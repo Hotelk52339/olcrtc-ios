@@ -108,7 +108,10 @@ final class ServerScriptParityTests: XCTestCase {
 
         // Extract all OLCRTC_* variable names read in boc patches.
         let bocText = bocLines.joined(separator: "\n")
-        let pattern = try NSRegularExpression(pattern: #"\$\{?(OLCRTC_[A-Z_]+)"#)
+        // #470 was: `[A-Z_]+` — no digits, so `${OLCRTC_VP8_FPS:-25}` was captured
+        // as "OLCRTC_VP", which the substring check below matched against ANY
+        // OLCRTC_VP8_* emission; a new digit-bearing var could never be caught.
+        let pattern = try NSRegularExpression(pattern: #"\$\{?(OLCRTC_[A-Z0-9_]+)"#)
         let matches = pattern.matches(in: bocText, range: NSRange(bocText.startIndex..., in: bocText))
         let reads   = Set(matches.compactMap { m -> String? in
             guard let r = Range(m.range(at: 1), in: bocText) else { return nil }
@@ -144,10 +147,23 @@ final class ServerScriptParityTests: XCTestCase {
             SSHRunner.installEnv(.init(carrier: "wbstream", transport: "vp8channel",  roomID: "r")),
         ].joined(separator: " ")
 
+        let emitted = try Self.emittedEnvNames(in: allEnvs)   // #470
         for varName in reads where !scriptDefaults.contains(varName) {
-            XCTAssertTrue(allEnvs.contains(varName),
+            // #470 was: `allEnvs.contains(varName)` — a substring check.
+            XCTAssertTrue(emitted.contains(varName),
                 "\(varName) is read in a srv.sh boc patch but never set by SSHRunner.installEnv()")
         }
+    }
+
+    /// #470: the NAMES an env string assigns (`OLCRTC_X=…`), as a set, so the
+    /// contract checks above compare whole names instead of substrings.
+    private static func emittedEnvNames(in env: String) throws -> Set<String> {
+        let re = try NSRegularExpression(pattern: #"(OLCRTC_[A-Z0-9_]+)="#)
+        let matches = re.matches(in: env, range: NSRange(env.startIndex..., in: env))
+        return Set(matches.compactMap { m -> String? in
+            guard let r = Range(m.range(at: 1), in: env) else { return nil }
+            return String(env[r])
+        })
     }
 
     // MARK: #452 — Alignment between addCarrierEnv() and scripts/add-carrier.sh
@@ -163,11 +179,11 @@ final class ServerScriptParityTests: XCTestCase {
                 .deletingLastPathComponent()          // Tests/
                 .deletingLastPathComponent()          // olcrtc-ios/
                 .appendingPathComponent("scripts/add-carrier.sh")
-        guard let script = try? String(contentsOf: url, encoding: .utf8) else {
-            throw XCTSkip("scripts/add-carrier.sh not present in this build")
-        }
+        // #470 was: `try?` + XCTSkip — a script dropped from the bundle made the
+        // whole contract silently "skipped" on device; the sibling loaders throw.
+        let script = try String(contentsOf: url, encoding: .utf8)
 
-        let pattern = try NSRegularExpression(pattern: #"\$\{?(OLCRTC_[A-Z_]+)"#)
+        let pattern = try NSRegularExpression(pattern: #"\$\{?(OLCRTC_[A-Z0-9_]+)"#)   // #470 was: [A-Z_]+
         let matches = pattern.matches(in: script, range: NSRange(script.startIndex..., in: script))
         let reads = Set(matches.compactMap { m -> String? in
             guard let r = Range(m.range(at: 1), in: script) else { return nil }
@@ -198,8 +214,10 @@ final class ServerScriptParityTests: XCTestCase {
 
         XCTAssertFalse(reads.contains("OLCRTC_PIN"),
             "add-carrier.sh must not read OLCRTC_PIN — siblings reuse the already-built binary")
+        let emitted = try Self.emittedEnvNames(in: allEnvs)   // #470
         for varName in reads where !scriptDefaults.contains(varName) {
-            XCTAssertTrue(allEnvs.contains(varName),
+            // #470 was: `allEnvs.contains(varName)` — a substring check.
+            XCTAssertTrue(emitted.contains(varName),
                 "\(varName) is read by scripts/add-carrier.sh but never set by SSHRunner.addCarrierEnv()")
         }
     }

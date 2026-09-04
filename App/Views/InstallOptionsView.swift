@@ -122,17 +122,11 @@ struct InstallOptionsView: View {
     /// (audit) transport chips with the ✗ combos for the current carrier
     /// disabled (OlcOption.disabled) and the reason surfaced to VoiceOver.
     /// #452: parametrised by carrier so the extras sub-forms reuse it.
+    // #470 was: the matrix restated inline here (and again in two other sheets),
+    // which is why the test that "checked" it could only compare the copy with
+    // itself. One helper on the matrix; the test now checks the matrix.
     private func transportOptions(for carrier: String) -> [OlcOption<String>] {
-        CarrierTransportMatrix.transports.map { t -> OlcOption<String> in
-            let fails = CarrierTransportMatrix.compat(carrier: carrier, transport: t) == .fail
-            return OlcOption(
-                value: t,
-                label: CarrierTransportMatrix.transportLabel(t),
-                disabled: fails,
-                disabledReason: fails
-                    ? L10n.matrixFail_fmt.formatted(CarrierTransportMatrix.carrierLabel(carrier))
-                    : nil)
-        }
+        CarrierTransportMatrix.transportOptions(for: carrier)
     }
 
     var body: some View {
@@ -178,7 +172,9 @@ struct InstallOptionsView: View {
         } header: {
             Text(L10n.sectionCarrier.localized())
         } footer: {
-            Text(L10n.carrierChoiceFooter.localized()).font(.caption2)
+            // #471: B9 — a Form footer already renders at the caption step;
+            // `.caption2` only pushed it BELOW the scale. was: .font(.caption2)
+            Text(L10n.carrierChoiceFooter.localized())
         }
     }
 
@@ -198,7 +194,7 @@ struct InstallOptionsView: View {
             // that the compatibility sentence is gone — render nothing rather
             // than an empty Text that still reserves footer space.
             if !transportFooter.isEmpty {
-                Text(transportFooter).font(.caption2)
+                Text(transportFooter)   // #471: B9 — a Form footer is already a caption
             }
         }
     }
@@ -211,7 +207,7 @@ struct InstallOptionsView: View {
         if binding.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty,
            let last = RoomMemory.lastRoom(forCarrier: carrier) {
             Button(L10n.roomIDLastUsed_fmt.formatted(last)) { binding.wrappedValue = last }
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                 .foregroundStyle(Theme.Palette.accent)
         }
     }
@@ -228,13 +224,14 @@ struct InstallOptionsView: View {
             } header: {
                 Text(L10n.roomIDSectionHeader.localized())
             } footer: {
-                Text(roomFooter).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(roomFooter)
             }
         } else {
             Section {
                 Label(L10n.roomIDAutoGenHint.localized(),
                       systemImage: "wand.and.stars")
-                    .font(.caption)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -255,7 +252,8 @@ struct InstallOptionsView: View {
             } header: {
                 Text(L10n.jitsiServerHeader.localized())
             } footer: {
-                Text(L10n.jitsiServerFooter.localized()).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(L10n.jitsiServerFooter.localized())
             }
         }
     }
@@ -275,7 +273,8 @@ struct InstallOptionsView: View {
             } header: {
                 Text(L10n.wbTokenHeader.localized())
             } footer: {
-                Text(L10n.wbTokenFooter.localized()).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(L10n.wbTokenFooter.localized())
             }
         }
     }
@@ -286,14 +285,17 @@ struct InstallOptionsView: View {
             // (audit) was: literal "FPS:/Batch:/Frag:/ACK:" — RU users saw mixed
             // languages; the sei* keys already exist (used by AddConnectionView).
             Section {
-                Stepper("\(L10n.seiFpsLabel.localized()): \(seiFPS)", value: $seiFPS, in: 1...120)
-                Stepper("\(L10n.seiBatchLabel.localized()): \(seiBatch)", value: $seiBatch, in: 1...256)
-                Stepper("\(L10n.seiFragLabel.localized()): \(seiFrag)", value: $seiFrag, in: 100...65535, step: 100)
-                Stepper("\(L10n.seiAckLabel.localized()): \(seiACK)", value: $seiACK, in: 0...10)
+                // #470 was: literal ranges here, different ones in the edit sheet, and
+                // an ACK stepper of 0...10 for a value that is a millisecond timeout.
+                Stepper("\(L10n.seiFpsLabel.localized()): \(seiFPS)", value: $seiFPS, in: SettingsStore.Defaults.seiFPSRange)
+                Stepper("\(L10n.seiBatchLabel.localized()): \(seiBatch)", value: $seiBatch, in: SettingsStore.Defaults.seiBatchRange)
+                Stepper("\(L10n.seiFragLabel.localized()): \(seiFrag)", value: $seiFrag, in: SettingsStore.Defaults.seiFragRange, step: 100)
+                Stepper("\(L10n.seiAckLabel.localized()): \(seiACK)", value: $seiACK, in: SettingsStore.Defaults.seiACKRange, step: 100)
             } header: {
                 Text(L10n.seiSettingsHeader.localized())
             } footer: {
-                Text(L10n.seiSettingsFooter.localized()).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(L10n.seiSettingsFooter.localized())
             }
         }
     }
@@ -312,7 +314,8 @@ struct InstallOptionsView: View {
             } header: {
                 Text(L10n.installExtrasHeader.localized())
             } footer: {
-                Text(L10n.installExtrasFooter.localized()).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(L10n.installExtrasFooter.localized())
             }
         }
     }
@@ -349,7 +352,7 @@ struct InstallOptionsView: View {
             roomSuggestion(carrier: c, into: binding.roomID)   // #456
         } else {
             Label(L10n.roomIDAutoGenHint.localized(), systemImage: "wand.and.stars")
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -368,7 +371,7 @@ struct InstallOptionsView: View {
                 .textInputAutocapitalization(.never)
                 .keyboardType(.URL)
             Text(L10n.jitsiServerFooter.localized())
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .foregroundStyle(.secondary)
         }
     }
@@ -384,7 +387,7 @@ struct InstallOptionsView: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
             Text(L10n.wbTokenFooter.localized())
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .foregroundStyle(.secondary)
         }
     }
@@ -392,8 +395,11 @@ struct InstallOptionsView: View {
 
     private var defaultsInfoSection: some View {
         Section {
-            Text(L10n.carrierFooter.localized())
-                .font(.caption2)
+            // #470: in Add-protocol mode (`singleOnly`) the sibling SHARES the
+            // primary's key (scripts/add-carrier.sh) — "key … auto-generated" was
+            // untrue there. #470 was: `Text(L10n.carrierFooter.localized())`.
+            Text((singleOnly ? L10n.carrierFooterSharedKey : L10n.carrierFooter).localized())
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
     }
@@ -455,8 +461,9 @@ struct InstallOptionsView: View {
         // steppers above; only `videochannel` still installs with the server-side
         // defaults from scripts/srv.sh (OLCRTC_VIDEO_* deliberately has no UI —
         // #097 decision: ten niche knobs aren't worth the sheet sprawl).
+        // #470 was: `.formatted(transport)` — the raw id ("videochannel") in user copy.
         transport == "videochannel"
-            ? L10n.transportUsesServerDefaults_fmt.formatted(transport)
+            ? L10n.transportUsesServerDefaults_fmt.formatted(CarrierTransportMatrix.transportLabel(transport))
             : ""
     }
 

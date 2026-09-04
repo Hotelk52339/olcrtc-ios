@@ -15,7 +15,7 @@ The app manages the full lifecycle end to end:
 
 - **Provision** — SSH into a VPS, upload and run the install script, and capture the resulting `olcrtc://` URI.
 - **Connect** — run the olcrtc Go core (via gomobile bindings) as a local SOCKS5 proxy.
-- **Route** — pick a backend in the Config tab: a local **SOCKS5 proxy** (point SOCKS5-aware apps and the app's own diagnostics at the port), or a system-wide **VPN** — a NetworkExtension packet tunnel (`tun2socks`) that sends the whole device through the core. VPN mode needs the Network Extension entitlement (a paid Apple Developer team); free-Apple-ID sideloads run proxy-only.
+- **Route** — pick a backend in Settings → Tunnel mode: a local **SOCKS5 proxy** (point SOCKS5-aware apps and the app's own diagnostics at the port), or a system-wide **VPN** — a NetworkExtension packet tunnel (`tun2socks`) that sends the whole device through the core. VPN mode needs the Network Extension entitlement (a paid Apple Developer team); free-Apple-ID sideloads run proxy-only.
 
 ---
 

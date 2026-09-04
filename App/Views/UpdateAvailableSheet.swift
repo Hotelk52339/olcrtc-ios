@@ -20,12 +20,13 @@ struct UpdateAvailableSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.s4) {   // #471: B9 — 16 → s4
                     Text(L10n.updateAvailableBody.localized())
-                        .font(.subheadline)
+                        // #471: B9 — prose is step 3. was: .font(.subheadline)
+                        .font(Theme.Typography.body)
                         .foregroundStyle(Theme.Palette.textSecondary)
 
-                    VStack(spacing: 8) {
+                    VStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
                         // Release page — a plain https link, always present.
                         OlcButton(L10n.updateOpenReleasePage.localized(),
                                   systemImage: "safari", role: .primary, fillWidth: true) {

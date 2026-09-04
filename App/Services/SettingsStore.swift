@@ -92,11 +92,18 @@ final class SettingsStore: ObservableObject {
         static let vp8FPSRange          = 1...60
         static let vp8BatchSize         = 64            // tested on Telemost + wbstream
         static let vp8BatchRange        = 1...256
+        // #470: SEI transport ranges, shared by the install / add / edit sheets
+        // (upstream rejects ack_timeout_ms == 0 and fragment_size > 60000; the
+        // ACK value is milliseconds, not a count).
+        static let seiFPSRange          = 1...120
+        static let seiBatchRange        = 1...256
+        static let seiFragRange         = 100...60000
+        static let seiACKRange          = 1...10000
         static let logBufferSize        = 5000
         static let logBufferRange       = 50...10000
         static let containerLogsTail    = 200
         static let containerLogsTailRange = 50...2000
-        static let fontSizeIndex        = 3
+        static let fontSizeIndex        = SettingsStore.systemFontSizeIndex   // #470: no app override; the slider is gone
         static let vpsAutoPingEnabled   = true
         static let vpsAutoPingInterval  = 30
         static let earlyRestartOnWedge  = false   // #440: opt-in, brittle log-signature feature
@@ -113,6 +120,12 @@ final class SettingsStore: ObservableObject {
         static let refreshOnEntry       = true
         static let vpsAutoPingRange     = 10...300
         static let updateCheckEnabled   = true          // #360: opt-out
+        // #471 was: `.dark` hardcoded at BOTH the init fallback and in reset()
+        // — the app was forced-dark before #340 and the default never moved on.
+        // A premium iOS app follows the device unless it is told otherwise, and
+        // Light is now a first-class scheme (#456), not a fallback. One
+        // constant, so the two sites can no longer disagree.
+        static let appearanceMode       = AppearanceMode.system
     }
 
     // MARK: Persistence dispatch
@@ -223,10 +236,17 @@ final class SettingsStore: ObservableObject {
     @Published var localSocksUser: String {
         didSet { Self.persist(localSocksUser, forKey: Keys.localSocksUser) }
     }
+    /// #470: the Keychain slot behind `localSocksPass` — one definition, so
+    /// `reset()` deletes exactly the item the getter/setter use.
+    private static let localSocksKeychain = (service: "olcrtc.local.socks", account: "password")
+
     /// Password is NOT @Published — stored and read via Keychain only.
     var localSocksPass: String {
-        get { KeychainHelper.get(service: "olcrtc.local.socks", account: "password") ?? "" }
-        set { _ = KeychainHelper.set(newValue, service: "olcrtc.local.socks", account: "password") }
+        // #470 was: the literal "olcrtc.local.socks" / "password" pair in both accessors.
+        get { KeychainHelper.get(service: Self.localSocksKeychain.service,
+                                 account: Self.localSocksKeychain.account) ?? "" }
+        set { _ = KeychainHelper.set(newValue, service: Self.localSocksKeychain.service,
+                                     account: Self.localSocksKeychain.account) }
     }
     @Published var vpsAutoPingEnabled: Bool {
         didSet { Self.persist(vpsAutoPingEnabled, forKey: Keys.vpsAutoPingEnabled) }
@@ -258,8 +278,13 @@ final class SettingsStore: ObservableObject {
     // #299 was: @Published var designConsole — the Refined/Console "design
     // direction" (#267/#281) that only reskinned shape, never colours. Removed
     // when Theme switched to real colour schemes (System/Light/Dark/Gray).
-    /// #340: appearance (System/Light/Dark/Gray). Defaults to .dark — the app was
-    /// forced-dark until now, so existing users see no change on update.
+    /// #340: appearance (System/Light/Dark).
+    /// #471 was: "Defaults to .dark — the app was forced-dark until now, so
+    /// existing users see no change on update." The default is System now.
+    /// Anyone who ever picked a scheme keeps it (the pick is persisted, and
+    /// `appearance(stored:)` honours it); someone who never opened the picker
+    /// does move from Dark to whatever their device says — deliberately, and
+    /// one tap from Dark again.
     @Published var appearanceMode: AppearanceMode {
         didSet { Self.persist(appearanceMode.rawValue, forKey: Keys.appearanceMode) }
     }
@@ -324,19 +349,31 @@ final class SettingsStore: ObservableObject {
         logBufferSize       = (d.object(forKey: Keys.logBufferSize)       as? Int)  .map { $0.clamped(to: Defaults.logBufferRange) }         ?? Defaults.logBufferSize
         containerLogsTailLines = (d.object(forKey: Keys.containerLogsTail) as? Int) .map { $0.clamped(to: Defaults.containerLogsTailRange) } ?? Defaults.containerLogsTail
         autoConnectOnLaunch = (d.object(forKey: Keys.autoConnectOnLaunch) as? Bool)                                                          ?? Defaults.autoConnectOnLaunch
-        autoRemoveConnectionOnUninstall = (d.object(forKey: Keys.autoRemoveConnectionOnUninstall) as? Bool)                                  ?? true
+        // #471 was: (d.object(forKey: Keys.autoRemoveConnectionOnUninstall) as? Bool) ?? true
+        // #471: the toggle is gone from Settings — this is a choice nobody makes
+        // months in advance, so removing a server now ALWAYS removes the
+        // connections it created, and the uninstall confirm dialog says so. The
+        // property and its key stay (a downgrade still finds the value it
+        // expects); the stored value is no longer read, so a user who once
+        // turned it off can't be left with a dialog that lies and no switch to
+        // fix it. Read by ServersView only.
+        autoRemoveConnectionOnUninstall = true
         backgroundAudio          = (d.object(forKey: Keys.backgroundAudio)          as? Bool)   ?? Defaults.backgroundAudio
         maskIPs                  = (d.object(forKey: Keys.maskIPs)                  as? Bool)   ?? false   // #337
         localSocksAuthEnabled    = (d.object(forKey: Keys.localSocksAuthEnabled)    as? Bool)   ?? false
         localSocksUser           = (d.string(forKey: Keys.localSocksUser))                      ?? ""
         language                 = (d.string(forKey: Keys.language))                            ?? Self.defaultLanguage()
-        // #456: the Gray removal needs NO migration code — this line already
-        // handles it. A UserDefaults value of "gray" no longer matches a case, so
-        // `AppearanceMode(rawValue:)` returns nil and the `?? .dark` falls through
-        // to Dark: the scheme Gray was closest to, and a valid stored value from
-        // the next write onward. Deliberately left exactly as written (pinned by
-        // ThemeDirectionTests.testStoredGrayStillDecodesToSomethingValid).
-        appearanceMode           = AppearanceMode(rawValue: d.string(forKey: Keys.appearanceMode) ?? "") ?? .dark   // #340
+        // #456: the Gray removal needs NO migration code. A UserDefaults value
+        // of "gray" no longer matches a case, so `AppearanceMode(rawValue:)`
+        // returns nil and the fallback resolves it to Dark: the scheme Gray was
+        // closest to, and a valid stored value from the next write onward
+        // (pinned by ThemeDirectionTests.testStoredGrayStillDecodesToSomethingValid).
+        // #471 was: `AppearanceMode(rawValue: d.string(forKey:) ?? "") ?? .dark`
+        // — which conflated "nothing stored" with "stored something unreadable"
+        // and so forced Dark on every fresh install. The two cases are told
+        // apart in `appearance(stored:)` now, and the gray→dark migration above
+        // is unchanged.
+        appearanceMode           = Self.appearance(stored: d.string(forKey: Keys.appearanceMode))   // #340, #471
         tunnelMode               = TunnelMode(rawValue: d.string(forKey: Keys.tunnelMode) ?? "") ?? .proxy          // #vpn
         keepAliveSeconds    = (d.object(forKey: Keys.keepAlive)           as? Int)  .map { $0.clamped(to: Defaults.keepAliveRange) }         ?? Defaults.keepAliveSeconds
         vpsAutoPingEnabled  = (d.object(forKey: Keys.vpsAutoPingEnabled)  as? Bool)                                                          ?? Defaults.vpsAutoPingEnabled
@@ -373,8 +410,13 @@ final class SettingsStore: ObservableObject {
         maskIPs                = false   // #337
         localSocksAuthEnabled  = false
         localSocksUser         = ""
+        // #470: the copy promises "every setting", but the Keychain-backed
+        // password survived a reset and was live again the moment auth was
+        // re-enabled (the SecureField even prefilled it).
+        KeychainHelper.delete(service: Self.localSocksKeychain.service,
+                              account: Self.localSocksKeychain.account)
         language               = Self.defaultLanguage()
-        appearanceMode         = .dark   // #340
+        appearanceMode         = Defaults.appearanceMode   // #340; #471 was: .dark
         tunnelMode             = .proxy  // #vpn
         keepAliveSeconds       = Defaults.keepAliveSeconds
         vpsAutoPingEnabled     = Defaults.vpsAutoPingEnabled
@@ -386,6 +428,22 @@ final class SettingsStore: ObservableObject {
         speedTestProviderID    = AppConstants.SpeedTest.defaultProviderID
         updateCheckEnabled     = Defaults.updateCheckEnabled   // #360
         lastUpdateCheck        = nil                           // #360: re-arm the check
+    }
+
+    /// #471 PURE: how a persisted appearance value resolves, with the two
+    /// "not a valid mode" cases kept apart — the whole reason this is a function
+    /// and not an `??` chain.
+    ///
+    /// - nothing stored (a fresh install, or a reset that removed the key):
+    ///   `Defaults.appearanceMode` = System, so the app follows the device.
+    /// - stored but no longer a case (the `"gray"` removed in #456): Dark, the
+    ///   scheme Gray was closest to. Someone who CHOSE a scheme keeps it; only
+    ///   someone who never chose gets the device's answer.
+    ///
+    /// Tested in Tests/Design471SettingsTests.swift.
+    static func appearance(stored raw: String?) -> AppearanceMode {
+        guard let raw else { return Defaults.appearanceMode }
+        return AppearanceMode(rawValue: raw) ?? .dark
     }
 
     /// Picks Russian if the device's preferred language starts with `ru`,

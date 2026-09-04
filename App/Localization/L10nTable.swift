@@ -38,7 +38,7 @@ enum L10nTable {
         // that did not exist under that name. One noun: server.
         .tabServers:        "Servers",
         .tabSettings:       "Settings",
-        .autoDetectedContainer_fmt: "Auto-detected existing container: %@",
+        .autoDetectedContainer_fmt: "Found an existing install: %@",
 
         // Tunnel mode (#vpn)
         .tunnelModeProxy:           "Proxy",
@@ -65,22 +65,19 @@ enum L10nTable {
         // #454/#459: the health card is now the "This session" block of the
         // Diagnostics card, so it no longer has a title, a throughput row or a
         // refresh glyph of its own.
-        .healthProtocolLabel:        "Protocol",
         .healthExitLabel:            "Exit",
         // #460 was: `.healthLatencyLabel` ("Latency") — see `diagResponseLabel`.
         .healthLatencyMs_fmt:        "%d ms",
-        .healthLocationUnknown:      "Location unknown",
         // #455: premium redesign editorial additions
         // #461 was: "Telemost … (vp8channel only) … datachannel … WBStream" —
         // three raw ids and a carrier spelled unlike its own label, in the
         // footer under the picker that shows all four as words.
-        .carrierChoiceFooter:        "Yandex Telemost is the hardest to block (VP8 only). Jitsi with DataChannel is the fastest and most stable. WB Stream needs an account token.",
+        // #470 was: "(VP8 only)" — the matrix enables Video for Telemost too (the chip right below was tappable).
+        .carrierChoiceFooter:        "Yandex Telemost is the hardest to block (VP8 recommended, Video also works). Jitsi with DataChannel is the fastest and most stable. WB Stream needs an account token.",
         // #460 was: `.configReliabilityHeader` ("Reliability") — its section
         // held only the auto-switch toggle, which moved to Connections.
         .unitSeconds:                "s",
         .sshTestInvalidPort:         "Invalid port",
-        .sshTestReachable_fmt:       "Reachable (%@)",
-        .sshTestUnreachable:         "Unreachable",
         .logLevelOff:                "Off",
         .logLevelErrors:             "Errors only",
         .logLevelNormal:             "Normal",
@@ -116,19 +113,19 @@ enum L10nTable {
         .shareAction:                "Share",
         .copyURIAction:              "Copy URI",
         .shareConnectionTitle:       "Share connection",
-        .shareConnectionExplanation: "Share this URI to let others connect through your server. It contains the carrier, room ID, and encryption key — your server SSH credentials are not included.",
+        .shareConnectionExplanation: "Share this URI to let others connect through your server. It contains the service, room ID, and encryption key — your server SSH credentials are not included.",
         .shareConnectionURIHeader:   "Connection URI",
         .copiedURI_fmt:              "📋 URI copied: %@",
         // #135: full-access (co-admin) share
         .shareFullAccessTitle:       "Share full access (SSH)",
         .shareFullAccessHeader:      "Full access (SSH)",
-        .shareFullAccessWarning:     "This link contains your SSH login and password. Anyone with it can fully control this VPS — install, reconfigure, reboot, or wipe it. Share only with someone you trust to co-administer the server.",
+        .shareFullAccessWarning:     "This link contains your SSH login and password. Anyone with it can fully control this server — install, reconfigure, reboot, or wipe it. Share only with someone you trust to co-administer it.",
         .shareFullAccessReveal:      "Reveal full-access link",
         .shareFullAccessCopy:        "Copy full-access link",
         .shareFullAccessCopied_fmt:  "🔑 Full-access link copied: %@",
         // #366
         .fullAccessImportTitle:      "Import full access?",
-        .fullAccessImportBody_fmt:   "This link grants full SSH control of the VPS “%@” — its address, login and password will be saved on this device. Only import links you trust.",
+        .fullAccessImportBody_fmt:   "This link grants full SSH control of the server “%@” — its address, login and password will be saved on this device. Only import links you trust.",
         .fullAccessImportAddAction:  "Add full access",
         .fullAccessImportInvalid:    "This full-access link is invalid.",
 
@@ -177,7 +174,7 @@ enum L10nTable {
         // with the copy that points at it. Same noun everywhere.
         .serversTitle:               "Servers",
         .emptyNoServers:             "No servers",
-        .emptyNoServersHint:         "Add a server over SSH and the app installs one container per protocol. Each protocol becomes a connection you can use or share.",
+        .emptyNoServersHint:         "Add a server over SSH and the app installs a protocol on it. Each protocol becomes a connection you can use or share.",
         .newServerTitle:             "New server",
         .editServerTitle:            "Edit",
         .sshAccessHeader:            "SSH access",
@@ -186,30 +183,37 @@ enum L10nTable {
         .loginField:                 "Login",
         .passwordField:              "Password",
         .actionInstall:              "Install",
-        .actionUninstall:            "Remove container from server",
-        // (audit) was: "Update binary (git pull + rebuild)" — stale since the
-        // pinned-SHA migration: SSHRunner now fetches AppConstants.upstreamCorePin
-        // (git fetch --depth 1 + checkout), no git pull / moving branch.
-        .actionUpdate:               "Update binary (fetch pinned build + rebuild)",
+        .actionUninstall:            "Remove all protocols from the server",
+        // #471 was: "Update binary (fetch pinned build + rebuild)" — three build
+        // steps to a reader who runs none of them. Name the software and the place.
+        .actionUpdate:               "Update olcrtc on the server",
         .actionReboot:               "Reboot",
         .actionChangeRoomTransport:  "Change room / transport",
-        .actionContainerLogs:        "Container logs",
         .actionDone:                 "Done",
-        .actionRemoveFromList:       "Remove host from list",
-        .removeHostConfirmTitle:     "Remove %@?",
-        // #458 was: "use Uninstall first" — no control is called "Uninstall";
-        // the menu item is `actionUninstall`, "Remove container from server".
-        .removeHostConfirmMessage:   "The host will be removed from this device's list. The container on the VPS is NOT touched — use «Remove container from server» first if you want to wipe it. SSH password is removed from Keychain.",
-        .uninstallConfirmTitle:      "Uninstall container?",
-        .uninstallConfirmBody:       "Every olcrtc container on this server (all protocols), the deploy directory and the encryption key will be removed. Podman, the golang image (~300 MB) and the Go module cache stay. Reinstallation is fast (~1–2 min).",
-        .deepUninstallConfirmBody:   "Removes container, Go cache (~300 MB), and encryption key. Podman and image stay.",
+        .actionRemoveFromList:       "Remove server from the app",
+        .removeHostConfirmTitle_fmt: "Remove %@?",
+        // #458/#471: a hint may only name a control that exists — the menu item
+        // is `actionUninstall`, now "Remove all protocols from the server".
+        .removeHostConfirmMessage:   "The server is removed from this device's list. Nothing on the machine itself is touched — use «Remove all protocols from the server» first if you want to wipe it. Its SSH password is removed from the Keychain.",
+        // #471 was: "Remove container from server?" / "Every olcrtc container …
+        // Podman, the golang image (~300 MB) and the Go module cache stay." /
+        // "Removes container, Go cache (~300 MB) … Podman and image stay." The
+        // three lines below now agree with each other and with the scripts:
+        // uninstall keeps the build cache, deep uninstall takes it, neither
+        // touches the image (ServersView passes removeImage: false) — and the
+        // saved connections go with the protocols, so the body says so.
+        .uninstallConfirmTitle:      "Remove all protocols from the server?",
+        .uninstallConfirmBody:       "Removes every protocol from this server, with its key, and the connections saved for it are removed from this app. The tools stay, so a reinstall takes about a minute.",
+        .deepUninstallConfirmBody:   "Removes every protocol, the key and the build cache (~300 MB). Nothing else on the server changes.",
         .rebootConfirmTitle:         "Reboot server?",
-        .rebootConfirmBody:          "This will reboot the entire VPS. The olcrtc container will restart automatically once the server is back online.",
+        // #470 was: "…will restart automatically…" — nothing enables podman-restart.service; `--restart unless-stopped` alone does not survive a reboot.
+        // #471 was: "the olcrtc container may need to be started again" — the card's own verb is "Start server".
+        .rebootConfirmBody:          "This reboots the whole server. Once it is back online, check its card — it may need to be started again.",
 
         // #303: Recover connection from server
         .actionRecoverConnection:    "Recover connection",
         .recoverConfirmTitle:        "Recover connection from this server?",
-        .recoverConfirmBody:         "Reads the carrier, room, transport and encryption key already deployed on this server (read-only) and adds them as a new connection here.",
+        .recoverConfirmBody:         "Reads the service, room, transport and encryption key already deployed on this server (read-only) and adds them as a new connection here.",
         .recoverConfirmAction:       "Recover",
         .provisioningRecovering:     "Reading server config…",
         .recoverResultSuccess_fmt:   "Recovered %@/%@ — connection added",
@@ -225,42 +229,46 @@ enum L10nTable {
         .rotateKeyResultAdded_fmt:   "New key generated — %@/%@ connection added",
         .rotateKeyFailedNoURI:       "Key rotation finished but the server did not print a URI — check the provisioning log.",
 
-        // Container status
-        .containerRunning_fmt:       "Container running: %@",
-        .containerStopped_fmt:       "Container stopped: %@",
-        .containerNotFound:          "Container not found",
+        // Protocol status on the server
+        // #471 was: "Container running/stopped/not found" — one container is one
+        // protocol, and the word never reached anyone who could act on it.
+        .containerRunning_fmt:       "Protocol running: %@",
+        .containerStopped_fmt:       "Protocol stopped: %@",
+        .containerNotFound:          "Nothing installed on the server",
         .containerNotFoundShort:     "not found",
         // #458 was: "… — tap «Install»." This fires from `startContainer` /
         // `stop` / `recoverConnection` / `rotateKey` / `addCarrier`, and in
         // exactly those states the card's button is «Check server» or «Retry» —
         // Install is not on the screen. State the fact; the card's own primary
         // action already offers the right next step for the state it is in.
-        .containerNotInstalled:      "No olcrtc container is installed on this server yet.",
-        .readinessNoPodman:              "Ready to install (Podman not found, full setup ~5–7 min)",
-        .readinessNoImage:               "Podman ready — first install pulls image (~300 MB, ~3–5 min)",
-        .readinessImageReady:            "Image cached — reinstall takes ~1–2 min",
+        // #471 was: "No olcrtc container is installed on this server yet."
+        .containerNotInstalled:      "Nothing is installed on this server yet.",
+        .readinessNoPodman:              "Ready to install — nothing set up yet, full setup ~5–7 min",
+        .readinessNoImage:               "Ready to install — the first install downloads about 300 MB (~3–5 min)",
+        .readinessImageReady:            "Ready to install — everything is downloaded, ~1–2 min",
         .readinessContainerStopped_fmt:  "Stopped: %@",
         .readinessContainerRunning_fmt:  "Running: %@",
 
         // VPS status card (#258/#261)
         .vpsTitleUnknown:         "Not checked",
         .vpsTitleReady:           "Ready to install",
-        .vpsTitlePodmanReady:     "Podman ready",
+        .vpsTitlePodmanReady:     "Tools installed",
         .vpsTitleStopped:         "Stopped",
         .vpsTitleRunning:         "Running",
         .vpsSubUnknown:           "No test has been run on this server.",
-        .vpsSubNoPodman:          "Full setup ~5–7 min",
-        .vpsSubNoImage:           "First install pulls image (~300 MB)",
-        .vpsSubImageReady:        "Image cached — fast reinstall",
-        .vpsSubStopped:           "Container present, not running",
-        .vpsSubRunning:           "The container is running. Nothing has gone through it yet.",
+        .vpsSubNoPodman:          "Nothing set up yet — full setup takes 5–7 min",
+        .vpsSubNoImage:           "The first install downloads about 300 MB",
+        .vpsSubImageReady:        "Everything is downloaded — install takes 1–2 min",
+        .vpsSubStopped:           "Installed, not running",
+        .vpsSubRunning:           "The server is running. Nothing has gone through it yet.",
         .vpsVerbChecking:         "Checking",
         .vpsVerbInstalling:       "Installing",
         .vpsVerbStarting:         "Starting",
         .vpsVerbStopping:         "Stopping",
         .vpsVerbReconfiguring:    "Reconfiguring",
         .vpsVerbUpdating:         "Updating",
-        .vpsVerbUninstalling:     "Uninstalling",
+        // #470 was: "Uninstalling" — the card headline for the "Remove container from server" op.
+        .vpsVerbUninstalling:     "Removing",
         .vpsVerbDeepUninstalling: "Deep uninstalling",
         .vpsVerbRebooting:        "Rebooting",
         .vpsConnecting:           "Connecting…",
@@ -283,16 +291,16 @@ enum L10nTable {
         .noSearchResultsHint_fmt:    "No matches for «%@».",
         .categoryConnection:         "Connection",
         .categoryDiagnostics:        "Diagnostics",
-        .categoryProvisioning:       "VPS",
-        .categoryContainerLogs:      "Container",
+        .categoryProvisioning:       "Server",
+        .categoryContainerLogs:      "Protocol",
 
         // #294: per-source Logs tabs
         // #316 was: lowercase fragments shown under the tab title — now they
         // open the empty-state hint, so they read as sentences.
         .logsTabDescConnection:      "Connection logs",
         .logsTabDescDiagnostics:     "IP and speed test logs",
-        .logsTabDescVPS:             "VPS provisioning logs",
-        .logsTabDescContainer:       "Server container extracted logs",
+        .logsTabDescVPS:             "Server operation logs",
+        .logsTabDescContainer:       "Protocol logs from the server",
         .logsFileNameLabel_fmt:      "File: %@",
         .logsContainerSelectServer:  "Server",
         .logsContainerNoServers:     "No servers configured",
@@ -307,15 +315,15 @@ enum L10nTable {
         // #316: single-stack Logs tab — segmented-control short labels + line count
         .logsSegConnection:          "Conn",
         .logsSegDiagnostics:         "Diag",
-        .logsSegVPS:                 "VPS",
-        .logsSegContainer:           "Container",
+        .logsSegVPS:                 "Server",
+        .logsSegContainer:           "Protocol",
         .logsLineCount_fmt:          "%d lines",
         .logsPeerCount_fmt:          "👥 %d peers",
         // #338: inline container fetch — source card + monotonic phases
         .logsFetchAction:            "Fetch",
         .logsFetchFromHost_fmt:      "Fetch from %@",
         .logsPhaseConnecting:        "Connecting…",
-        .logsPhaseCommand_fmt:       "podman logs --tail %d %@",
+        .logsPhaseCommand_fmt:       "Reading the newest %d lines from %@…",
         .logsPhaseReceiving:         "Receiving output…",
         // #332: rendered-line cap notice
         .logsRenderTruncated_fmt:    "Showing the newest %d lines — Share or Copy all exports the full history.",
@@ -372,7 +380,7 @@ enum L10nTable {
         .logPortBusyOlcrtc_fmt:      "✓ Port %d in use by olcrtc tunnel",
         .socksPortChangeNote:        "Port change takes effect on the next connection.",
         .dnsFreeFormPlaceholder:     "IP:port",
-        .dnsFooter:                  "Passed to the Go runtime and to the server install script. Format: IP:port. RU carrier presets only resolve from inside that carrier's network.",
+        .dnsFooter:                  "Used by the tunnel and by new server installs. Format: IP:port. Mobile-carrier presets only work inside that carrier's network.",
         // #460 (finding 12) was: `.vp8Footer` — "MobileSetVP8Options only
         // applies when transport=vp8channel…". A gomobile symbol and a config
         // literal in a Settings footer.
@@ -386,8 +394,8 @@ enum L10nTable {
         .startTimeoutNote:           "How long to wait for a connection to come up before giving up and reporting a failure.",
         .autoConnectOnLaunchLabel:   "Auto-connect on launch",
         .autoConnectOnLaunchNote:    "Starts the connection shown on the Connections tab as soon as the app opens.",
-        .autoRemoveConnectionOnUninstallLabel: "Remove linked connection when VPS is uninstalled",
-        .autoRemoveOnUninstallNote:  "When you uninstall a server on the Servers tab, the connection it created is removed from your Connections list too.",
+        .autoRemoveConnectionOnUninstallLabel: "Remove its connections when a server is removed",
+        .autoRemoveOnUninstallNote:  "When you remove the protocols from a server on the Servers tab, the connections it created are removed from your Connections list too.",
         .tunnelCheckLabel:           "Tunnel check",
         .keepAliveOff:               "off",
         .backgroundAudioLabel:       "Background work (audio)",
@@ -398,23 +406,22 @@ enum L10nTable {
         .logLevelNote:               "How much detail is recorded. Higher levels help when you are chasing a problem, and fill the log faster.",
         // #460 (verifier pass) was: "…every N seconds" — an algebra variable
         // for the number in the field this note now sits directly under.
-        .footerKeepAlive:            "Sends an end-to-end probe through SOCKS5 at the interval set here. On failure the tunnel reconnects automatically. Set to 0 to disable.",
+        // #471 was: "…an end-to-end probe through SOCKS5…" — the tunnel is the
+        // thing the reader of this footer can actually act on.
+        .footerKeepAlive:            "Sends an end-to-end probe through the tunnel at the interval set here. On failure the tunnel reconnects automatically. Set to 0 to disable.",
         .footerLogBuffer:            "Maximum number of lines kept in memory per log category.",
         .logBufferLabel:             "Log buffer",
         // #460 (finding 12 class, verifier pass) was: "Container logs (tail)"
         // — `tail` is the shell command this ends up running, not something
         // the label needs to say; the note under it already explains it.
-        .containerLogsTailLabel:     "Container log lines",
-        .containerLogsTailNote:      "How many of the newest lines to pull from a server's container log.",
+        // #471 was: "Container log lines" — same rule, one noun on: server.
+        .containerLogsTailLabel:     "Server log lines",
+        .containerLogsTailNote:      "How many of the newest lines to pull from the server's log.",
         .clearAllLogsAction:         "Clear all logs",
         .copyAllAction:              "Copy all",
         .clearCategoryAction:        "Clear this category",
-        .fontSizeLabel:              "Font size",
-        .fontSizeSystem:             "System",
-        .fontPreviewText:            "Preview text — this is how labels and headings will look across the app.",
         // #460 (finding 18) was: `.fontFooter` — "Applied app-wide (via SwiftUI
         // dynamicTypeSize)". A framework API named in a Settings footer.
-        .fontNote:                   "Sets the text size everywhere in the app. Smaller fits more on screen, larger is easier to read. «System» follows the text size from iOS Settings.",
         .languageLabel:              "Language",
         .themeLabel:                 "Theme",
 
@@ -429,7 +436,9 @@ enum L10nTable {
         // InstallOptionsView
         .installTitle:               "Install olcrtc",
         .reconfigureTitle:           "Change room / transport",
-        .reconfigureInfoFooter:      "The container will be restarted with the new -carrier/-id/-transport flags. No reinstall (no apt-get / go build).",
+        // #470 was: "…restarted with the new -carrier/-id/-transport flags…" — reconfigureScript seds server.yaml; the command line never changes.
+        // #471 was: "Rewrites the protocol's server config (carrier, room, transport) and restarts its container." — that is what runs, not what happens.
+        .reconfigureInfoFooter:      "Restarts this protocol with the new settings. No reinstall.",
         .reconfigureTransportTuningFooter: "Changing the transport resets vp8/sei tuning on the server to its defaults. Reinstall to set custom tuning.",
         .parametersHeader:           "Parameters",
         .roomIDAutoGenHint:          "Room ID will be generated by the server.",
@@ -440,7 +449,9 @@ enum L10nTable {
         .matrixQuestion_fmt:         "⚠ Working with %@ is uncertain.",
         .matrixFail_fmt:             "✗ Does not work with %@ — choose another transport.",
         .matrixUnknown_fmt:          "No compatibility data for %@.",
-        .carrierFooter:          "client-id=ios-<random> (auto-generated) · key=hex64 (auto-generated) · DNS and VP8 from Settings",
+        // #470 was: "client-id=ios-<random> (auto-generated) · …" — no client-id exists any more (srv.sh never writes one; records get "default").
+        // #471 was: "key=hex64 (auto-generated) · …" — a field name and a type, to a reader who types neither.
+        .carrierFooter:          "A new encryption key is generated for this server · DNS and VP8 come from Settings",
         .transportSectionHeader:     "Transport",
         .roomIDSectionHeader:        "Room ID",
         .jitsiServerHeader:          "Jitsi server",
@@ -459,7 +470,7 @@ enum L10nTable {
         .bgKeeperFailed_fmt:         "⚠ Background audio keeper failed: %@ — app may be suspended after backgrounding",
         .transportUsesServerDefaults_fmt: "Server defaults will be used for %@ tunables — advanced parameters are not yet exposed in the iOS settings UI.",
         .waitReadyFailed_fmt:        "✗ WaitReady: %@",
-        .connectNoPeer:              "No peer joined in time — check the key matches the server, the room is correct, or try another carrier/transport.",
+        .connectNoPeer:              "No peer joined in time — check the key matches the server, the room is correct, or try another service/transport.",
         .waitReadyOK:                "✓ WaitReady OK — SOCKS5 listening, verifying tunnel…",
         .tunnelOK:                   "✓ Tunnel works — traffic is flowing through the server",
         .tunnelFailed:               "✗ Tunnel not responding (server unreachable or 403 Forbidden IP)",
@@ -498,35 +509,35 @@ enum L10nTable {
         .provisioningRebootSSH:      "Reboot: connecting via SSH…",
         .provisioningUninstallSSH:   "Delete: connecting via SSH…",
         .provisioningRebooting:      "Rebooting…",
-        .provisioningUninstalling:   "Removing container and files…",
-        .provisioningUpdating:       "Updating binary…",
-        .provisioningReconfiguring:  "Reconfiguring container…",
-        .provisioningStatusFetching: "Container status…",
-        .provisioningLogsFetching:   "Container logs…",
+        .provisioningUninstalling:   "Removing protocols and files…",
+        .provisioningUpdating:       "Updating olcrtc on the server…",
+        .provisioningReconfiguring:  "Reconfiguring the protocol…",
+        .provisioningStatusFetching: "Server status…",
+        .provisioningLogsFetching:   "Server logs…",
         .installStep1Upload:         "[1/3] Uploading script…",
         .installStep2Launch:         "[2/3] Running install script…",
         .installStep3PollRetry_fmt:  "[3/3] Server temporarily unavailable, retry (%d)…",
         .installPhaseWaiting:        "Waiting…",
         .installPhaseSystemDeps:     "Installing system dependencies…",
-        .installPhaseClone:          "Cloning repository…",
-        .installPhasePullImage:      "Pulling Go image…",
-        .installPhaseDeps:           "Downloading Go modules…",
+        .installPhaseClone:          "Downloading the source…",
+        .installPhasePullImage:      "Downloading the build image…",
+        .installPhaseDeps:           "Downloading dependencies…",
         .installPhaseBuild:          "Building olcrtc…",
         .installPhaseStart:          "Starting olcrtc…",
         .installFailedNoURI_fmt:     "Script finished without URI. Last lines:\n%@",
         .installTimeout25min:        "Install timed out (25 minutes)",
         .installResultSuccess_fmt:   "olcrtc server installed (%@/%@)",
-        .uninstallResultSuccess:     "Container removed. Connections through it no longer work.",
-        .updateResultSuccess:        "Binary updated",
+        .uninstallResultSuccess:     "Removed from the server. Connections through it no longer work.",
+        .updateResultSuccess:        "olcrtc updated on the server",
         .provisioningStarting:       "Starting server…",
         .startResultSuccess:         "Server started",
         .actionStart:                "Start server",
         .provisioningStopping:       "Stopping server…",
         .stopResultSuccess:          "Server stopped",
         .actionStop:                 "Stop server",
-        .scanningContainers:         "Scanning for olcrtc containers…",
+        .scanningContainers:         "Looking for olcrtc on the server…",
         .actionScanVPS:              "Scan for installed olcrtc",
-        .scanNoContainers:           "No olcrtc containers found on this server.",
+        .scanNoContainers:           "No olcrtc install found on this server.",
         .scanRestoreAction:          "Restore",
         .actionDeepUninstall:        "Wipe all olcrtc data from server",
         .deepUninstallResultSuccess:          "All olcrtc data removed",
@@ -539,8 +550,8 @@ enum L10nTable {
         .provisionParsePrefix_fmt:   "Failed to parse output: %@",
         .sshAttemptFailed_fmt:       "✗ SSH attempt %d/2 failed: %@",
         .sshRetryIn4s:               "  retry in 4 s…",
-        .sshPortNotResponding_fmt:   "Port %d on %@ did not respond — verify SSH is open and the VPS is reachable",
-        .serverUnreachable_fmt:      "Server %@ is not responding — check the VPS is online and SSH port is reachable",
+        .sshPortNotResponding_fmt:   "Port %d on %@ did not respond — check SSH is open and the server is reachable",
+        .serverUnreachable_fmt:      "Server %@ is not responding — check it is online and its SSH port is reachable",
         .sshTunnelDroppedMidOp_fmt:  "The SSH session was riding the app's own tunnel and that tunnel dropped mid-operation — the command may already have run on the server. Reconnect, then re-check the server state. (%@)",
 
         // NetPing
@@ -559,7 +570,6 @@ enum L10nTable {
         // AddServerHostView
         .nameSettingLabel:           "Name",
         .sectionDescription:         "Description",
-        .testSSHAction:              "Test SSH",
         // #451: SSH auth-method picker + private-key entry
         .authMethodPickerLabel:      "Authentication",
         .authMethodPassword:         "Password",
@@ -599,7 +609,7 @@ enum L10nTable {
         .qrCodeHintA11y:             "Scan this code to import the connection on another device",
         .cameraUnavailableTitle:     "Camera not available",
         .cameraUnavailableBody:      "QR scanning requires a physical device with a camera.",
-        .sectionCarrier:             "Carrier",
+        .sectionCarrier:             "Service",
         .labelTransport:             "Transport",
         // #461 was: "Telemost". Complaint 1 is that the hero must name the
         // service the traffic hides inside; that service is a Yandex product
@@ -648,7 +658,7 @@ enum L10nTable {
         .vpsStatPing:                "Ping",
         .vpsStatDisk:                "Disk",
         .vpsStatRAM:                 "RAM",
-        .vpsStatUp:                  "Up",
+        .vpsStatUp:                  "Uptime",
         .scanRestored_fmt:           "Restored: %@",
 
         // #337: screenshot-safe IP masking
@@ -656,7 +666,8 @@ enum L10nTable {
         // #460 (verifier pass) was: "Masks IP addresses… Logs are not masked."
         // The toggle above it is called "Hide IP addresses"; a footer that
         // renames the control it explains reads as being about something else.
-        .maskIPsFooter:              "Hides IP addresses on the Connections diagnostics and VPS cards for safe screenshots. Display-only — copy actions and stored values stay real. Logs still contain the real addresses.",
+        // #471 was: "…and VPS cards" — the tab, the screen title and this footer say server.
+        .maskIPsFooter:              "Hides IP addresses on the Connections diagnostics and server cards for safe screenshots. Display-only — copy actions and stored values stay real. Logs still contain the real addresses.",
 
         // #328: active-carrier endpoints with one-tap copy
         // #460 (finding 23) was: `.carrierEndpointsTitle` ("Carrier endpoints")
@@ -679,7 +690,7 @@ enum L10nTable {
         .carrierEndpointResolvedIPs: "Resolved IPs",
         .carrierEndpointResolving:   "Resolving…",
         .carrierEndpointUnresolved:  "Could not resolve",
-        .carrierEndpointNoHost:      "This carrier's room ID isn't a host — nothing to exclude.",
+        .carrierEndpointNoHost:      "This service's room ID isn't a host — nothing to exclude.",
         .carrierEndpointCopied_fmt:  "📋 Copied: %@",
         .carrierEndpointRefresh:     "Re-resolve",
         // #460 was: `.carrierEndpointsCheckAction` ("Check" — it read as "check
@@ -770,13 +781,12 @@ enum L10nTable {
         .addProtocolTitle:            "Add protocol",
         .removeProtocolAction:        "Remove from server",
         .removeProtocolConfirmTitle_fmt: "Remove %@ from this server?",
-        .removeProtocolConfirmBody:   "Stops and deletes this protocol's container and its config on the VPS. The matching connection is removed from your list too. The other protocols keep running.",
+        .removeProtocolConfirmBody:   "Stops and deletes this protocol and its config on the server. The matching connection is removed from your list too. The other protocols keep running.",
         .protocolConnectAction:       "Connect via this protocol",
         // #460 (findings 7 / 16) was: `.protocolConnectedBadge` ("Connected") —
         // the longest word on a title line too narrow for it, which SwiftUI
         // hyphenated into "Connec-ted". Keep any translation short.
         .protocolLiveBadge:           "Live",
-        .protocolPrimaryBadge:        "primary",
         .protocolRecordMissing:       "No saved connection matches this protocol — use «Recover connection» in the row menu.",
         .protocolAdded_fmt:           "Added %@/%@ — connection saved",
         .protocolRemoved_fmt:         "Removed %@ from the server",
@@ -811,7 +821,8 @@ enum L10nTable {
         .healthCheckedAgo_fmt:        "checked %@",
         .healthChipNever:             "not checked",
         // #459 was: "%@ old" — which rendered "just now old".
-        .healthChipStale_fmt:         "last seen %@",
+        // #470 was: "last seen %@" — `.stale` is reached for ANY verdict past staleSeconds, a failed probe included; "seen" claimed it worked.
+        .healthChipStale_fmt:         "checked %@",
         .healthChipFaded_fmt:        "was %@ · %@",
         .healthChipFadedNoRTT_fmt:   "worked %@",
         .healthChipFailed_fmt:        "failed %@",
@@ -834,21 +845,21 @@ enum L10nTable {
         .healthReasonKeyMismatchShort: "Key no longer matches",
         .healthReasonNoPeer:           "Nobody answered in the room. The server may be stopped, on a different room, or its key may no longer match after a reinstall.",
         .healthReasonNoPeerShort:      "No answer in the room",
-        .healthReasonRoomInvalid:      "The room ID isn't valid for this carrier. Check it in Change room / transport.",
+        .healthReasonRoomInvalid:      "The room ID isn't valid for this service. Check it in Change room / transport.",
         .healthReasonRoomInvalidShort: "Room ID rejected",
         .healthReasonCarrierRejected:  "The conferencing service refused the connection. The room may be gone, or the account token may be wrong.",
         .healthReasonCarrierRejectedShort: "Service refused",
         .healthReasonNetworkDown:      "This device has no internet connection, so this says nothing about the server.",
         .healthReasonNetworkDownShort: "No internet",
-        .healthReasonHostUnreachable:  "The VPS didn't answer. It may be off, rebooting, or blocked by your network.",
-        .healthReasonHostUnreachableShort: "VPS didn't answer",
-        .healthReasonSSHAuth:          "SSH login was refused. The password or key saved for this VPS is wrong.",
+        .healthReasonHostUnreachable:  "The server didn't answer. It may be off, rebooting, or blocked by your network.",
+        .healthReasonHostUnreachableShort: "Server didn't answer",
+        .healthReasonSSHAuth:          "SSH login was refused. The password or key saved for this server is wrong.",
         .healthReasonSSHAuthShort:     "SSH login refused",
         .healthReasonPortBusy:         "Another app is holding the local SOCKS port. Free it, or pick a different port in Settings.",
         .healthReasonPortBusyShort:    "Local port busy",
-        .healthReasonVPNActive:        "Other nodes can't be tested while the system VPN is on. Turn it off and check again.",
+        .healthReasonVPNActive:        "Connections can't be checked while the system VPN is on. Turn it off and check again.",
         .healthReasonVPNActiveShort:   "System VPN is on",
-        .healthReasonContainerStopped: "The server container isn't running. Start it, then check again.",
+        .healthReasonContainerStopped: "The protocol isn't running on the server. Start it, then check again.",
         .healthReasonContainerStoppedShort: "Server stopped",
         .healthReasonTimedOut:         "The test ran out of time before any data came back.",
         .healthReasonTimedOutShort:    "Timed out",
@@ -877,14 +888,14 @@ enum L10nTable {
         .vpsHeadlineNotChecked:          "Not checked yet",
         .vpsHeadlineNotCheckedHint:      "Checking the server…",
         .vpsHeadlineStopped:             "Server stopped",
-        .vpsHeadlineStoppedHint:         "The container exists but isn't running — tap Start server",
+        .vpsHeadlineStoppedHint:         "It is installed but not running — tap Start server",
 
         // #456: misc UI copy
         .shareConnectionOnlyBadge:    "Connection link — no server access",
-        .shareConnectionOnlySub:      "The link below lets someone connect through your server. It carries no SSH login, and it cannot manage, reconfigure, or wipe the VPS.",
+        .shareConnectionOnlySub:      "The link below lets someone connect through your server. It carries no SSH login, and it cannot manage, reconfigure, or wipe the server.",
         .roomIDLastUsed_fmt:          "Use last room: %@",
-        .installExistingFoundTitle_fmt: "This VPS already runs %@",
-        .installExistingFoundBody:    "Reinstalling deletes it and every other olcrtc container on this server, along with their rooms and keys.",
+        .installExistingFoundTitle_fmt: "This server already runs %@",
+        .installExistingFoundBody:    "Reinstalling deletes it and every other protocol on this server, along with their rooms and keys.",
         .installUseExistingAction:    "Use the existing one",
         .installReinstallAction:      "Reinstall anyway",
 
@@ -899,7 +910,8 @@ enum L10nTable {
         .tunnelCompareNeedsProxy:    "Nothing — it just runs",
         .tunnelCompareNeedsVPN:      "A VPN profile iOS asks you to approve",
         .tunnelCompareRuns:          "Where it runs",
-        .tunnelCompareRunsProxy:     "Inside this app, while it's open",
+        // #470 was: "Inside this app, while it's open" — the background keeper (on by default, #455) keeps the proxy alive when backgrounded.
+        .tunnelCompareRunsProxy:     "Inside this app; stays up in the background while «Background work (audio)» is on",
         .tunnelCompareRunsVPN:       "In the background, app closed",
 
         // #457: Logs is a detail view of the thing it explains, so its title
@@ -917,19 +929,18 @@ enum L10nTable {
         // measured — "connected" and "checked" are two different facts.
         .actionDisconnect:           "Disconnect",
         .heroSubjectNone:            "No connection yet",
-        .heroLastUsedLabel:          "Last used",
         // #459 (audit): was "Pick a connection below." — this line renders ONLY
         // when `subject == nil`, and `ConnectionStore.primary` falls back to the
         // first record, so nil means the list is EMPTY. It pointed at a list that
         // was not there; the empty state below offers the one real next step.
         .heroPickAConnection:        "Add a connection first.",
         .heroEvidenceStarting_fmt:   "starting… %d s",
-        .heroEvidenceUnverified:     "connected · no data checked through it yet",
+        .heroEvidenceUnverified:     "Connected · nothing verified through it yet",   // #471
         .heroEvidenceNoNetwork:      "holding the session until the network returns",
         // #461 was: "Proxy · only apps you point at 127.0.0.1:%@" — a sentence
         // where a caption was wanted. Same %@ (the bound port).
-        .heroScopeProxy_fmt:         "Proxy · apps pointed at 127.0.0.1:%@",
-        .heroScopeVPN:               "VPN · everything on this device",
+        .heroScopeProxy_fmt:         "Proxy · port %@",   // #471: a loopback address is not a headline
+        .heroScopeVPN:               "VPN · whole device",   // #471
 
         // #457/#459: connection rows. The live connection is the hero's subject
         // and is not drawn in the list, so no row needs a "Live" badge.
@@ -945,7 +956,6 @@ enum L10nTable {
         // #457/#459: the server card. The headline says what the server is
         // doing; all the caption adds is WHEN that was read (`vpsReadAge_fmt`),
         // or that it never has been.
-        .vpsProtocolsFailing_fmt:    "%d of %d protocols are not working",
         .vpsProcessUnread:           "Nothing has been read from this server yet",
         .protocolStoppedNote:        "Not running on the server",
         .vpsScanBeforeInstall:       "Looking for an existing install…",
@@ -975,7 +985,6 @@ enum L10nTable {
         // right-hand value column, where they wrapped into a ragged stack. The
         // note is full width now and says what was measured, not only who
         // answered — the city and the country are read off that one answer.
-        .diagExitNote:               "Your exit IP address, looked up with ipinfo.io through the tunnel — the city and country come from that same answer.",
         // #460 (findings 2 / 15): the screen showed 1109 ms in red here and
         // 133 ms on a connection's chip, called both "the latency", and #460
         // explained the gap in a 250-character note.
@@ -996,9 +1005,15 @@ enum L10nTable {
         .vpsAdvancedRemoveHeader:      "Remove",
         // Every destructive row says what it destroys — the sentence a menu row
         // could not carry, and the reason this screen exists.
+        // #471: the two remove rows used to read as the same row twice. They now
+        // differ by one clause — the build cache — and by what survives.
         .vpsAdvancedRebootFooter:      "Restarts the whole server. Everything running on it stops until it comes back.",
-        .vpsAdvancedUninstallFooter:   "Deletes every olcrtc container on this server, its deploy directory and the key. Every connection saved for it stops working.",
-        .vpsAdvancedDeepUninstallFooter: "Deletes every olcrtc container, image and deploy directory on the server.",
+        .vpsAdvancedUninstallFooter:   "Removes every protocol from this server, with its key. The tools stay, so a reinstall takes about a minute. Every connection saved for this server stops working.",
+        // #471 was: "Removes the olcrtc containers, the deploy directory, the
+        // encryption key and the Go build cache (~300 MB). Podman and the golang
+        // image stay." The image is never removed (ServersView passes
+        // removeImage: false), and naming Podman told the reader nothing.
+        .vpsAdvancedDeepUninstallFooter: "Removes every protocol, the key and the build cache (~300 MB). The next install starts from scratch.",
         .vpsAdvancedRemoveHostFooter:  "Forgets this server in the app. Nothing on the machine itself changes.",
 
         // #460: screenshot rounds 2–4.
@@ -1014,8 +1029,6 @@ enum L10nTable {
         // rows. The hint names the screen that fixes it — this screen never
         // draws a control that navigates away — and says why a second one is
         // worth installing, which is the whole point of the switcher.
-        .connectSwitcherOnlyOne:     "Only one protocol on this server",
-        .connectSwitcherAddHint:     "Install a second one on the Servers tab, so you can switch when one stops working.",
 
         // MARK: #463 One-button Telemost room renewal
         // Yandex expires a Telemost link 24 hours after it is created, and the
@@ -1067,8 +1080,29 @@ enum L10nTable {
         .telemostRenewLiveOnly:      "You are connected through this protocol, and this server has no other one to use instead. Replacing the room restarts it, so the connection will drop mid-command — the app saves the new room and reconnects to it.",
         .telemostRenewDropped_fmt:   "The connection dropped while the server was switching to room %@ — expected when you renew the protocol you are connected through. The new room is saved and the app is reconnecting; run Verify from the protocol's menu to confirm the server took it.",
         .logsContainerPrimary:       "Primary",
+        .vpsHeadlineProtocolsVerified_fmt: "%d of %d protocols verified %@",
+        .healthPartlyWorking:        "Partly working",
+        .vpsHeadlineStoppedHint_fmt: "Not running · checked %@ — tap Start server",
+        .vpsMachineLine_fmt:         "Disk %@ · RAM %@ · up %@",
+        .vpsAdvancedMachineHeader:   "Machine",
+        .vpsTitleNothingInstalled:   "Nothing installed yet",
+        .diagAgeVia_fmt:             "%@ · via ipinfo.io",
+        .subMetaUpdated_fmt:         "Updated %@",
+        .settingsAdvancedRow:        "Advanced",
+        .tunnelCompareDisclosure:    "How the two modes differ",
+        .settingsBackgroundLabel:    "Keep running in background",
+        .settingsSectionAbout:       "About",
+        .settingsSectionConnection:  "Connection",
+        .settingsSectionProxy:       "Proxy",
+        .protocolRecreateAction:     "Re-create this protocol",
+        .carrierFooterSharedKey:     "Shares the encryption key with the protocols already on this server · DNS and VP8 come from Settings",
+        .subImportAlreadySaved_fmt:  "“%@” is already saved — nothing was added.",
+        .logsScanAmbiguous_fmt:      "This server runs %d olcrtc installs — pick the right one on its Servers card first («Scan for installed olcrtc»), then fetch again.",
+        .healthLatencyNoResponse:    "no response",
+        .sshTunnelLoginTimedOut_fmt: "SSH login to %@:%d through the tunnel exceeded the 10 s limit — the relayed path is too slow; try again, or disconnect the tunnel and use the direct path",
+        .dnsInvalidNote:             "Enter the resolver as IP:port, for example 77.88.8.8:53 — the value is not saved until it is valid",
+        .speedTunnelDropped:         "The tunnel dropped during the test — the remaining steps were skipped",
         .vpsHeadlineProbeFailed:     "Couldn't check the server",
-        .subMetaUpdatedPull_fmt:     "Updated %@ · pull down to refresh",
         .protocolStopAction:         "Stop this protocol",
         .protocolStartAction:        "Start this protocol",
         .telemostExpiryTitle:        "Telemost room expires soon",
@@ -1097,7 +1131,7 @@ enum L10nTable {
         // указывала на вкладку с другим названием.
         .tabServers:        "Серверы",
         .tabSettings:       "Настройки",
-        .autoDetectedContainer_fmt: "Обнаружен существующий контейнер: %@",
+        .autoDetectedContainer_fmt: "Найдена существующая установка: %@",
 
         // Tunnel mode (#vpn)
         .tunnelModeProxy:           "Прокси",
@@ -1125,21 +1159,18 @@ enum L10nTable {
         // #454/#459: карточка здоровья стала блоком «Текущая сессия» внутри
         // «Диагностики» — своего заголовка, строки скорости и кнопки обновления
         // у неё больше нет.
-        .healthProtocolLabel:        "Протокол",
         .healthExitLabel:            "Выход",
         // #460 было: `.healthLatencyLabel` («Задержка») — см. `diagResponseLabel`.
         .healthLatencyMs_fmt:        "%d мс",
-        .healthLocationUnknown:      "Местоположение неизвестно",
         // #455: premium redesign editorial additions
         // #461 было: «Telemost … (только vp8channel) … datachannel … WBStream» —
         // три сырых id и имя оператора, написанное не так, как в самом списке.
-        .carrierChoiceFooter:        "«Яндекс Телемост» сложнее всего заблокировать (только VP8). Jitsi с DataChannel — самый быстрый и стабильный. WB Stream требует токен аккаунта.",
+        // #470 было: «(только VP8)» — см. английскую запись.
+        .carrierChoiceFooter:        "«Яндекс Телемост» сложнее всего заблокировать (рекомендуется VP8, работает и Видео). Jitsi с DataChannel — самый быстрый и стабильный. WB Stream требует токен аккаунта.",
         // #460 было: `.configReliabilityHeader` («Надёжность») — в этом разделе
         // настроек остался только переключатель авто-переключения, а он переехал.
         .unitSeconds:                "с",
         .sshTestInvalidPort:         "Некорректный порт",
-        .sshTestReachable_fmt:       "Доступен (%@)",
-        .sshTestUnreachable:         "Недоступен",
         .logLevelOff:                "Выкл.",
         .logLevelErrors:             "Только ошибки",
         .logLevelNormal:             "Обычный",
@@ -1175,18 +1206,20 @@ enum L10nTable {
         .shareAction:                "Поделиться",
         .copyURIAction:              "Скопировать URI",
         .shareConnectionTitle:       "Поделиться подключением",
-        .shareConnectionExplanation: "Отправь этот URI чтобы другой пользователь мог подключиться через твой сервер. Содержит carrier, room ID и ключ шифрования — SSH-данные сервера не включены.",
+        // #471: «оператора» → «сервис» — sectionCarrier теперь «Сервис»; «оператор» по-русски значит сотовый оператор.
+        .shareConnectionExplanation: "Отправь этот URI, чтобы другой пользователь мог подключиться через твой сервер. Содержит сервис, ID комнаты и ключ шифрования — SSH-данные сервера не включены.",
         .shareConnectionURIHeader:   "URI подключения",
         // #135: full-access (co-admin) share
         .shareFullAccessTitle:       "Поделиться полным доступом (SSH)",
         .shareFullAccessHeader:      "Полный доступ (SSH)",
-        .shareFullAccessWarning:     "Эта ссылка содержит SSH-логин и пароль. Любой, у кого она есть, получит полный контроль над VPS — установка, перенастройка, перезагрузка и удаление. Делись только с тем, кому доверяешь администрирование сервера.",
+        .shareFullAccessWarning:     "Эта ссылка содержит SSH-логин и пароль. Любой, у кого она есть, получит полный контроль над сервером — установка, перенастройка, перезагрузка и удаление. Делись только с тем, кому доверяешь администрирование.",
         .shareFullAccessReveal:      "Показать ссылку полного доступа",
         .shareFullAccessCopy:        "Скопировать ссылку полного доступа",
         .shareFullAccessCopied_fmt:  "🔑 Ссылка полного доступа скопирована: %@",
         // #366
         .fullAccessImportTitle:      "Импортировать полный доступ?",
-        .fullAccessImportBody_fmt:   "Эта ссылка даёт полный SSH-доступ к серверу «%@» — его адрес, логин и пароль будут сохранены на этом устройстве. Импортируйте только доверенные ссылки.",
+        // #470: «Импортируйте» → «Импортируй» — таблица на «ты».
+        .fullAccessImportBody_fmt:   "Эта ссылка даёт полный SSH-доступ к серверу «%@» — его адрес, логин и пароль будут сохранены на этом устройстве. Импортируй только доверенные ссылки.",
         .fullAccessImportAddAction:  "Добавить полный доступ",
         .fullAccessImportInvalid:    "Недействительная ссылка полного доступа.",
         .copiedURI_fmt:              "📋 URI скопирован: %@",
@@ -1213,7 +1246,8 @@ enum L10nTable {
         .socksAuthFooter:            "Логин и пароль для доступа к локальному SOCKS5-прокси. Нужно только если хочешь ограничить другие приложения от использования туннеля.",
         .socksUserLabel:             "Пользователь",
         .socksPassLabel:             "Пароль SOCKS",
-        .socksUserPlaceholder:       "пусто = без auth",
+        // #470 было: «без auth» — английское слово в русской подсказке.
+        .socksUserPlaceholder:       "пусто = без авторизации",
         .vp8FpsLabel:                "FPS",
         .vp8BatchLabel:              "Размер пачки",
         .globalDefault_fmt:          "глобальный (%d)",
@@ -1232,7 +1266,7 @@ enum L10nTable {
         // вкладки и с текстом, который на него ссылается.
         .serversTitle:               "Серверы",
         .emptyNoServers:             "Нет серверов",
-        .emptyNoServersHint:         "Добавь сервер по SSH — приложение поставит по контейнеру на каждый протокол. Каждый протокол станет подключением, которым можно пользоваться и делиться.",
+        .emptyNoServersHint:         "Добавь сервер по SSH — приложение установит на него протокол. Каждый протокол станет подключением, которым можно пользоваться и делиться.",
         .newServerTitle:             "Новый сервер",
         .editServerTitle:            "Изменить",
         .sshAccessHeader:            "Доступ по SSH",
@@ -1241,28 +1275,35 @@ enum L10nTable {
         .loginField:                 "Логин",
         .passwordField:              "Пароль",
         .actionInstall:              "Установить",
-        .actionUninstall:            "Удалить контейнер с сервера",
-        // (audit) was: "… (git pull + rebuild)" — see the English entry.
-        .actionUpdate:               "Обновить бинарник (закреплённая сборка + пересборка)",
+        .actionUninstall:            "Удалить все протоколы с сервера",
+        // #471 было: «Обновить бинарник (закреплённая сборка + пересборка)» — см. английскую запись.
+        .actionUpdate:               "Обновить olcrtc на сервере",
         .actionReboot:               "Перезагрузить",
         .actionChangeRoomTransport:  "Сменить комнату / транспорт",
-        .actionContainerLogs:        "Логи контейнера",
         .actionDone:                 "Готово",
-        .actionRemoveFromList:       "Удалить из списка",
-        .removeHostConfirmTitle:     "Удалить %@?",
-        // #458 was: «сначала нажми Uninstall» — an English word for a control
-        // whose Russian name is «Удалить контейнер с сервера» (actionUninstall).
-        .removeHostConfirmMessage:   "Сервер исчезнет из списка на этом устройстве. Контейнер на VPS НЕ затрагивается — если хочешь его вычистить, сначала выполни «Удалить контейнер с сервера». Пароль SSH удаляется из Keychain.",
-        .uninstallConfirmTitle:      "Удалить контейнер?",
-        .uninstallConfirmBody:       "Будут удалены все контейнеры olcrtc на этом сервере (все протоколы), папка развёртывания и ключ шифрования. Podman, образ golang (~300 МБ) и кеш Go-модулей останутся. Повторная установка займёт ~1–2 мин.",
-        .deepUninstallConfirmBody:   "Удаляет контейнер, кеш Go (~300 МБ) и ключ шифрования. Podman и образ остаются.",
+        .actionRemoveFromList:       "Удалить сервер из приложения",
+        .removeHostConfirmTitle_fmt: "Удалить %@?",
+        // #458/#471: подсказка называет только существующий контрол — пункт меню
+        // теперь «Удалить все протоколы с сервера» (actionUninstall).
+        .removeHostConfirmMessage:   "Сервер исчезнет из списка на этом устройстве. На самой машине ничего не меняется — если хочешь её вычистить, сначала выполни «Удалить все протоколы с сервера». Пароль SSH удаляется из Keychain.",
+        // #471: три строки ниже согласованы между собой и со скриптами —
+        // обычное удаление оставляет кеш сборки, полное его забирает, образ не
+        // трогает ни одно (removeImage: false), а подключения уходят вместе с
+        // протоколами. См. английскую запись.
+        .uninstallConfirmTitle:      "Удалить все протоколы с сервера?",
+        .uninstallConfirmBody:       "Удаляет с сервера все протоколы и ключ, а сохранённые для него подключения удаляются из приложения. Инструменты остаются, так что переустановка займёт около минуты.",
+        .deepUninstallConfirmBody:   "Удаляет все протоколы, ключ и кеш сборки (~300 МБ). Остальное на сервере не меняется.",
         .rebootConfirmTitle:         "Перезагрузить сервер?",
-        .rebootConfirmBody:          "Будет выполнена перезагрузка всего VPS. Контейнер olcrtc запустится автоматически после того, как сервер поднимется.",
+        // #470 было: «запустится автоматически» — см. английскую запись.
+        // #471 было: «контейнер olcrtc может понадобиться запустить заново» — на карточке кнопка называется «Запустить сервер».
+        .rebootConfirmBody:          "Перезагружает сервер целиком. Когда он поднимется, проверь его карточку — возможно, его придётся запустить заново.",
 
         // #303: Recover connection from server
         .actionRecoverConnection:    "Восстановить подключение",
         .recoverConfirmTitle:        "Восстановить подключение с этого сервера?",
-        .recoverConfirmBody:         "Считывает carrier, room, transport и ключ шифрования, уже развёрнутые на этом сервере (только чтение), и добавляет их как новое подключение здесь.",
+        // #470 было: «carrier, room, transport» — сырые id, которых нет больше нигде в русском UI.
+        // #471: «оператора» → «сервис» (sectionCarrier).
+        .recoverConfirmBody:         "Считывает сервис, комнату, транспорт и ключ шифрования, уже развёрнутые на этом сервере (только чтение), и добавляет их как новое подключение здесь.",
         .recoverConfirmAction:       "Восстановить",
         .provisioningRecovering:     "Чтение конфигурации сервера…",
         .recoverResultSuccess_fmt:   "Восстановлено %@/%@ — подключение добавлено",
@@ -1278,32 +1319,33 @@ enum L10nTable {
         .rotateKeyResultAdded_fmt:   "Новый ключ создан — подключение %@/%@ добавлено",
         .rotateKeyFailedNoURI:       "Ротация ключа завершилась, но сервер не вывел URI — проверь журнал provisioning.",
 
-        // Container status
-        .containerRunning_fmt:       "Контейнер работает: %@",
-        .containerStopped_fmt:       "Контейнер остановлен: %@",
-        .containerNotFound:          "Контейнер не найден",
+        // Protocol status on the server — #471, см. английскую запись
+        .containerRunning_fmt:       "Протокол работает: %@",
+        .containerStopped_fmt:       "Протокол остановлен: %@",
+        .containerNotFound:          "На сервере ничего не установлено",
         .containerNotFoundShort:     "не найден",
         // #458 was: «— нажми «Установить».» — see the English entry: «Установить»
         // is not on the card in the states that raise this.
-        .containerNotInstalled:      "На этом сервере ещё не установлен контейнер olcrtc.",
-        .readinessNoPodman:              "Готов к установке (Podman не найден, полная установка ~5–7 мин)",
-        .readinessNoImage:               "Podman установлен — первый раз скачает образ (~300 МБ, ~3–5 мин)",
-        .readinessImageReady:            "Образ в кеше — переустановка займёт ~1–2 мин",
+        // #471 было: «…ещё не установлен контейнер olcrtc».
+        .containerNotInstalled:      "На этом сервере пока ничего не установлено.",
+        .readinessNoPodman:              "Готов к установке — пока ничего не настроено, полная установка ~5–7 мин",
+        .readinessNoImage:               "Готов к установке — первая установка скачает около 300 МБ (~3–5 мин)",
+        .readinessImageReady:            "Готов к установке — всё уже скачано, ~1–2 мин",
         .readinessContainerStopped_fmt:  "Остановлен: %@",
         .readinessContainerRunning_fmt:  "Работает: %@",
 
         // VPS status card (#258/#261)
         .vpsTitleUnknown:         "Не проверено",
         .vpsTitleReady:           "Готов к установке",
-        .vpsTitlePodmanReady:     "Podman готов",
+        .vpsTitlePodmanReady:     "Инструменты установлены",
         .vpsTitleStopped:         "Остановлен",
         .vpsTitleRunning:         "Работает",
         .vpsSubUnknown:           "Проверка ещё не запускалась.",
-        .vpsSubNoPodman:          "Полная установка ~5–7 мин",
-        .vpsSubNoImage:           "Первая установка тянет образ (~300 МБ)",
-        .vpsSubImageReady:        "Образ в кэше — быстрая переустановка",
-        .vpsSubStopped:           "Контейнер есть, не запущен",
-        .vpsSubRunning:           "Контейнер запущен. Через него пока ничего не проходило.",
+        .vpsSubNoPodman:          "Пока ничего не настроено — полная установка 5–7 мин",
+        .vpsSubNoImage:           "Первая установка скачает около 300 МБ",
+        .vpsSubImageReady:        "Всё уже скачано — установка 1–2 мин",
+        .vpsSubStopped:           "Установлен, не запущен",
+        .vpsSubRunning:           "Сервер запущен. Через него пока ничего не проходило.",
         .vpsVerbChecking:         "Проверка",
         .vpsVerbInstalling:       "Установка",
         .vpsVerbStarting:         "Запуск",
@@ -1333,16 +1375,16 @@ enum L10nTable {
         .noSearchResultsHint_fmt:    "По запросу «%@» совпадений нет.",
         .categoryConnection:         "Подключение",
         .categoryDiagnostics:        "Диагностика",
-        .categoryProvisioning:       "VPS",
-        .categoryContainerLogs:      "Контейнер",
+        .categoryProvisioning:       "Сервер",
+        .categoryContainerLogs:      "Протокол",
 
         // #294: per-source Logs tabs
         // #316 was: lowercase fragments (под заголовком таба) — теперь
         // открывают подсказку пустого состояния, читаются как предложения.
         .logsTabDescConnection:      "Логи подключения",
         .logsTabDescDiagnostics:     "Логи проверки IP и скорости",
-        .logsTabDescVPS:             "Логи установки VPS",
-        .logsTabDescContainer:       "Логи контейнера сервера",
+        .logsTabDescVPS:             "Логи операций с сервером",
+        .logsTabDescContainer:       "Логи протоколов с сервера",
         .logsFileNameLabel_fmt:      "Файл: %@",
         .logsContainerSelectServer:  "Сервер",
         .logsContainerNoServers:     "Нет настроенных серверов",
@@ -1357,16 +1399,17 @@ enum L10nTable {
         // #316: single-stack Logs tab — короткие подписи сегментов + счётчик строк
         .logsSegConnection:          "Подкл",
         .logsSegDiagnostics:         "Диаг",
-        .logsSegVPS:                 "VPS",
-        .logsSegContainer:           "Контейнер",
+        .logsSegVPS:                 "Сервер",
+        .logsSegContainer:           "Протокол",
         .logsLineCount_fmt:          "%d стр.",
         .logsPeerCount_fmt:          "👥 %d участн.",
         // #338: inline container fetch — карточка источника + фазы
         .logsFetchAction:            "Загрузить",
         .logsFetchFromHost_fmt:      "Загрузить с %@",
         .logsPhaseConnecting:        "Подключение…",
-        // deliberately English — a literal command line, not translated
-        .logsPhaseCommand_fmt:       "podman logs --tail %d %@",
+        // #471 was: the raw `podman logs --tail` command line — a progress
+        // phase says what is happening, not which binary is being run.
+        .logsPhaseCommand_fmt:       "Читаем последние %d строк из %@…",
         .logsPhaseReceiving:         "Получение вывода…",
         // #332: rendered-line cap notice
         .logsRenderTruncated_fmt:    "Показаны последние %d строк — «Поделиться» или «Копировать всё» выгружает полную историю.",
@@ -1379,7 +1422,8 @@ enum L10nTable {
         .wbTokenHeader:              "Токен WB Stream",
         .wbTokenFieldLabel:          "Токен аккаунта (необязательно)",
         // #461 было: «wbstream» / «datachannel» — сырые id.
-        .wbTokenFooter:              "Вставьте токен аккаунта WB Stream. Пусто — анонимный гость; для DataChannel токен обязателен.",
+        // #470: «Вставьте» → «Вставь» — таблица на «ты».
+        .wbTokenFooter:              "Вставь токен аккаунта WB Stream. Пусто — анонимный гость; для DataChannel токен обязателен.",
 
         // SettingsView
         .settingsTitle:              "Настройки",
@@ -1408,7 +1452,8 @@ enum L10nTable {
         // matching the English entry.
         // #461 было: «(vp8channel/sei/video)» и «на datachannel» — сырые id в
         // совете про список, который пишет все четыре словами.
-        .speedDatachannelHint:       "Подсказка: видео-транспорты (VP8, SEI, Видео) жертвуют скоростью ради вида видеозвонка. Для большей скорости смените транспорт сервера на DataChannel через «Сменить комнату / транспорт» на вкладке «Серверы» там, где это позволяет сеть.",
+        // #470: «смените» → «смени» — сосед speedProviderFooter уже на «ты».
+        .speedDatachannelHint:       "Подсказка: видео-транспорты (VP8, SEI, Видео) жертвуют скоростью ради вида видеозвонка. Для большей скорости смени транспорт сервера на DataChannel через «Сменить комнату / транспорт» на вкладке «Серверы» там, где это позволяет сеть.",
         .settingsPortLabel:          "Порт",
         .checkPortAction:            "Проверить порт",
         .randomPortAction:           "Случайный",
@@ -1419,7 +1464,7 @@ enum L10nTable {
         .logPortBusyOlcrtc_fmt:      "✓ Порт %d занят туннелем olcrtc",
         .socksPortChangeNote:        "Изменение порта применится при следующем подключении.",
         .dnsFreeFormPlaceholder:     "IP:port",
-        .dnsFooter:                  "Передаётся в Go-рантайм и в скрипт установки сервера. Формат: IP:port. Пресеты RU-операторов резолвят только внутри сети соответствующего оператора.",
+        .dnsFooter:                  "Используется туннелем и при установке новых серверов. Формат: IP:port. Пресеты мобильных операторов работают только внутри их сети.",
         // #460 (finding 12) было: `.vp8Footer` — «MobileSetVP8Options
         // применяется только если transport=vp8channel…»: символ gomobile и
         // строка конфига в подписи к настройке. Само слово «vp8channel»
@@ -1431,8 +1476,10 @@ enum L10nTable {
         .startTimeoutNote:           "Сколько ждать, пока подключение поднимется, прежде чем прекратить попытку и сообщить об ошибке.",
         .autoConnectOnLaunchLabel:   "Авто-подключение при запуске",
         .autoConnectOnLaunchNote:    "Запускает подключение, показанное на вкладке «Подключения», сразу при открытии приложения.",
-        .autoRemoveConnectionOnUninstallLabel: "Удалять связанное соединение при удалении VPS",
-        .autoRemoveOnUninstallNote:  "При удалении сервера на вкладке «Серверы» созданное им подключение удаляется и из списка на вкладке «Подключения».",
+        // #470: «соединение» → «подключение» — одно место — одно имя (вкладка «Подключения»).
+        // #471 было: «…при удалении VPS» — одно слово на одну вещь: сервер.
+        .autoRemoveConnectionOnUninstallLabel: "Удалять его подключения при удалении сервера",
+        .autoRemoveOnUninstallNote:  "Когда ты удаляешь протоколы с сервера на вкладке «Серверы», созданные им подключения удаляются и из списка «Подключения».",
         .tunnelCheckLabel:           "Проверка туннеля",
         .keepAliveOff:               "выкл",
         .backgroundAudioLabel:       "Фоновая работа (через аудио)",
@@ -1441,20 +1488,16 @@ enum L10nTable {
         .localSocksAuthLabel:        "Требовать аутентификацию прокси",
         .logLevelLabel:              "Уровень логирования",
         .logLevelNote:               "Насколько подробно вести запись. Высокие уровни помогают разобраться с проблемой, но лог заполняется быстрее.",
-        .footerKeepAlive:            "С заданным здесь интервалом делает сквозную проверку через SOCKS5. При неудаче туннель переподключается. 0 — отключить.",
+        .footerKeepAlive:            "С заданным здесь интервалом делает сквозную проверку через туннель. При неудаче туннель переподключается. 0 — отключить.",
         .footerLogBuffer:            "Максимальное количество строк в памяти для каждой категории логов.",
         .logBufferLabel:             "Буфер логов",
-        .containerLogsTailLabel:     "Строк из лога контейнера",
-        .containerLogsTailNote:      "Сколько последних строк подтягивать из лога контейнера сервера.",
+        .containerLogsTailLabel:     "Строк из лога сервера",
+        .containerLogsTailNote:      "Сколько последних строк подтягивать из лога сервера.",
         .clearAllLogsAction:         "Очистить все логи",
         .copyAllAction:              "Копировать всё",
         .clearCategoryAction:        "Очистить категорию",
-        .fontSizeLabel:              "Размер шрифта",
-        .fontSizeSystem:             "Системный",
-        .fontPreviewText:            "Превью текста — так будут выглядеть подписи и заголовки в приложении.",
         // #460 (finding 18) было: `.fontFooter` — «(через SwiftUI
         // dynamicTypeSize)»: имя фреймворка в подписи к настройке.
-        .fontNote:                   "Задаёт размер текста во всём приложении. Меньше — помещается больше, больше — легче читать. «Системный» следует размеру текста из настроек iOS.",
         .languageLabel:              "Язык",
         .themeLabel:                 "Тема",
 
@@ -1468,8 +1511,11 @@ enum L10nTable {
         // InstallOptionsView
         .installTitle:               "Установка olcrtc",
         .reconfigureTitle:           "Сменить комнату / транспорт",
-        .reconfigureInfoFooter:      "Контейнер будет перезапущен с новыми флагами -carrier/-id/-transport. Переустановка не нужна (apt-get / go build не запускаются).",
-        .reconfigureTransportTuningFooter: "При смене транспорта настройки vp8/sei на сервере сбрасываются на значения по умолчанию. Для тонкой настройки переустановите.",
+        // #470 было: «с новыми флагами -carrier/-id/-transport» — см. английскую запись.
+        // #471 было: «Перезаписывает конфиг протокола на сервере (оператор, комната, транспорт) и перезапускает его контейнер».
+        .reconfigureInfoFooter:      "Перезапустит этот протокол с новыми настройками. Переустановка не нужна.",
+        // #470: «переустановите» → «переустанови» — таблица на «ты».
+        .reconfigureTransportTuningFooter: "При смене транспорта настройки vp8/sei на сервере сбрасываются на значения по умолчанию. Для тонкой настройки переустанови.",
         .parametersHeader:           "Параметры",
         .roomIDAutoGenHint:          "Room ID будет сгенерирован сервером.",
         .roomIDTelemostHint:         "Создай встречу на telemost.yandex.ru и вставь ID (часть после /j/ в ссылке).",
@@ -1479,7 +1525,9 @@ enum L10nTable {
         .matrixQuestion_fmt:         "⚠ Работа с %@ под вопросом.",
         .matrixFail_fmt:             "✗ Не работает с %@ — выбери другой транспорт.",
         .matrixUnknown_fmt:          "Нет данных о совместимости с %@.",
-        .carrierFooter:          "client-id=ios-<случайный> (генерируется) · key=hex64 (генерируется) · DNS и VP8 из настроек",
+        // #470 было: «client-id=ios-<случайный> (генерируется) · …» — см. английскую запись.
+        // #471 было: «key=hex64 (генерируется)» — имя поля и тип, которых пользователь не вводит.
+        .carrierFooter:          "Для этого сервера создаётся новый ключ шифрования · DNS и VP8 берутся из настроек",
         .transportSectionHeader:     "Транспорт",
         .roomIDSectionHeader:        "Room ID",
         .jitsiServerHeader:          "Сервер Jitsi",
@@ -1498,7 +1546,9 @@ enum L10nTable {
         .bgKeeperFailed_fmt:         "⚠ Фоновый audio-keeper не запустился: %@ — приложение может быть остановлено в фоне",
         .transportUsesServerDefaults_fmt: "Будут использованы серверные дефолты для %@ — расширенные параметры пока не вынесены в настройки iOS.",
         .waitReadyFailed_fmt:        "✗ WaitReady: %@",
-        .connectNoPeer:              "Пир не присоединился вовремя — проверь, что ключ совпадает с сервером, верна комната, или смените carrier/transport.",
+        // #470 было: «проверь … или смените carrier/transport» — «ты» и «вы» в одной фразе плюс сырые id.
+        // #471: «оператора» → «сервис» (sectionCarrier).
+        .connectNoPeer:              "Пир не присоединился вовремя — проверь, что ключ совпадает с сервером и комната верна, или смени сервис/транспорт.",
         .waitReadyOK:                "✓ WaitReady OK — SOCKS5 слушает, проверяем туннель…",
         .tunnelOK:                   "✓ Туннель работает — данные идут через сервер",
         .tunnelFailed:               "✗ Туннель не отвечает (сервер недоступен или 403 Forbidden IP)",
@@ -1523,7 +1573,8 @@ enum L10nTable {
         .validateKeyLength_fmt:      "Ключ должен быть 64 hex-символа (получено: %d)",
         .validateKeyNonHex:          "Ключ содержит не-hex символы",
         .validateRoomIDEmpty:        "Room ID не может быть пустым",
-        .errorPortBusy_fmt:          "Порт %d занят — освободите его или смените порт в Настройках",
+        // #470 было: «освободите … смените … в Настройках» — тот же совет, что healthReasonPortBusy, но на «вы».
+        .errorPortBusy_fmt:          "Порт %d занят — освободи его или смени порт в настройках",
         .errorSecretsLocked:         "Разблокируй устройство и снова открой приложение, чтобы загрузить сохранённый ключ.",
         .errorRuntimeStillStopping:  "Предыдущая сессия ещё завершается — попробуй снова через несколько секунд.",
 
@@ -1534,56 +1585,60 @@ enum L10nTable {
 
         // Provisioning
         .provisioningSSHConnecting:  "Подключение по SSH…",
-        .provisioningRebootSSH:      "Reboot: подключение по SSH…",
+        // #470 было: «Reboot: …» — сосед provisioningUninstallSSH переведён.
+        .provisioningRebootSSH:      "Перезагрузка: подключение по SSH…",
         .provisioningUninstallSSH:   "Удаление: подключение по SSH…",
         .provisioningRebooting:      "Перезагрузка…",
-        .provisioningUninstalling:   "Удаление контейнера и файлов…",
-        .provisioningUpdating:       "Обновление бинарника…",
-        .provisioningReconfiguring:  "Изменение параметров контейнера…",
-        .provisioningStatusFetching: "Статус контейнера…",
-        .provisioningLogsFetching:   "Логи контейнера…",
+        .provisioningUninstalling:   "Удаление протоколов и файлов…",
+        .provisioningUpdating:       "Обновление olcrtc на сервере…",
+        .provisioningReconfiguring:  "Изменение параметров протокола…",
+        .provisioningStatusFetching: "Статус сервера…",
+        .provisioningLogsFetching:   "Логи сервера…",
         .installStep1Upload:         "[1/3] Загружаем скрипт…",
         .installStep2Launch:         "[2/3] Запускаем скрипт установки…",
         .installStep3PollRetry_fmt:  "[3/3] Сервер временно недоступен, повтор (%d)…",
         .installPhaseWaiting:        "Ожидание…",
         .installPhaseSystemDeps:     "Установка системных пакетов…",
-        .installPhaseClone:          "Клонирование репозитория…",
-        .installPhasePullImage:      "Загрузка образа Go…",
-        .installPhaseDeps:           "Загрузка Go-модулей…",
+        .installPhaseClone:          "Загрузка исходников…",
+        .installPhasePullImage:      "Загрузка образа для сборки…",
+        .installPhaseDeps:           "Загрузка зависимостей…",
         .installPhaseBuild:          "Сборка olcrtc…",
         .installPhaseStart:          "Запуск olcrtc…",
         .installFailedNoURI_fmt:     "Скрипт завершился без URI. Последние строки:\n%@",
         .installTimeout25min:        "Таймаут установки (25 минут)",
         .installResultSuccess_fmt:   "Сервер olcrtc установлен (%@/%@)",
-        .uninstallResultSuccess:     "Контейнер удалён. Подключения через него больше не работают.",
-        .updateResultSuccess:        "Бинарник обновлён",
+        .uninstallResultSuccess:     "Удалено с сервера. Подключения через него больше не работают.",
+        .updateResultSuccess:        "olcrtc на сервере обновлён",
         .provisioningStarting:       "Запускаем сервер…",
         .startResultSuccess:         "Сервер запущен",
         .actionStart:                "Запустить сервер",
         .provisioningStopping:       "Останавливаем сервер…",
         .stopResultSuccess:          "Сервер остановлен",
         .actionStop:                 "Остановить сервер",
-        .scanningContainers:         "Сканируем VPS на наличие olcrtc…",
+        .scanningContainers:         "Ищем olcrtc на сервере…",
         .actionScanVPS:              "Найти установленный olcrtc",
-        .scanNoContainers:           "На сервере не найдено olcrtc-контейнеров.",
+        .scanNoContainers:           "На сервере не найдено установленного olcrtc.",
         .scanRestoreAction:          "Восстановить",
         .actionDeepUninstall:        "Удалить весь olcrtc с сервера",
         .deepUninstallResultSuccess:          "Все данные olcrtc удалены",
         .reconfigureResultSuccess_fmt: "Параметры изменены (%@/%@)",
-        .rebootResultSuccess:        "Команда reboot отправлена",
+        // #470 было: «Команда reboot отправлена».
+        .rebootResultSuccess:        "Команда перезагрузки отправлена",
         .logsBytesReceived_fmt:      "Логи получены (%d байт)",
         .provisionPasswordMissing:   "Пароль не найден в Keychain",
         .provisionSSHPrefix_fmt:     "SSH: %@",
         .provisionCommandPrefix_fmt: "Команда: %@",
         .provisionParsePrefix_fmt:   "Не удалось разобрать вывод: %@",
-        .sshAttemptFailed_fmt:       "✗ SSH attempt %d/2 failed: %@",
+        // #470 было: английская строка дословно — следующая строка лога (sshRetryIn4s) уже русская.
+        .sshAttemptFailed_fmt:       "✗ Попытка SSH %d/2 не удалась: %@",
         .sshRetryIn4s:               "  повтор через 4 с…",
-        .sshPortNotResponding_fmt:   "Порт %d на %@ не ответил — проверь что SSH открыт и VPS доступен",
-        .serverUnreachable_fmt:      "Сервер %@ не отвечает — проверь что VPS включён и SSH-порт открыт",
+        .sshPortNotResponding_fmt:   "Порт %d на %@ не ответил — проверь, что SSH открыт и сервер доступен",
+        .serverUnreachable_fmt:      "Сервер %@ не отвечает — проверь, что он включён и его SSH-порт открыт",
         .sshTunnelDroppedMidOp_fmt:  "SSH-сессия шла через собственный туннель приложения, и туннель оборвался посреди операции — команда могла уже выполниться на сервере. Переподключись и проверь состояние сервера. (%@)",
 
         // NetPing
-        .pingTCPOK_fmt:              "TCP/%d отвечает за %@ ms",
+        // #470 было: «ms» — healthLatencyMs_fmt пишет «мс».
+        .pingTCPOK_fmt:              "TCP/%d отвечает за %@ мс",
         .pingTCPFail_fmt:            "TCP/%d недоступен",
 
         // ConnectionsView per-connection ping (#234)
@@ -1598,19 +1653,21 @@ enum L10nTable {
         // AddServerHostView
         .nameSettingLabel:           "Название",
         .sectionDescription:         "Описание",
-        .testSSHAction:              "Тест SSH",
         // #451: SSH auth-method picker + private-key entry
         .authMethodPickerLabel:      "Аутентификация",
         .authMethodPassword:         "Пароль",
         .authMethodKey:              "SSH-ключ",
-        .sshKeyFooter:               "Вставьте содержимое файла приватного ключа OpenSSH (ed25519 или RSA), напр. ~/.ssh/id_ed25519. Ключ хранится только в Keychain устройства.",
+        // #470: «Вставьте» → «Вставь» — таблица на «ты».
+        .sshKeyFooter:               "Вставь содержимое файла приватного ключа OpenSSH (ed25519 или RSA), напр. ~/.ssh/id_ed25519. Ключ хранится только в Keychain устройства.",
         .sshKeyPasteButton:          "Вставить ключ из буфера",
         .sshKeyPassphraseField:      "Пароль ключа",
         .sshKeyDetected_fmt:         "✓ Обнаружен ключ %@",
         .sshKeyDetectedEncrypted_fmt: "✓ Обнаружен ключ %@ — зашифрован, нужен пароль ключа",
         .sshKeyErrorECDSA:           "Ключи ECDSA не поддерживаются. Используй ed25519 или RSA (ssh-keygen -t ed25519).",
-        .sshKeyErrorUnsupportedFormat: "Неподдерживаемый формат ключа. Конвертируйте в формат OpenSSH: ssh-keygen -p -o -f <файл>.",
-        .sshKeyErrorNotAKey:         "Это не похоже на приватный ключ. Вставьте файл целиком, включая строки BEGIN OPENSSH PRIVATE KEY (не .pub).",
+        // #470: «Конвертируйте» → «Конвертируй» — сосед sshKeyErrorECDSA уже на «ты».
+        .sshKeyErrorUnsupportedFormat: "Неподдерживаемый формат ключа. Конвертируй в формат OpenSSH: ssh-keygen -p -o -f <файл>.",
+        // #470: «Вставьте» → «Вставь».
+        .sshKeyErrorNotAKey:         "Это не похоже на приватный ключ. Вставь файл целиком, включая строки BEGIN OPENSSH PRIVATE KEY (не .pub).",
 
         // ConnectionsView misc
         .diagnosticsTitle:           "Диагностика",
@@ -1635,10 +1692,11 @@ enum L10nTable {
         .portInUseByOlcrtc:          "занят туннелем olcrtc",
         .roomPrefix_fmt:             "комната: %@",
         .qrCodeURIA11y:              "QR-код URI подключения",
-        .qrCodeHintA11y:             "Отсканируйте этот код, чтобы импортировать подключение на другом устройстве",
+        // #470: «Отсканируйте» → «Отсканируй».
+        .qrCodeHintA11y:             "Отсканируй этот код, чтобы импортировать подключение на другом устройстве",
         .cameraUnavailableTitle:     "Камера недоступна",
         .cameraUnavailableBody:      "Для сканирования QR нужно физическое устройство с камерой.",
-        .sectionCarrier:             "Оператор",
+        .sectionCarrier:             "Сервис",
         .labelTransport:             "Транспорт",
         // #461 было: «Телемост» — теперь на главном экране это ИМЯ сервиса,
         // внутри которого прячется трафик, а у сервиса есть бренд.
@@ -1666,10 +1724,12 @@ enum L10nTable {
 
         // #111: subscription import (olcrtc-sub:// links)
         .subImportTitle:             "Импорт подписки",
-        .subImportConfirm_fmt:       "Добавить соединений: %d (из «%@»)?",
+        // #470: «соединений» → «подключений» — вкладка называется «Подключения».
+        .subImportConfirm_fmt:       "Добавить подключений: %d (из «%@»)?",
         .subImportAddAction:         "Добавить",
         .subInvalidLink:             "Ссылка подписки должна иметь вид olcrtc-sub://host/path",
-        .subEmptyList:               "Подписка не содержит действительных соединений",
+        // #470: «соединений» → «подключений».
+        .subEmptyList:               "Подписка не содержит действительных подключений",
         .subImportPastedSource:      "вставленный список",
 
         // #363: отображение метаданных подписки
@@ -1686,14 +1746,15 @@ enum L10nTable {
         .vpsStatPing:                "Ping",
         .vpsStatDisk:                "Disk",
         .vpsStatRAM:                 "RAM",
-        .vpsStatUp:                  "Up",
+        .vpsStatUp:                  "Аптайм",
         .scanRestored_fmt:           "Восстановлено: %@",
 
         // #337: безопасный для скриншотов режим — скрытие IP
         .maskIPsLabel:               "Скрывать IP-адреса",
         // #460 было: «на вкладке «Соединения»» — вкладка называется
         // «Подключения» (`.tabConnections`); одно место — одно имя.
-        .maskIPsFooter:              "Скрывает IP-адреса в диагностике на вкладке «Подключения» и на карточках VPS для безопасных скриншотов. Только отображение — копирование и сохранённые значения остаются настоящими. В логах адреса остаются настоящими.",
+        // #471 было: «на карточках VPS» — везде «сервер».
+        .maskIPsFooter:              "Скрывает IP-адреса в диагностике на вкладке «Подключения» и на карточках серверов для безопасных скриншотов. Только отображение — копирование и сохранённые значения остаются настоящими. В логах адреса остаются настоящими.",
 
         // #328: конечные точки активного оператора с копированием в один тап
         // #460 (finding 23) было: `.carrierEndpointsTitle` («Точки оператора»)
@@ -1716,7 +1777,7 @@ enum L10nTable {
         .carrierEndpointResolvedIPs: "Найденные IP",
         .carrierEndpointResolving:   "Разрешение…",
         .carrierEndpointUnresolved:  "Не удалось разрешить",
-        .carrierEndpointNoHost:      "ID комнаты этого оператора не является хостом — исключать нечего.",
+        .carrierEndpointNoHost:      "ID комнаты этого сервиса не является хостом — исключать нечего.",
         .carrierEndpointCopied_fmt:  "📋 Скопировано: %@",
         .carrierEndpointRefresh:     "Разрешить заново",
         // #460 было: `.carrierEndpointsCheckAction` («Проверить» — читалось как
@@ -1725,8 +1786,10 @@ enum L10nTable {
         .carrierEndpointCopyAll:     "Скопировать хост и IP",
 
         // #359: доступность переключателя подключения и кнопок-иконок в тулбаре
-        .a11yConnectToggle:          "Подключиться",
-        .a11yConnectHintSelectFirst: "Сначала выбери соединение",
+        // #470 было: «Подключиться» — видимая кнопка (actionConnect) говорит «Подключить».
+        .a11yConnectToggle:          "Подключить",
+        // #470: «соединение» → «подключение».
+        .a11yConnectHintSelectFirst: "Сначала выбери подключение",
         .a11yStateConnected:         "Подключено",
         .a11yStateConnecting:        "Подключение",
         .a11yStateDisconnected:      "Отключено",
@@ -1755,7 +1818,8 @@ enum L10nTable {
         .botErrorGeneric_fmt:        "Не удалось настроить бота: %@",
         .botErrorNotActive:          "Бот установлен, но его служба не запустилась.",
         .botSheetTitle:              "Бот",
-        .botSheetFooter:             "Отправьте боту команду запуска или остановки, чтобы управлять этим сервером. Один бот на сервер.",
+        // #470: «Отправьте» → «Отправь» — таблица на «ты» (ответы бота незнакомцам остаются на «вы»).
+        .botSheetFooter:             "Отправь боту команду запуска или остановки, чтобы управлять этим сервером. Один бот на сервер.",
         .botSelectLabel:             "Бот",
         .botCommandsHeader:          "Команды",
         .botRepliesHeader:           "Ответы",
@@ -1790,13 +1854,16 @@ enum L10nTable {
         .botNamePlaceholder:         "olcrtc_server_bot",
         .botPlatformLabel:           "Платформа",
         .botTokenLabel:              "Токен",
-        .botTokenPlaceholder:        "Вставьте токен",
-        .botTokenSavedHint:          "Токен сохранён. Вставьте, чтобы заменить; оставьте пустым, чтобы сохранить.",
+        // #470: «Вставьте» → «Вставь».
+        .botTokenPlaceholder:        "Вставь токен",
+        // #470: «Вставьте … оставьте» → «Вставь … оставь».
+        .botTokenSavedHint:          "Токен сохранён. Вставь, чтобы заменить; оставь пустым, чтобы сохранить.",
         .botTokenNoneHint:           "Токен ещё не сохранён.",
         .botTokenStatusSaved:        "Сохранён",
         .botTokenStatusMissing:      "Не задан",
         .botTokenManageHint:         "Токен задаётся в «Настройки → Боты».",
-        .botTokenCreateHint:         "Сначала создайте бота на платформе и получите токен, затем вставьте его сюда.",
+        // #470: «создайте … получите … вставьте» → «создай … получи … вставь».
+        .botTokenCreateHint:         "Сначала создай бота на платформе и получи токен, затем вставь его сюда.",
         .botCopyTokenAction:         "Скопировать токен",
         .botTokenCopied:             "📋 Токен скопирован",
         .botNameTakenError:          "Бот с таким именем уже существует",
@@ -1807,18 +1874,18 @@ enum L10nTable {
         .addProtocolTitle:            "Добавить протокол",
         .removeProtocolAction:        "Удалить с сервера",
         .removeProtocolConfirmTitle_fmt: "Удалить %@ с этого сервера?",
-        .removeProtocolConfirmBody:   "Останавливает и удаляет контейнер этого протокола и его конфиг на VPS. Соответствующее подключение тоже удаляется из списка. Остальные протоколы продолжают работать.",
+        .removeProtocolConfirmBody:   "Останавливает и удаляет этот протокол и его конфиг на сервере. Соответствующее подключение тоже удаляется из списка. Остальные протоколы продолжают работать.",
         .protocolConnectAction:       "Подключиться через этот протокол",
         // #460 (findings 7 / 16) было: `.protocolConnectedBadge` («Подключено»)
         // — самое длинное слово в строке заголовка, которой не хватало ширины,
         // и SwiftUI переносил его посреди слова. Держать перевод коротким.
         .protocolLiveBadge:           "Активен",
-        .protocolPrimaryBadge:        "основной",
         .protocolRecordMissing:       "Нет сохранённого подключения для этого протокола — используй «Восстановить подключение» в меню строки.",
         .protocolAdded_fmt:           "Добавлен %@/%@ — подключение сохранено",
         .protocolRemoved_fmt:         "%@ удалён с сервера",
         .installExtrasHeader:         "Дополнительные протоколы",
-        .installExtrasFooter:         "Устанавливаются на тот же сервер сразу после основного протокола с общим ключом шифрования. Каждый протокол получает своё подключение в списке — выбирайте нужное при подключении.",
+        // #470: «выбирайте» → «выбирай».
+        .installExtrasFooter:         "Устанавливаются на тот же сервер сразу после основного протокола с общим ключом шифрования. Каждый протокол получает своё подключение в списке — выбирай нужное при подключении.",
         .installExtraToggle_fmt:      "Также установить %@",
         .installExtrasPartialFail_fmt: "Часть протоколов не установилась: %@",
 
@@ -1847,7 +1914,8 @@ enum L10nTable {
         .healthCheckedAgo_fmt:        "проверено %@",
         .healthChipNever:             "не проверено",
         // #459 было: «давность %@» → «давность только что».
-        .healthChipStale_fmt:         "последний раз %@",
+        // #470 было: «последний раз %@» — см. английскую запись.
+        .healthChipStale_fmt:         "проверено %@",
         .healthChipFaded_fmt:        "было %@ · %@",
         .healthChipFadedNoRTT_fmt:   "работало %@",
         // #460: «сбой только что» без двоеточия читалось как обрывок фразы.
@@ -1877,15 +1945,15 @@ enum L10nTable {
         .healthReasonCarrierRejectedShort: "Сервис отказал",
         .healthReasonNetworkDown:      "У устройства нет интернета, поэтому о сервере это ничего не говорит.",
         .healthReasonNetworkDownShort: "Нет интернета",
-        .healthReasonHostUnreachable:  "VPS не ответил. Возможно, он выключен, перезагружается или заблокирован твоей сетью.",
-        .healthReasonHostUnreachableShort: "VPS не ответил",
-        .healthReasonSSHAuth:          "SSH-вход отклонён. Сохранённый для этого VPS пароль или ключ не подходит.",
+        .healthReasonHostUnreachable:  "Сервер не ответил. Возможно, он выключен, перезагружается или заблокирован твоей сетью.",
+        .healthReasonHostUnreachableShort: "Сервер не ответил",
+        .healthReasonSSHAuth:          "SSH-вход отклонён. Сохранённый для этого сервера пароль или ключ не подходит.",
         .healthReasonSSHAuthShort:     "SSH-вход отклонён",
         .healthReasonPortBusy:         "Локальный порт SOCKS занят другим приложением. Освободи его или выбери другой порт в настройках.",
         .healthReasonPortBusyShort:    "Локальный порт занят",
-        .healthReasonVPNActive:        "Пока включён системный VPN, другие узлы проверить нельзя. Отключи его и проверь снова.",
+        .healthReasonVPNActive:        "Пока включён системный VPN, подключения проверить нельзя. Отключи его и проверь снова.",
         .healthReasonVPNActiveShort:   "Системный VPN включён",
-        .healthReasonContainerStopped: "Контейнер сервера не запущен. Запусти его и проверь снова.",
+        .healthReasonContainerStopped: "Протокол на сервере не запущен. Запусти его и проверь снова.",
         .healthReasonContainerStoppedShort: "Сервер остановлен",
         .healthReasonTimedOut:         "Проверка не уложилась во время — данные так и не пришли.",
         .healthReasonTimedOutShort:    "Истекло время",
@@ -1913,14 +1981,14 @@ enum L10nTable {
         .vpsHeadlineNotChecked:          "Ещё не проверено",
         .vpsHeadlineNotCheckedHint:      "Проверяем сервер…",
         .vpsHeadlineStopped:             "Сервер остановлен",
-        .vpsHeadlineStoppedHint:         "Контейнер есть, но не запущен — нажми «Запустить сервер»",
+        .vpsHeadlineStoppedHint:         "Установлен, но не запущен — нажми «Запустить сервер»",
 
         // #456: прочие строки интерфейса
         .shareConnectionOnlyBadge:    "Ссылка подключения — без доступа к серверу",
-        .shareConnectionOnlySub:      "По ссылке ниже можно подключаться через твой сервер. SSH-доступа она не даёт, управлять VPS, перенастраивать или стирать его по ней нельзя.",
+        .shareConnectionOnlySub:      "По ссылке ниже можно подключаться через твой сервер. SSH-доступа она не даёт, управлять сервером, перенастраивать или стирать его по ней нельзя.",
         .roomIDLastUsed_fmt:          "Использовать прошлую комнату: %@",
-        .installExistingFoundTitle_fmt: "На этом VPS уже работает %@",
-        .installExistingFoundBody:    "Переустановка удалит его и все остальные контейнеры olcrtc на этом сервере — вместе с их комнатами и ключами.",
+        .installExistingFoundTitle_fmt: "На этом сервере уже работает %@",
+        .installExistingFoundBody:    "Переустановка удалит его и все остальные протоколы на этом сервере — вместе с их комнатами и ключами.",
         .installUseExistingAction:    "Использовать существующий",
         .installReinstallAction:      "Всё равно переустановить",
 
@@ -1935,7 +2003,8 @@ enum L10nTable {
         .tunnelCompareNeedsProxy:    "Ничего — просто работает",
         .tunnelCompareNeedsVPN:      "Профиль VPN — iOS попросит его подтвердить",
         .tunnelCompareRuns:          "Где работает",
-        .tunnelCompareRunsProxy:     "Внутри приложения, пока оно открыто",
+        // #470 было: «пока оно открыто» — см. английскую запись.
+        .tunnelCompareRunsProxy:     "Внутри приложения; держится в фоне, пока включена «Фоновая работа (через аудио)»",
         .tunnelCompareRunsVPN:       "В фоне, приложение можно закрыть",
 
         // #457: лог — это подробности того, что его породило, поэтому в
@@ -1953,16 +2022,15 @@ enum L10nTable {
         // строка доказательства не обещает больше, чем измерено.
         .actionDisconnect:           "Отключить",
         .heroSubjectNone:            "Пока нет подключений",
-        .heroLastUsedLabel:          "Последнее",
         // #459 (audit): было «Выбери подключение ниже.» — списка в этот момент нет.
         .heroPickAConnection:        "Сначала добавь подключение.",
         .heroEvidenceStarting_fmt:   "запуск… %d с",
-        .heroEvidenceUnverified:     "подключено · данные через него ещё не проверяли",
+        .heroEvidenceUnverified:     "Подключено · через него ещё ничего не проверено",   // #471
         .heroEvidenceNoNetwork:      "держим сессию, пока не вернётся сеть",
         // #461 было: «Прокси · только приложения, которые смотрят на …» —
         // предложение там, где нужна подпись. Тот же один %@ (порт).
-        .heroScopeProxy_fmt:         "Прокси · приложения на 127.0.0.1:%@",
-        .heroScopeVPN:               "VPN · весь трафик устройства",
+        .heroScopeProxy_fmt:         "Прокси · порт %@",   // #471
+        .heroScopeVPN:               "VPN · всё устройство",   // #471
 
         // #457/#459: строки подключений. Активное подключение — это герой
         // экрана, в списке его нет, поэтому плашка «Активно» не нужна.
@@ -1977,7 +2045,6 @@ enum L10nTable {
 
         // #457: карточка сервера. Подпись про процесс говорит только о том, что
         // считано с сервера, и всегда с возрастом — это не проверка подключения.
-        .vpsProtocolsFailing_fmt:    "Не работает протоколов: %d из %d",
         .vpsProcessUnread:           "С этого сервера пока ничего не считано",
         .protocolStoppedNote:        "На сервере не запущен",
         .vpsScanBeforeInstall:       "Ищем уже установленное…",
@@ -2006,7 +2073,6 @@ enum L10nTable {
         // ipinfo.io через туннель»: три слова в узкой правой колонке строки,
         // где они разваливались в рваный столбик. Теперь подпись во всю ширину
         // и говорит, что именно измерено, а не только кто ответил.
-        .diagExitNote:               "Твой выходной IP-адрес, определён через ipinfo.io по туннелю — город и страна берутся из того же ответа.",
         // #460 (findings 2 / 15): 1109 мс красным здесь и 133 мс на плашке
         // подключения назывались одинаково, и #460 объяснил разницу заметкой
         // на 250 символов.
@@ -2028,9 +2094,15 @@ enum L10nTable {
         .vpsAdvancedRemoveHeader:      "Удаление",
         // Каждая опасная строка говорит, что именно она уничтожит, — этого не
         // умеет пункт меню, и ради этого экран и появился.
+        // #471: две строки удаления читались как одна и та же дважды. Теперь они
+        // различаются одной оговоркой — кеш сборки — и тем, что остаётся.
         .vpsAdvancedRebootFooter:      "Перезагружает сервер целиком. Всё, что на нём работает, остановится, пока он не поднимется.",
-        .vpsAdvancedUninstallFooter:   "Удаляет все контейнеры olcrtc с этого сервера, папку развёртывания и ключ. Все сохранённые для него подключения перестанут работать.",
-        .vpsAdvancedDeepUninstallFooter: "Удаляет с сервера все контейнеры, образы и каталоги olcrtc.",
+        .vpsAdvancedUninstallFooter:   "Удаляет с сервера все протоколы и ключ. Инструменты остаются, так что переустановка займёт около минуты. Все подключения к этому серверу перестанут работать.",
+        // #471 было: «Удаляет контейнеры olcrtc, папку развёртывания, ключ
+        // шифрования и кеш сборки Go (~300 МБ). Podman и образ golang остаются.»
+        // Образ не удаляется никогда (removeImage: false), а имя «Podman»
+        // читателю ничего не говорит. См. английскую запись.
+        .vpsAdvancedDeepUninstallFooter: "Удаляет все протоколы, ключ и кеш сборки (~300 МБ). Следующая установка начнётся с нуля.",
         .vpsAdvancedRemoveHostFooter:  "Забывает этот сервер в приложении. На самой машине ничего не меняется.",
 
         // #460: раунды скриншотов 2–4.
@@ -2046,8 +2118,6 @@ enum L10nTable {
         // и ни одной строки. Подсказка называет экран, где это чинится (этот
         // экран не рисует кнопок, уводящих в другое место), и говорит, зачем
         // ставить второй, — ради этого переключатель и существует.
-        .connectSwitcherOnlyOne:     "На этом сервере только один протокол",
-        .connectSwitcherAddHint:     "Установи второй на вкладке «Серверы», чтобы переключаться, когда один перестанет работать.",
 
         // MARK: #463 Обновление комнаты Телемоста одной кнопкой
         // Яндекс гасит ссылку Телемоста через 24 часа после создания, и раньше
@@ -2099,8 +2169,29 @@ enum L10nTable {
         .telemostRenewLiveOnly:      "Сейчас соединение идёт через этот протокол, а других на этом сервере нет. Замена комнаты перезапустит его, и соединение оборвётся посреди команды — приложение сохранит новую комнату и переподключится к ней.",
         .telemostRenewDropped_fmt:   "Соединение оборвалось, пока сервер переходил в комнату %@, — так и должно быть, когда обновляешь протокол, через который идёт соединение. Новая комната сохранена, идёт переподключение; запусти «Проверить» в меню протокола, чтобы убедиться, что сервер её принял.",
         .logsContainerPrimary:       "Основной",
+        .vpsHeadlineProtocolsVerified_fmt: "%d из %d протоколов проверено %@",
+        .healthPartlyWorking:        "Работает не всё",
+        .vpsHeadlineStoppedHint_fmt: "Не запущен · проверено %@ — нажми «Запустить сервер»",
+        .vpsMachineLine_fmt:         "Диск %@ · RAM %@ · аптайм %@",
+        .vpsAdvancedMachineHeader:   "Машина",
+        .vpsTitleNothingInstalled:   "Пока ничего не установлено",
+        .diagAgeVia_fmt:             "%@ · через ipinfo.io",
+        .subMetaUpdated_fmt:         "Обновлено %@",
+        .settingsAdvancedRow:        "Дополнительно",
+        .tunnelCompareDisclosure:    "Чем отличаются режимы",
+        .settingsBackgroundLabel:    "Работать в фоне",
+        .settingsSectionAbout:       "О приложении",
+        .settingsSectionConnection:  "Соединение",
+        .settingsSectionProxy:       "Прокси",
+        .protocolRecreateAction:     "Пересоздать этот протокол",
+        .carrierFooterSharedKey:     "Ключ общий с уже установленными протоколами этого сервера · DNS и VP8 берутся из настроек",
+        .subImportAlreadySaved_fmt:  "«%@» уже сохранено — ничего не добавлено.",
+        .logsScanAmbiguous_fmt:      "На этом сервере %d установок olcrtc — сначала выбери нужную на его карточке сервера («Найти установленный olcrtc»), потом загрузи снова.",
+        .healthLatencyNoResponse:    "нет ответа",
+        .sshTunnelLoginTimedOut_fmt: "SSH-вход на %@:%d через туннель не уложился в лимит 10 с — путь через туннель слишком медленный; попробуй ещё раз или отключи туннель и подключись напрямую",
+        .dnsInvalidNote:             "Укажи резолвер как IP:port, например 77.88.8.8:53 — значение не сохранится, пока оно не станет корректным",
+        .speedTunnelDropped:         "Туннель оборвался во время теста — оставшиеся шаги пропущены",
         .vpsHeadlineProbeFailed:     "Не удалось проверить сервер",
-        .subMetaUpdatedPull_fmt:     "Обновлено %@ · потяни вниз, чтобы обновить",
         .protocolStopAction:         "Остановить этот протокол",
         .protocolStartAction:        "Запустить этот протокол",
         .telemostExpiryTitle:        "Комната Телемоста скоро истечёт",

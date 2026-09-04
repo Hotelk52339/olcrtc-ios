@@ -254,6 +254,17 @@ final class HealthModelTests: XCTestCase {
         XCTAssertTrue(d.isVerified)
         XCTAssertEqual(HealthCoordinator.shared.health(for: id)?.rttMs, 31)
         XCTAssertEqual(HealthCoordinator.shared.health(for: id)?.source, "live")
+        // boc #470: the "persists" half of the name. #470 was: only the in-memory
+        // map above was read back, so a no-op `save()` (or a broken encoder)
+        // passed. `save()` writes through a serial queue — drain it, then decode
+        // the bytes UserDefaults actually holds, the way `load()` does on launch.
+        HealthCoordinator.flushPendingWrites()
+        let reloaded = HealthCoordinator.decodeStore(UserDefaults.standard.data(forKey: healthKey),
+                                                     now: Date())
+        XCTAssertEqual(reloaded[id.uuidString]?.rttMs, 31, "the verdict must survive a relaunch")
+        XCTAssertEqual(reloaded[id.uuidString]?.resolvedKind, .working)
+        XCTAssertEqual(reloaded[id.uuidString]?.source, "live")
+        // eoc #470
 
         // A "couldn't check" reason is stored as .inconclusive, never as .broken.
         HealthCoordinator.shared.noteFailure(recordID: id, raw: "no such host", source: "probe")

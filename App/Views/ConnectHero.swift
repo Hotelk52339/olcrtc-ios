@@ -11,13 +11,17 @@ import SwiftUI
 // The block now reads, top to bottom, in descending order of what the user came
 // for:
 //   1. THE STATE, as the largest text on the screen.
-//   2. WHICH connection it applies to (and, when idle, that it is the last used).
+//   2. WHICH connection it applies to (#471 was: "and, when idle, that it is the
+//      last used" — the "LAST USED" eyebrow is deleted; the state word says it).
 //   3. ONE line of DATED evidence — sourced from `HealthDisplay.subtitle`, the
 //      honesty layer's own timestamped sentence, so nothing here is a claim the
 //      app has not measured.
-//   4. THE SCOPE — proxy port vs whole device. Permanently visible, because
-//      `SettingsStore.tunnelMode` changes what the word "Connected" MEANS.
-//   5. ONE full-width, labelled action. Never a bare system Toggle.
+//   4. ONE full-width, labelled action. Never a bare system Toggle.
+//   5. THE SCOPE — proxy port vs whole device. Permanently visible, because
+//      `SettingsStore.tunnelMode` changes what the word "Connected" MEANS, but
+//      #471 moved it BELOW the action it qualifies: five rows, and the last one
+//      is a footnote rather than a readout standing between the user and the
+//      button.
 //
 // #459: THE HERO'S SUBJECT IS NOT IN THE LIST BELOW IT. `ConnectionsView` skips
 // the row for whichever record this card is about, so the connection's name is
@@ -94,6 +98,12 @@ struct ConnectHero: View {
     /// it ("starting… 6 s") instead of printing a bare, undatable "Connecting…".
     @State private var connectingSince: Date?
 
+    /// #470: when `exitPlace` last changed. The exit is looked up once per connect
+    /// (and on pull), so the line that prints it must carry its age — it is the
+    /// hero's ONE line of DATED evidence, and a six-hour-old lookup in green with
+    /// no date read as a present-tense fact.
+    @State private var exitSince: Date?
+
     var body: some View {
         OlcCard {
             // #459 was: spacing 10. The card lost two lines, so the rhythm it
@@ -106,11 +116,15 @@ struct ConnectHero: View {
                 // problem from the user's point of view, not the code's).
                 reasonLine
                 evidenceLine
-                scopeLine
                 // #459: 4 pt on top of the 12 pt rhythm, so the break before the
                 // one action reads as a break and every other gap stays equal.
-                Divider().overlay(Theme.Palette.separator).padding(.top, 4)
+                Divider().overlay(Theme.Palette.separator).padding(.top, Theme.Metrics.s1)
                 primaryControl
+                // #471: the scope is a FOOTNOTE TO THE ACTION, so it sits under
+                // the button it qualifies. #471 was: between `evidenceLine` and
+                // the divider — a caption of prose standing above the fold, in
+                // mono, on the app's most valuable card.
+                scopeLine
                 elsewhereNote
             }
         }
@@ -122,6 +136,7 @@ struct ConnectHero: View {
         .onChange(of: state, initial: true) { _, new in
             connectingSince = new.isConnecting ? (connectingSince ?? Date()) : nil
         }
+        .onChange(of: exitPlace, initial: true) { _, new in exitSince = new == nil ? nil : Date() }   // #470
     }
 
     // MARK: 1. The answer
@@ -186,22 +201,20 @@ struct ConnectHero: View {
     // "Netherlands, Amsterdam" over "nl-ams-wg-001" in exactly this shape —
     // `.title3` semibold identity over `.body` machine detail, `spacing: 2`.
     //
-    // Three lines, in descending order of what the user came for:
-    //   0. "LAST USED", only when idle and only when there IS a subject.
+    // Two lines (#471 was: three), in descending order of what the user came for:
     //   1. THE SERVICE — "Yandex Telemost".
     //   2. HOW · WHOSE — "VP8 · zaza". One `Text` built by CONCATENATION, not
     //      interpolation, so the two halves carry different weights and tones
     //      without a second view (and so the pair truncates as one line).
+    //
+    // #471 was: a "LAST USED" eyebrow above the service, drawn whenever the state
+    // was not connected. The hero STATES, it does not narrate: the state word
+    // directly above already says the session is not live, and the card's
+    // position says which connection it is about. One label per fact.
     @ViewBuilder
     private var identityBlock: some View {
         if let subject = subject {
-            VStack(alignment: .leading, spacing: 2) {
-                if !state.isConnected {
-                    Text(L10n.heroLastUsedLabel.localized().uppercased())
-                        .font(Theme.Typography.caption)
-                        .tracking(0.4)
-                        .foregroundStyle(Theme.Palette.textTertiary)
-                }
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471 was: 2
                 Text(ConnectionNaming.service(subject.details))
                     .font(Theme.Typography.answerSupport)
                     .foregroundStyle(Theme.Palette.textPrimary)
@@ -257,10 +270,10 @@ struct ConnectHero: View {
         case .failed(let raw):
             // #457: with a mapped reason the sentence is the WHY; without one the
             // raw message is all we have, so it stands alone and stays red.
+            // #471 was: an explicit `mono: false` — the default now.
             evidenceText(failureReason?.message ?? raw,
                          tone: failureReason == nil ? Theme.Palette.red
-                                                    : Theme.Palette.textSecondary,
-                         mono: false)
+                                                    : Theme.Palette.textSecondary)
         case .disconnected:
             evidenceText(subject == nil ? " " : health.subtitle, tone: Theme.Palette.textSecondary)
         }
@@ -296,15 +309,26 @@ struct ConnectHero: View {
     @ViewBuilder
     private var connectedEvidence: some View {
         if let place = exitPlace {
-            evidenceText(exitFlag.map { "\($0) \(place)" } ?? place,
-                         tone: health.isVerified ? Theme.Palette.green
-                                                 : Theme.Palette.textSecondary)
+            // #470 was: `evidenceText(…)` with no age — see `exitSince`.
+            ConnectHeroExitLine(text: exitFlag.map { "\($0) \(place)" } ?? place,
+                                since: exitSince ?? Date(),
+                                tone: sessionVerified ? Theme.Palette.green
+                                                      : Theme.Palette.textSecondary)
         } else {
             evidenceText(heroEvidenceHasReading ? health.subtitle
                                                 : L10n.heroEvidenceUnverified.localized(),
-                         tone: health.isVerified ? Theme.Palette.green
-                                                 : Theme.Palette.textSecondary)
+                         tone: sessionVerified ? Theme.Palette.green   // #470 was: health.isVerified
+                                               : Theme.Palette.textSecondary)
         }
+    }
+
+    /// #470: green and the aurora ring need proof about THIS session. Nothing
+    /// verifies a system-VPN session — `verifyTunnel`, keep-alive and the
+    /// Diagnostics latency loop are all proxy-only — so in VPN mode a `.verified`
+    /// verdict can only be a probe or proxy-era reading ≤ 5 min old, which then
+    /// faded mid-session. A live VPN session reads connected, never verified.
+    private var sessionVerified: Bool {
+        state.isConnected && health.isVerified && mode == .proxy
     }
 
     /// #457 (audit fix): does this verdict carry an actual end-to-end reading to
@@ -318,12 +342,17 @@ struct ConnectHero: View {
         }
     }
 
-    /// `mono` is for measured data (ages, milliseconds, ports); prose — a mapped
-    /// failure sentence — reads in the proportional face.
-    private func evidenceText(_ text: String, tone: Color, mono: Bool = true) -> some View {
+    /// `mono` is for ADDRESSES AND PORTS, never sentences.
+    ///
+    /// #471 was: `mono: Bool = true`, so every caller that did not opt out — the
+    /// verdict subtitle, the no-network line, the unverified line — rendered a
+    /// SENTENCE in the monospaced face. `.monospacedDigit()` keeps the figures
+    /// inside those sentences from jittering as an age ticks, which is the only
+    /// thing mono was buying here.
+    private func evidenceText(_ text: String, tone: Color, mono: Bool = false) -> some View {
         Text(text)
-            .font(mono ? Font.system(.caption, design: .monospaced)
-                       : Font.system(.caption, design: .rounded))
+            .font(mono ? Theme.Typography.mono
+                       : Theme.Typography.caption.monospacedDigit())
             .foregroundStyle(tone)
             // #457: a reason is never truncated (HIG Typography) — it wraps.
             .fixedSize(horizontal: false, vertical: true)
@@ -337,7 +366,11 @@ struct ConnectHero: View {
     private var reasonLine: some View {
         if case .failed = state, let reason = failureReason {
             Text(reason.headline)
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                // #471: the same step, through the token. #471 was: a local
+                // `.system(.subheadline, design: .rounded).weight(.semibold)` —
+                // exactly `Typography.label`, re-declared here, which is the
+                // drift the TYPE NOTE at the top of this file warns about.
+                .font(Theme.Typography.label)
                 .foregroundStyle(Theme.Palette.red)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -360,21 +393,26 @@ struct ConnectHero: View {
         }
     }
 
-    // MARK: 4. The scope — always on screen
+    // MARK: 4. The scope — a footnote to the action (#471 was: "always on screen")
 
+    /// #471: the scope stays PERMANENTLY VISIBLE (the truth rule: `tunnelMode`
+    /// changes what the word "Connected" MEANS), but it is a footnote to the
+    /// button, not a readout above it — so it moved below `primaryControl` and
+    /// lost the loopback address that made it a sentence.
+    ///
+    /// #471 was: `.system(.caption2, design: .monospaced)` on "Proxy · apps
+    /// pointed at 127.0.0.1:8808" — a whole prose line in the face reserved for
+    /// measured data, at the seventh size step the type scale abolished. The copy
+    /// is now "Proxy · port 8808" / "VPN · whole device"; the port keeps its
+    /// digits aligned without dragging the words into mono.
     private var scopeLine: some View {
         Text(mode == .vpn
              ? L10n.heroScopeVPN.localized()
              : L10n.heroScopeProxy_fmt.formatted(String(socksPort)))
-            .font(.system(.caption2, design: .monospaced))
+            .font(Theme.Typography.caption.monospacedDigit())
             .foregroundStyle(Theme.Palette.textTertiary)
-            // #459 (audit) was: .lineLimit(1) + .minimumScaleFactor(0.8) on a
-            // whole SENTENCE — 58 characters in Russian («Прокси · только
-            // приложения, которые смотрят на 127.0.0.1:8808»). One caption line
-            // barely holds it on a phone at 80% (i.e. already shrunk), and one
-            // Dynamic Type step up it hits the floor and truncates. The line
-            // that says what the word "Connected" MEANS may not be cut, so it
-            // wraps instead.
+            // #459 (audit) was: .lineLimit(1) + .minimumScaleFactor(0.8). The
+            // line that says what "Connected" MEANS may not be cut, so it wraps.
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -398,13 +436,13 @@ struct ConnectHero: View {
 
     @ViewBuilder
     private var connectControl: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471 was: 6
             OlcButton(connectTitle, systemImage: "power",
                       role: .primary, fillWidth: true, action: onConnect)
                 .disabled(!canConnect)
             if let blocked = blockedReason {
                 Text(blocked)
-                    .font(.caption)
+                    .font(Theme.Typography.caption)   // #471 was: .caption
                     .foregroundStyle(Theme.Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -431,7 +469,7 @@ struct ConnectHero: View {
         if case .failed = state, let action = failureReason?.action,
            let note = ConnectActionSite.elsewhereNote(for: action) {
             Text(note)
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471 was: .caption
                 .foregroundStyle(Theme.Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -441,7 +479,7 @@ struct ConnectHero: View {
 
     @ViewBuilder
     private var auroraVerdictRing: some View {
-        if state.isConnected && health.isVerified {
+        if sessionVerified {   // #470 was: state.isConnected && health.isVerified
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
                 .strokeBorder(Theme.Palette.auroraGradient, lineWidth: 2)
                 .allowsHitTesting(false)
@@ -463,8 +501,36 @@ private struct ConnectHeroElapsed: View {
         TimelineView(.periodic(from: since, by: 1)) { ctx in
             Text(L10n.heroEvidenceStarting_fmt
                     .formatted(Int(max(0, ctx.date.timeIntervalSince(since)))))
-                .font(.system(.caption, design: .monospaced))
+                // #471: the evidence line keeps ONE face across every state —
+                // `evidenceText` stopped being mono, so this must too. The digit
+                // that ticks stays fixed-width. #471 was: `.caption` monospaced.
+                .font(Theme.Typography.caption.monospacedDigit())
                 .foregroundStyle(Theme.Palette.textSecondary)
+                .frame(minHeight: 18, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - ConnectHeroExitLine (#470)
+//
+// #470: the connected evidence line WITH its age — "🇳🇱 Amsterdam, NL · 2 h ago",
+// re-rendered once a minute like `ConnectHeroElapsed`, so the exit place is dated
+// evidence rather than a present-tense claim from a lookup made at connect time.
+
+private struct ConnectHeroExitLine: View {
+    let text: String
+    let since: Date
+    let tone: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: since, by: 60)) { ctx in
+            let line = "\(text) · \(HealthAge.phrase(ctx.date.timeIntervalSince(since)))"
+            Text(line)
+                // #471: a place name and an age is a sentence, not an address —
+                // same face as `evidenceText`. #471 was: `.caption` monospaced.
+                .font(Theme.Typography.caption.monospacedDigit())
+                .foregroundStyle(tone)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 18, alignment: .leading)
         }
     }

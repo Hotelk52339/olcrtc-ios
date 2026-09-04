@@ -33,22 +33,37 @@ final class CarrierTransportMatrixTests: XCTestCase {
         XCTAssertTrue(CarrierTransportMatrix.autoGeneratesRoomID.isEmpty)
     }
 
-    // #284: cells re-derived from upstream docs/settings.md. Pin the ones the
-    // user picks by — and the cells that were previously *wrong* (telemost
-    // dropped DataChannel; telemost seichannel is unsupported).
+    // #284: cells re-derived from upstream docs/settings.md; #434: re-synced to
+    // the E2E table in `olcrtc-upstream/internal/e2e/tunnel_test.go` at master
+    // (submodule pin f616f57 — jitsi returns ExpectPass for every transport).
+    // #470: the FULL 12-cell snapshot. Nine cells were pinned and three
+    // (telemost/videochannel, wbstream/seichannel, wbstream/videochannel) were
+    // not, so a submodule bump or a stray edit flipping one of them — which
+    // disables a chip and changes `failoverRank` — left every assertion green.
+    // CLAUDE.md names this test as the sole guard of the hand-synced table, so
+    // it iterates carriers × transports: any cell change fails here. Update the
+    // table and this snapshot together on every submodule bump.
     func testMatrixMatchesUpstream() {
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "jitsi",    transport: "datachannel"), .recommended)
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "telemost", transport: "vp8channel"),  .recommended)
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "wbstream", transport: "vp8channel"),  .recommended)
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "telemost", transport: "datachannel"), .fail)
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "telemost", transport: "seichannel"),  .fail)
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "wbstream", transport: "datachannel"), .question)
-        // #434: re-synced to upstream master (42ae4e0) — jitsi's E2E case now returns
-        // ExpectPass for every transport (RTP keepalive fixes landed for sei/video too),
-        // so all non-datachannel jitsi transports are .ok.
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "jitsi",    transport: "vp8channel"),   .ok)
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "jitsi",    transport: "seichannel"),   .ok)   // #434 was: .fail
-        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "jitsi",    transport: "videochannel"), .ok)   // #434 was: .fail
+        let expected: [String: [String: Compat]] = [
+            "telemost": ["datachannel": .fail,        "vp8channel": .recommended,
+                         "seichannel":  .fail,        "videochannel": .ok],
+            "wbstream": ["datachannel": .question,    "vp8channel": .recommended,
+                         "seichannel":  .ok,          "videochannel": .ok],
+            "jitsi":    ["datachannel": .recommended, "vp8channel": .ok,
+                         "seichannel":  .ok,          "videochannel": .ok],   // #434 was: sei/video .fail
+        ]
+        // The axes themselves are part of the contract (a 4th transport or a
+        // 4th carrier must land in the table AND here).
+        XCTAssertEqual(Set(CarrierTransportMatrix.carriers), Set(expected.keys))
+        XCTAssertEqual(Set(CarrierTransportMatrix.transports), Set(expected["telemost"]!.keys))
+        for carrier in CarrierTransportMatrix.carriers {
+            for transport in CarrierTransportMatrix.transports {
+                XCTAssertEqual(CarrierTransportMatrix.compat(carrier: carrier, transport: transport),
+                               expected[carrier]?[transport],
+                               "\(carrier)/\(transport) drifted from the upstream snapshot")
+            }
+        }
+        XCTAssertEqual(CarrierTransportMatrix.compat(carrier: "nope", transport: "datachannel"), .unknown)
     }
 
     // The pre-selected transport for each carrier must be its recommended cell.
@@ -65,27 +80,39 @@ final class CarrierTransportMatrixTests: XCTestCase {
     // Also pins the ADDITIVE OlcOption API — `disabled`/`disabledReason` must
     // keep their defaults so pre-gating `OlcOption(value:label:)` call sites
     // (Settings presets, Logs host picker, segments) keep compiling unchanged.
-    func testFailCellsProduceDisabledOptionsWithReason() {
-        for carrier in CarrierTransportMatrix.carriers {
-            for t in CarrierTransportMatrix.transports {
-                let fails = CarrierTransportMatrix.compat(carrier: carrier, transport: t) == .fail
-                let opt = OlcOption(
-                    value: t,
-                    label: CarrierTransportMatrix.transportLabel(t),
-                    disabled: fails,
-                    disabledReason: fails
-                        ? L10n.matrixFail_fmt.formatted(CarrierTransportMatrix.carrierLabel(carrier))
-                        : nil)
-                XCTAssertEqual(opt.disabled, fails,
-                               "\(carrier)+\(t): chip disabled iff the matrix says ✗")
-                XCTAssertEqual(opt.disabledReason != nil, fails,
-                               "\(carrier)+\(t): a disabled chip must carry its reason")
-            }
-        }
+    //
+    // #470 was: `testFailCellsProduceDisabledOptionsWithReason`, which built the
+    // `OlcOption(disabled: fails, disabledReason: fails ? … : nil)` mapping
+    // ITSELF and then asserted on its own arguments — a tautology that never
+    // touched the three private copies of that mapping in InstallOptionsView,
+    // AddConnectionView and ReconfigureOptionsView (invert the gate there and it
+    // still passed). The ✗ cells are pinned by the full snapshot above; the
+    // sheet mapping needs ONE shared `CarrierTransportMatrix.transportOptions(
+    // for:)` the three sheets call before it can be asserted here at all.
+    func testOlcOptionGatingFieldsDefaultToEnabled() {
         // Additive-defaults contract: the original initializer shape yields an
         // enabled option with no reason.
         let plain = OlcOption(value: "x", label: "X")
         XCTAssertFalse(plain.disabled)
         XCTAssertNil(plain.disabledReason)
+        // And the gating shape round-trips its fields (memberwise, not derived).
+        let gated = OlcOption(value: "y", label: "Y", disabled: true, disabledReason: "why")
+        XCTAssertTrue(gated.disabled)
+        XCTAssertEqual(gated.disabledReason, "why")
+    }
+
+    // #470: the sheets' gating IS the matrix. `.fail` cells are disabled with a
+    // reason; every other cell is enabled — checked cell by cell against
+    // `compat`, not against a copy of the option list.
+    func testTransportOptionsGateExactlyTheFailCells() {
+        for carrier in CarrierTransportMatrix.carriers {
+            let opts = CarrierTransportMatrix.transportOptions(for: carrier)
+            XCTAssertEqual(opts.map { $0.value }, CarrierTransportMatrix.transports, carrier)
+            for opt in opts {
+                let fails = CarrierTransportMatrix.compat(carrier: carrier, transport: opt.value) == .fail
+                XCTAssertEqual(opt.disabled, fails, "\(carrier)/\(opt.value)")
+                XCTAssertEqual(opt.disabledReason != nil, fails, "\(carrier)/\(opt.value)")
+            }
+        }
     }
 }

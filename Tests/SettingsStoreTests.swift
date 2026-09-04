@@ -40,7 +40,12 @@ final class SettingsStoreTests: XCTestCase {
     // absent keys included.
     private var allSettingsSnapshot: [String: Any?] = [:]
 
+    /// #470: `reset()` also deletes the `olcrtc.local.socks` Keychain item, so a
+    /// test run would drop a developer's real local-SOCKS password.
+    private var savedLocalSocksPass = ""
+
     private func snapshotAllSettings() {
+        savedLocalSocksPass = SettingsStore.shared.localSocksPass   // #470
         let d = UserDefaults.standard
         allSettingsSnapshot = [:]
         for (key, value) in d.dictionaryRepresentation() where key.hasPrefix("settings.") {
@@ -49,6 +54,7 @@ final class SettingsStoreTests: XCTestCase {
     }
 
     private func restoreAllSettings() {
+        SettingsStore.shared.localSocksPass = savedLocalSocksPass   // #470
         let d = UserDefaults.standard
         for key in d.dictionaryRepresentation().keys where key.hasPrefix("settings.") {
             if allSettingsSnapshot[key] == nil { d.removeObject(forKey: key) }
@@ -77,6 +83,7 @@ final class SettingsStoreTests: XCTestCase {
             "tunnelMode":             s.tunnelMode,   // #vpn
             "autoFailover":           s.autoFailover,   // #453
             "refreshOnEntry":         s.refreshOnEntry,   // #458
+            "vpsAutoPingInterval":    s.vpsAutoPingInterval,   // #470: clamped (10…300), was never covered
         ]
     }
 
@@ -93,7 +100,19 @@ final class SettingsStoreTests: XCTestCase {
         s.tunnelMode             = snapshot["tunnelMode"]             as! TunnelMode   // #vpn
         s.autoFailover           = snapshot["autoFailover"]           as! Bool   // #453
         s.refreshOnEntry         = snapshot["refreshOnEntry"]         as! Bool   // #458
+        s.vpsAutoPingInterval    = snapshot["vpsAutoPingInterval"]    as! Int    // #470
         super.tearDown()
+    }
+
+    // MARK: vpsAutoPingInterval (10...300) — #470
+
+    func testVPSAutoPingIntervalClampsBothEnds() {
+        s.vpsAutoPingInterval = 9
+        XCTAssertEqual(s.vpsAutoPingInterval, 10)
+        s.vpsAutoPingInterval = 301
+        XCTAssertEqual(s.vpsAutoPingInterval, 300)
+        s.vpsAutoPingInterval = 60
+        XCTAssertEqual(s.vpsAutoPingInterval, 60)
     }
 
     // MARK: socksPort (1024...65535)
@@ -294,6 +313,10 @@ final class SettingsStoreTests: XCTestCase {
         s.tunnelMode             = .vpn   // #vpn: non-numeric, but reset() covers it too
         s.autoFailover           = false  // #455: default is now true — mutate away so reset() is proven to restore it
         s.refreshOnEntry         = false  // #458: default true — mutate away so reset() is proven to restore it
+        // #470: the fontSizeIndex assertion below compared the untouched value
+        // (the default on any fresh install) to the default — it could not fail.
+        s.fontSizeIndex          = SettingsStore.systemFontSizeIndex
+        s.vpsAutoPingInterval    = 300    // #470
 
         s.reset()
 
@@ -308,6 +331,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(s.tunnelMode,             .proxy)   // #vpn
         XCTAssertEqual(s.autoFailover, SettingsStore.Defaults.autoFailover)   // #455: assert against the default (now true), not a literal
         XCTAssertEqual(s.refreshOnEntry, SettingsStore.Defaults.refreshOnEntry)   // #458
+        XCTAssertEqual(s.vpsAutoPingInterval, SettingsStore.Defaults.vpsAutoPingInterval)   // #470
     }
 
     // MARK: defaults sanity — protects the Defaults ranges from drift
@@ -325,6 +349,11 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(SettingsStore.Defaults.logBufferRange.contains(SettingsStore.Defaults.logBufferSize))
         XCTAssertTrue(SettingsStore.Defaults.containerLogsTailRange.contains(SettingsStore.Defaults.containerLogsTail))
         XCTAssertTrue(SettingsStore.Defaults.keepAliveRange.contains(SettingsStore.Defaults.keepAliveSeconds))
-        XCTAssertTrue((0...(SettingsStore.fontSizes.count - 1)).contains(SettingsStore.Defaults.fontSizeIndex))
+        // #471 was: `0...` — but the range this value is actually clamped to
+        // starts at the "System" sentinel (-1), which #470 made the default when
+        // the font slider was removed. The test must assert the REAL range.
+        XCTAssertTrue((SettingsStore.systemFontSizeIndex...(SettingsStore.fontSizes.count - 1))
+            .contains(SettingsStore.Defaults.fontSizeIndex))
+        XCTAssertTrue(SettingsStore.Defaults.vpsAutoPingRange.contains(SettingsStore.Defaults.vpsAutoPingInterval))   // #470
     }
 }

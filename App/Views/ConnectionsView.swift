@@ -11,11 +11,14 @@ import SwiftUI
 //                             of dated evidence, the scope, one labelled button,
 //                             and that connection's action menu.
 //   2. Switch protocol      — one row per OTHER connection: carrier · transport,
-//                             the host label under it, and one `OlcHealthChip`.
+//                             one `OlcHealthChip`, and (#471) the host label only
+//                             when the list spans more than one host.
 //                             TAP = connect.
 //   3. Auto-switch          — #460: the failover switch, moved off the Settings
 //                             tab to sit with the protocols it switches between;
-//                             #461: now BELOW the list it governs.
+//                             #461: now BELOW the list it governs; #471: drawn
+//                             only when there are two connections to switch
+//                             between, and mirrored in Settings for everyone else.
 //   4. Diagnostics          — "This session" (protocol / exit / latency, only
 //                             while connected) + "Checks" (IP check, speed
 //                             test). See HealthCard.swift.
@@ -91,6 +94,10 @@ struct ConnectionsView: View {
     @State private var subInfoByGroup: [String: (source: String, meta: ConnectionStore.SubscriptionMeta)] = [:]
     /// #413: the grouped connection list, cached for the same reason.
     @State private var groups: [(group: String, items: [ConnectionRecord])] = []
+    /// #471: does the list span more than one host label? A row prints its host
+    /// only when the answer differs between rows — otherwise it is the same word
+    /// on every one. Cached for the same reason as the two above.
+    @State private var showHost = false
 
     // boc #457 was: @State alertText — a one-OK alert titled `healthWhyTitle`,
     // reached from a "What's wrong?" overflow item. The reason and its fix are
@@ -227,6 +234,12 @@ struct ConnectionsView: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(.visible, for: .tabBar)
             .contentMargins(.bottom, Theme.Metrics.s6, for: .scrollContent)
+            // #471: the token grid used to stop at the card edge. `List`'s default
+            // section spacing is ~35 pt, so with `olcCardRow`'s 8 + 8 the gap
+            // BETWEEN cards was ~51 pt against 20 pt INSIDE one — a 2.5× ratio,
+            // which is why the screen read half empty while each card read as a
+            // dense slab. 16 pt puts the gap on the grid.
+            .listSectionSpacing(Theme.Metrics.s4)
     }
     // eoc #460
 
@@ -336,13 +349,15 @@ struct ConnectionsView: View {
     /// would govern nothing; the moment a second one exists it appears.
     @ViewBuilder
     private var autoSwitchSection: some View {
-        // #460 (audit fix) was: `if store.connections.count > 1`. The control was
-        // REMOVED from Settings so it would live in exactly one place — and this
-        // gate then meant a one-connection install had it in NO place at all, with
-        // no way to see or change a setting that is on by default. It is shown
-        // whenever there is anything at all; the card itself explains that it needs
-        // a second protocol on the same server before it can do anything.
-        if !store.connections.isEmpty {
+        // #471 was: `if !store.connections.isEmpty`, so a one-connection install
+        // got a card holding a switch that governs nothing plus a caption saying
+        // so. A control with no subject does not belong on the app's first
+        // screen. #460's reason for widening the gate — that removing it from
+        // Settings left the setting unreachable — is answered where it belongs:
+        // the same stored value is bound again in Settings › Staying connected,
+        // one value with two honest entry points (Wi-Fi in Control Center and in
+        // Settings). #460 (audit fix) was, in turn: `count > 1`.
+        if store.connections.count > 1 {
             Section {
                 ConnectAutoSwitchCard()
                     .olcCardRow()
@@ -366,8 +381,7 @@ struct ConnectionsView: View {
                 .olcCardRow()
             }
         } else {
-            // #461: the one-protocol install — see `onlyOneProtocolNote`.
-            onlyOneProtocolNote
+            // #471 was: `onlyOneProtocolNote` — see below the `ForEach`.
             // #459 was: a `pullToRefreshHint` row — a caption instructing the
             // user to perform a standard system gesture. The gesture now does
             // considerably more, and still needs no caption.
@@ -407,44 +421,22 @@ struct ConnectionsView: View {
         return items.contains { $0.id != excluded }
     }
 
-    // boc #461
-    /// #461: the ONE-PROTOCOL case. `connectionsSection` only ever drew an
-    /// empty state for "no connections at all"; a user with exactly one — every
-    /// fresh install, and the owner's own second server for weeks — got a
-    /// switcher section with no header and no rows, i.e. a silent gap between
-    /// the hero and the auto-switch card that governs a choice they cannot make.
-    ///
-    /// It is ONE ROW, not a card and not a CTA button: the fix is on the Servers
-    /// tab, and this screen's convention for an action that lives elsewhere is
-    /// to NAME the screen in prose rather than draw a control that navigates
-    /// away (`ConnectActionSite.elsewhereNote`). ~54 pt.
-    @ViewBuilder
-    private var onlyOneProtocolNote: some View {
-        if !hasAnyVisibleRow {
-            Section {
-                VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
-                    Label(L10n.connectSwitcherOnlyOne.localized(),
-                          systemImage: "square.stack.3d.up.slash")
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(Theme.Palette.textSecondary)
-                    Text(L10n.connectSwitcherAddHint.localized())
-                        .font(.caption2)
-                        .foregroundStyle(Theme.Palette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .olcCardRow()
-            }
-        }
-    }
-
-    /// #461: does the switcher have anything to switch TO? Read once per body
-    /// pass, not per row (this view re-evaluates ~10x/s during a speed test),
-    /// and it short-circuits on the first visible record.
-    private var hasAnyVisibleRow: Bool {
-        let excluded = heroSubjectID
-        return groups.contains { group in group.items.contains { $0.id != excluded } }
-    }
-    // eoc #461
+    // boc #471
+    // #471 was: `onlyOneProtocolNote` (+ its `hasAnyVisibleRow` helper) — two
+    // caption lines mounted on the main screen of every one-protocol install:
+    // "Only one protocol on this server" and "Install a second one on the Servers
+    // tab, so you can switch when one stops working."
+    //
+    // THE MAIN SCREEN DOES NOT TELL THE USER WHAT IT CANNOT DO. An empty switcher
+    // section is not a gap that needs explaining — a user with one connection has
+    // one connection, sees the hero and Diagnostics, and nothing is missing. The
+    // note was #461's answer to "a silent gap between the hero and the
+    // auto-switch card"; #471 closes that gap at the other end instead, by not
+    // drawing the auto-switch card when there is nothing to switch between.
+    // (`connectSwitcherOnlyOne` / `connectSwitcherAddHint` lose their last use.)
+    // The zero-connection empty state above is untouched: THAT one offers an
+    // action.
+    // eoc #471
 
     private func row(_ conn: ConnectionRecord) -> some View {
         // #459 was: also `isLive:` — the live node is the hero's subject and is
@@ -454,7 +446,8 @@ struct ConnectionsView: View {
                           maskIPs: settings.maskIPs,
                           menuItems: rowMenuItems(conn),
                           onConnect: { connect(conn) },
-                          onVerify: { verify(conn) })
+                          onVerify: { verify(conn) },
+                          showHost: showHost)   // #471: cached in `recompute()`
             .olcCardRow()
             .swipeActions(edge: .trailing) { rowSwipeActions(conn) }
     }
@@ -490,6 +483,12 @@ struct ConnectionsView: View {
     }
 
     private func remove(_ conn: ConnectionRecord) {
+        // #470: the hero carries this menu for the LIVE record too. Removing it
+        // used to leave the session up and the hero showing the deleted record
+        // as "Connected" with Edit/Share/QR on a ghost (`connectedRecord` kept
+        // the snapshot; `store.update` on a gone id was a silent no-op). A
+        // record that no longer exists cannot stay connected honestly.
+        if tunnel.connectedRecord?.id == conn.id { tunnel.disconnect() }
         if let i = store.connections.firstIndex(where: { $0.id == conn.id }) {
             store.remove(at: IndexSet([i]))
         }
@@ -511,7 +510,7 @@ struct ConnectionsView: View {
     @ViewBuilder
     private func groupHeader(_ group: String, items: [ConnectionRecord]) -> some View {
         if hasVisibleRows(items) {
-            HStack(spacing: 8) {
+            HStack(spacing: Theme.Metrics.s2) {   // #471 was: 8
                 Text(group == ConnectionRecord.defaultGroupName
                      ? L10n.connectListOtherHeader.localized()
                      : ConnectionRecord.displayGroupName(group))
@@ -684,8 +683,14 @@ struct ConnectionsView: View {
                 store.add($0)
             }
         case .edit(let conn):
-            AddConnectionView(existing: conn, existingGroups: store.allGroupNames) {
-                store.update($0)
+            AddConnectionView(existing: conn, existingGroups: store.allGroupNames) { updated in
+                store.update(updated)
+                // #470: the stored verdict was measured against the OLD
+                // room/key/carrier and kept the same id — the row stayed green
+                // "48 ms · 1m" for a configuration nobody had measured, and the
+                // debounced sweep refused to re-check it for two minutes. A
+                // changed `details` is unmeasured until proven otherwise.
+                if updated.details != conn.details { verify(updated) }
             }
         case .qr(let conn):
             qrSheet(conn)
@@ -697,10 +702,14 @@ struct ConnectionsView: View {
     }
 
     private func qrSheet(_ conn: ConnectionRecord) -> some View {
-        NavigationStack {
+        // #470: service first, host last — the #461 identity rule the hero, the
+        // rows and the Servers card already follow ("Yandex Telemost · zaza").
+        // #470 was: `.navigationTitle(conn.displayName)` ("zaza · Telemost")
+        let title = "\(ConnectionNaming.service(conn.details)) · \(ConnectionNaming.host(conn))"
+        return NavigationStack {
             QRCodeView(uri: Self.uriOf(conn))
                 .padding(32)
-                .navigationTitle(conn.displayName)
+                .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
@@ -718,6 +727,8 @@ struct ConnectionsView: View {
     private func recompute() {
         let grouped = store.grouped()
         groups = grouped
+        // #471: decided ONCE per change of the store, never inside `body`.
+        showHost = ConnectionNaming.spansMultipleHosts(store.connections)
         var map: [String: (source: String, meta: ConnectionStore.SubscriptionMeta)] = [:]
         for group in grouped {
             if let info = store.subscriptionInfo(for: group.items) {
@@ -804,12 +815,15 @@ struct ConnectionsView: View {
 // Settings row bound to, so nothing about persistence or the failover machinery
 // in `TunnelManager` changes; only where the control is drawn.
 //
-// It is a designed row, not a bare `Toggle` dropped on a card: a tinted glyph
-// that says "swap", the rule in one sentence, the one condition that limits it
-// ("Applies in proxy mode" — in VPN mode the core runs in the appex and
-// `TunnelManager` gates failover on `activeMode == .proxy`), and the switch
-// itself pinned opposite. The switch is the only control, so there is no
-// second, invisible tap target fighting it for the row.
+// #471: TITLE, ONE HINT, TOGGLE — three elements, one of them the control.
+//
+// #471 was: "a designed row, not a bare `Toggle` dropped on a card" — a tinted
+// glyph plate (decoration, at a hard-coded 15 pt, one of the two fixed point
+// sizes left in the app), the title, the rule, AND a third `caption2` line
+// "Applies in proxy mode." Three lines of text and an ornament to hold one
+// switch. The proxy-mode condition is a Settings fact
+// (`configFailoverProxyOnlyFooter` keeps its Settings footer); a glyph that
+// repeats the title in pictogram form is not a fact at all.
 //
 // Its own struct with its own `SettingsStore` observation: ConnectionsView's
 // `body` re-evaluates ~10×/s during a speed test and must not grow, and a
@@ -821,41 +835,26 @@ private struct ConnectAutoSwitchCard: View {
     var body: some View {
         OlcCard {
             HStack(alignment: .top, spacing: Theme.Metrics.s3) {
-                glyph
-                labels
+                labels   // #471 was: `glyph` above this
                 Spacer(minLength: Theme.Metrics.s2)
                 control
             }
         }
     }
 
-    private var glyph: some View {
-        Image(systemName: "arrow.triangle.2.circlepath")
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(Theme.Palette.accent)
-            .frame(width: 30, height: 30)
-            .background(Theme.Palette.fill,
-                        in: RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius,
-                                             style: .continuous))
-            .accessibilityHidden(true)
-    }
-
     private var labels: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
             Text(L10n.configFailoverToggle.localized())
-                .font(Theme.Typography.label)
+                .font(Theme.Typography.bodyStrong)   // #471 was: .label
                 .foregroundStyle(Theme.Palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             // #460: the SHORT explainer. The Settings one
             // (`configFailoverExplainer`) is a settings-page sentence; this
             // screen gets the same rule in one line.
+            // #471 was: a third line, `configFailoverProxyOnlyFooter`.
             Text(L10n.connectAutoSwitchHint.localized())
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(L10n.configFailoverProxyOnlyFooter.localized())
-                .font(.caption2)
-                .foregroundStyle(Theme.Palette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -882,17 +881,22 @@ private struct SubscriptionMetaFooter: View {
     let meta: ConnectionStore.SubscriptionMeta
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471 was: 3
             line(L10n.subMetaSource.localized(), Self.displaySource(source))
             if let count = meta.serverCount {
                 line(L10n.subMetaServers.localized(), String(count))
             }
             line(L10n.subMetaRefresh.localized(), Self.refreshDisplay(meta.refreshInterval))
             // #469 (issue #17): the pull DOES re-fetch every source, but nothing on
-            // screen said so after #459 dropped the button and the caption — a
-            // reader coming from olcbox concluded the app had no subscription
-            // refresh at all. One line: when it last happened, and how to do it.
-            Text(L10n.subMetaUpdatedPull_fmt.formatted(HealthAge.phrase(Date().timeIntervalSince(meta.lastRefresh))))
+            // screen said so after #459 dropped the button and the caption — so the
+            // line says WHEN it last happened.
+            // #471 was: `subMetaUpdatedPull_fmt` — "Updated %@ · pull down to
+            // refresh". A caption instructing the user to perform a standard
+            // system gesture, which this codebase's own rule forbids
+            // (ServersView: "a line telling the user to perform a standard
+            // gesture is exactly the kind of word this pass removes"). The date
+            // is the fact; the gesture is not news.
+            Text(L10n.subMetaUpdated_fmt.formatted(HealthAge.phrase(Date().timeIntervalSince(meta.lastRefresh))))
                 .foregroundStyle(Theme.Palette.textTertiary)
             if let used = meta.used, !used.isEmpty {
                 line(L10n.subMetaUsed.localized(), used)
@@ -901,11 +905,11 @@ private struct SubscriptionMetaFooter: View {
                 line(L10n.subMetaAvailable.localized(), available)
             }
         }
-        .padding(.top, 4)
+        .padding(.top, Theme.Metrics.s1)   // #471 was: 4
     }
 
     private func line(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Theme.Metrics.s2) {   // #471 was: 6
             Text(label).foregroundStyle(Theme.Palette.textTertiary)
             Text(value)
                 .foregroundStyle(Theme.Palette.textSecondary)
@@ -913,7 +917,7 @@ private struct SubscriptionMetaFooter: View {
                 .truncationMode(.middle)
                 .textSelection(.enabled)
         }
-        .font(.caption2)
+        .font(Theme.Typography.caption)   // #471 was: .caption2
     }
 
     /// #363: a readable host for the source link. Falls back to the raw string.

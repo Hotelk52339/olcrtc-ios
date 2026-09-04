@@ -91,15 +91,32 @@ final class SpeedTest: ObservableObject {
         if mode == .tunnel { SOCKSSession.noteTunnelActivity(forAtLeast: 180) }
 
         let p: Double?, d: Double?, u: Double?
+        // #470: did the listener go away mid-run? See `tunnelStillLive`.
+        var tunnelDropped = false
         if mode == .tunnel {
             // Serialise on the narrow pipe: parallel connections trigger
             // "remote not ready" on vp8channel. Each step tolerates its own
             // failure and still reports the others (partial results).
             // #461 was: `measurePing(mode:provider:)` — a THIRD definition of
             // latency (mean of cold samples, a fresh session each). One probe now.
-            p = await LatencyProbe.measure(via: mode)
-            d = await measureDownload(mode: mode, provider: provider)
-            u = await measureUpload(mode: mode, provider: provider)
+            // boc #470: re-check the listener before EVERY serial step. URLSession
+            // completes a request DIRECT once the loopback proxy refuses
+            // (`TunnelManager.socksListenerAnswers`, #445), so a figure measured
+            // after a disconnect was a direct-line number labelled "via tunnel" —
+            // 85 Mbps on a vp8channel that cannot exceed ~1 Mbps. Stop at the
+            // first miss and say so.
+            // #470 was: the three awaits, unconditional.
+            var alive = await Self.tunnelStillLive()
+            p = alive ? await LatencyProbe.measure(via: mode) : nil
+            if alive { alive = await Self.tunnelStillLive() }
+            d = alive ? await measureDownload(mode: mode, provider: provider) : nil
+            if alive { alive = await Self.tunnelStillLive() }
+            u = alive ? await measureUpload(mode: mode, provider: provider) : nil
+            tunnelDropped = !alive
+            if tunnelDropped {
+                LogStore.shared.log(.diagnostics, "  tunnel listener gone mid-test — remaining steps skipped")
+            }
+            // eoc #470
         } else {
             // Direct: parallel for speed.
             async let ping     = LatencyProbe.measure(via: mode)   // #461
@@ -108,11 +125,17 @@ final class SpeedTest: ObservableObject {
             (p, d, u) = await (ping, download, upload)
         }
 
-        if mode == .tunnel { SOCKSSession.noteTunnelActivity() }
+        // #470 was: `if mode == .tunnel { … }` — a dead listener is not activity,
+        // and this stamp used to re-arm the keep-alive skip after `disconnect()`.
+        if mode == .tunnel, !tunnelDropped { SOCKSSession.noteTunnelActivity() }
 
         // Only an error when *everything* failed; a missing ping or upload is fine.
         let allFailed = p == nil && d == nil && u == nil
-        let errorMsg  = allFailed ? L10n.speedAllFailed.localized() : nil
+        // #470 was: `let errorMsg = allFailed ? … : nil` — a drop after the ping
+        // had landed reported nothing at all.
+        let errorMsg: String?
+        if tunnelDropped { errorMsg = L10n.speedTunnelDropped.localized() }
+        else { errorMsg = allFailed ? L10n.speedAllFailed.localized() : nil }
         lastResult = SpeedResult(service: provider.label, mode: mode,
                                  pingMs: p, downloadMbps: d, uploadMbps: u, error: errorMsg)
 
@@ -160,6 +183,15 @@ final class SpeedTest: ObservableObject {
     // eoc #461
 
     // MARK: Measurements
+
+    /// #470: is the in-app listener still there to carry the next step?
+    /// `liveBoundPort` clears the moment `disconnect()` runs; the greeting probe
+    /// (the one `verifyTunnel` gates on) catches a listener that died without a
+    /// state change. Loopback — milliseconds.
+    private static func tunnelStillLive() async -> Bool {
+        guard let port = TunnelManager.liveBoundPort else { return false }
+        return await TunnelManager.socksListenerAnswers(port: port)
+    }
 
     // boc #461
     // #461 was: `measurePing(mode:provider:)` — `pingSamples` samples, a FRESH

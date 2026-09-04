@@ -33,7 +33,7 @@ struct CarrierEndpointsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.s4) {   // #471: B9 — 16 → s4
                     // #460 (finding 23): say WHO this screen is for and WHAT
                     // breaks without it, before showing a list of addresses.
                     // Reached from a row on the main screen, it previously
@@ -42,7 +42,7 @@ struct CarrierEndpointsView: View {
                     leadIn
                     if let host {
                         OlcCard {
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: Theme.Metrics.s3) {   // #471: B9 — 12 → s3
                                 endpointRow(label: L10n.carrierEndpointHost.localized(), value: host)
                                 Divider().overlay(Theme.Palette.separator)
                                 resolvedIPsRow(host: host)
@@ -59,7 +59,8 @@ struct CarrierEndpointsView: View {
                     } else {
                         OlcCard {
                             Text(L10n.carrierEndpointNoHost.localized())
-                                .font(.subheadline)
+                                // #471: B9 — prose is step 3. was: .font(.subheadline)
+                                .font(Theme.Typography.body)
                                 .foregroundStyle(Theme.Palette.textSecondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -71,12 +72,12 @@ struct CarrierEndpointsView: View {
                     // footnote now carries the thing the list itself cannot say
                     // — that these addresses expire.
                     Text(L10n.carrierEndpointsFootnote.localized())
-                        .font(.caption)
+                        .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                         .foregroundStyle(Theme.Palette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 4)
                 }
-                .padding(16)
+                .padding(Theme.Metrics.s4)   // #471: B9 — 16 → s4
             }
             .background(Theme.Palette.bg)
             // #460 was: `carrierEndpointsTitle` ("Carrier endpoints") — the
@@ -99,7 +100,8 @@ struct CarrierEndpointsView: View {
     /// read once and then ignored by everyone whose phone has only olcrtc on it.
     private var leadIn: some View {
         Text(L10n.carrierEndpointsLead.localized())
-            .font(.subheadline)
+            // #471: B9 — prose is step 3, never a raw `.subheadline`.
+            .font(Theme.Typography.body)
             .foregroundStyle(Theme.Palette.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -108,14 +110,20 @@ struct CarrierEndpointsView: View {
 
     /// One copyable endpoint: label + monospaced value + a copy button.
     private func endpointRow(label: String, value: String) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471: 2 → s1
                 Text(label)
-                    .font(.caption2.weight(.semibold))
+                    // #471: B9 — this is a field label above a value (the
+                    // `OlcMetric` shape), not a section header, so it takes step
+                    // 5 semibold rather than `OlcSectionHeader`.
+                    // #471 was: .font(.caption2.weight(.semibold))
+                    .font(Theme.Typography.captionStrong)
                     .textCase(.uppercase)
                     .foregroundStyle(Theme.Palette.textTertiary)
                 Text(value)
-                    .font(.system(.caption, design: .monospaced))
+                    // #471: B9 — an address is step 6, via its token.
+                    // #471 was: .font(.system(.caption, design: .monospaced))
+                    .font(Theme.Typography.mono)
                     .foregroundStyle(Theme.Palette.textPrimary)
                     .textSelection(.enabled)
             }
@@ -127,33 +135,39 @@ struct CarrierEndpointsView: View {
     /// The resolved-IPs row: a re-resolve action + each IP copyable.
     @ViewBuilder
     private func resolvedIPsRow(host: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471: B9 — 6 → s2
             HStack {
                 Text(L10n.carrierEndpointResolvedIPs.localized())
-                    .font(.caption2.weight(.semibold))
+                    .font(Theme.Typography.captionStrong)   // #471: B9 — was: .caption2.weight(.semibold)
                     .textCase(.uppercase)
                     .foregroundStyle(Theme.Palette.textTertiary)
                 Spacer()
                 Button(L10n.carrierEndpointRefresh.localized()) {
                     Task { await resolve(host) }
                 }
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .buttonStyle(.borderless)
                 .disabled(resolving)
             }
             if resolving {
                 Text(L10n.carrierEndpointResolving.localized())
-                    .font(.system(.caption, design: .monospaced))
+                    // #471: B9 — "resolving…" is a PROSE line, and mono is for
+                    // measured data only, so it drops the monospaced face and
+                    // takes step 5 like every other transient status caption.
+                    // #471 was: .font(.system(.caption, design: .monospaced))
+                    .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.Palette.textSecondary)
             } else if ips.isEmpty {
                 Text(L10n.carrierEndpointUnresolved.localized())
-                    .font(.caption)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                     .foregroundStyle(Theme.Palette.textSecondary)
             } else {
                 ForEach(ips, id: \.self) { ip in
-                    HStack(spacing: 8) {
+                    HStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
                         Text(ip)
-                            .font(.system(.caption, design: .monospaced))
+                            // #471: an IP is step 6 (measured data / addresses).
+                            // #471 was: .font(.system(.caption, design: .monospaced))
+                            .font(Theme.Typography.mono)
                             .foregroundStyle(Theme.Palette.textPrimary)
                             .textSelection(.enabled)
                         Spacer(minLength: 8)
@@ -167,7 +181,11 @@ struct CarrierEndpointsView: View {
     private func copyButton(_ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: "doc.on.doc")
-                .font(.system(size: 15, weight: .semibold))
+                // #471: B9 — one of the two fixed point sizes left in the app
+                // after #457; a fixed size ignores Dynamic Type, so the glyph
+                // stayed put while the row around it grew.
+                // #471 was: .font(.system(size: 15, weight: .semibold))
+                .font(Theme.Typography.bodyStrong)
                 .foregroundStyle(Theme.Palette.accent)
         }
         .buttonStyle(.plain)

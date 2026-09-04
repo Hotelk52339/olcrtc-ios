@@ -358,12 +358,19 @@ final class TunnelManager: ObservableObject {
         backgroundedAt = start
         let connected = state.isConnected
         let keeper = bgKeeper.isRunning
+        // #470: in VPN mode the core runs in the packet-tunnel extension, which
+        // iOS keeps alive on its own — the keeper is (correctly) never started
+        // there, so the proxy-mode "keep-alive is OFF, enable Background audio"
+        // warning was false, and a heartbeat that stops the moment the app
+        // process suspends would read as "the tunnel died".
+        let systemVPN = activeMode == .vpn
         LogStore.shared.log(.connection,
-                            Self.backgroundEnterMessage(connected: connected, keeperRunning: keeper),
-                            level: connected && !keeper ? .warn : .info)
+                            Self.backgroundEnterMessage(connected: connected, keeperRunning: keeper,
+                                                        systemVPN: systemVPN),
+                            level: connected && !keeper && !systemVPN ? .warn : .info)   // #470
 
         backgroundHeartbeat?.cancel()
-        guard connected else { return }   // idle-in-background needs no aliveness proof
+        guard connected, !systemVPN else { return }   // idle-in-background needs no aliveness proof; #470: nor does a system tunnel
         backgroundHeartbeat = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.backgroundHeartbeatSeconds))
@@ -391,7 +398,12 @@ final class TunnelManager: ObservableObject {
         // suspend the app with keep-alive silently off. Foreground is the safe
         // moment to fix that. Before the `backgroundedAt` guard on purpose: a
         // scene activation without a recorded background entry still re-arms.
-        if state.isConnected && SettingsStore.shared.backgroundAudio {
+        // #470: proxy mode only — the `.connected` didSet never starts the keeper
+        // under the system VPN (the extension keeps running by itself), but this
+        // re-arm had no such gate, so every foreground under a VPN session
+        // activated an AVAudioSession and a silent audio loop for nothing.
+        // #470 was: if state.isConnected && SettingsStore.shared.backgroundAudio {
+        if state.isConnected && activeMode == .proxy && SettingsStore.shared.backgroundAudio {
             bgKeeper.restartIfNeeded()
         }
         guard let since = backgroundedAt else { return }
@@ -415,14 +427,29 @@ final class TunnelManager: ObservableObject {
         // #445 (audit fix 9): build the session inside the Task and invalidate it
         // once the geo fetch settles — un-invalidated URLSessions (and their
         // delegate threads) leak until app exit, one per connect otherwise.
-        Task {
+        // boc #470: the fetch used to outlive the session. URLSession silently
+        // BYPASSES a refusing loopback proxy (see `socksListenerAnswers`), so a
+        // disconnect before ipinfo answered let the request complete DIRECT and
+        // write the user's REAL IP as "→ exit = …" into the (never IP-masked)
+        // connection log, then re-stamp the activity marker `disconnect()` had
+        // just cleared. Pin the result to the attempt that asked for it — same
+        // epoch, still connected — and let `disconnect()` cancel it outright.
+        exitGeoTask?.cancel()
+        let epoch = connectEpoch
+        exitGeoTask = Task { [weak self] in
             let session = SOCKSSession.make(mode: .tunnel)
             defer { session.finishTasksAndInvalidate() }
             guard let geo = await IPChecker.fetchExitGeo(session: session) else { return }
+            guard let self, !Task.isCancelled,
+                  self.connectEpoch == epoch, self.state.isConnected else { return }
             LogStore.shared.log(.connection, IPChecker.exitGeoLine(geo))
             SOCKSSession.noteTunnelActivity()
         }
+        // eoc #470
     }
+
+    /// #470: the in-flight exit-geo annotation, so a disconnect can cancel it.
+    private var exitGeoTask: Task<Void, Never>?
 
     // MARK: Wedge detection (#440)
 
@@ -448,7 +475,15 @@ final class TunnelManager: ObservableObject {
     }
 
     /// Pure (unit-tested) — the background-entry line, keyed on live state.
-    nonisolated static func backgroundEnterMessage(connected: Bool, keeperRunning: Bool) -> String {
+    /// #470: `systemVPN` — a connected VPN-mode session needs no keeper and no
+    /// heartbeat; saying otherwise (the proxy-mode ⚠ line) was simply false.
+    /// Defaulted so the pre-#470 call shape (and its tests) still compile.
+    nonisolated static func backgroundEnterMessage(connected: Bool, keeperRunning: Bool,
+                                                   systemVPN: Bool = false) -> String {
+        if connected && systemVPN {   // #470
+            return "▶ app entered background — connected through the system VPN; "
+                 + "the packet-tunnel extension keeps running on its own, no keep-alive needed"
+        }
         switch (connected, keeperRunning) {
         case (true, true):
             return "▶ app entered background — connected, keep-alive ON (heartbeat below confirms whether it stays alive)"
@@ -483,6 +518,12 @@ final class TunnelManager: ObservableObject {
     // waits for the user — the deliberate battery cap the old one-shot protected.
     // A verified connect ends the loop, so the backoff resets for the next drop.
     private var recoveryTask: Task<Void, Never>?
+    /// #470: stamp of the loop that currently owns `recoveryTask`. A cancelled
+    /// loop can stay parked for seconds inside an awaited detached stop or a
+    /// `connectAndAwait` (neither observes cancellation), and its `defer` used
+    /// to nil the handle under a NEWER loop started meanwhile — see
+    /// `requestReconnect`. Bumped per loop; the defer clears only its own.
+    private var recoveryGeneration = 0
     // `nonisolated` so the pure `backoffDelaySeconds` (also nonisolated, for
     // testing off the MainActor) can read them without a Swift 6 isolation error.
     private nonisolated static let reconnectBaseDelaySeconds: Double = 2
@@ -666,7 +707,7 @@ final class TunnelManager: ObservableObject {
         // the main actor already — `assumeIsolated` makes that explicit and
         // keeps delivery SYNCHRONOUS (an async hop would let the pre-start
         // status snapshot emitted inside `vpn.start` land after
-        // `vpnStartInFlight` was cleared — see `vpnStatusChanged`).
+        // `vpnStartsInFlight` was decremented — see `vpnStatusChanged`).   // #470 was: `vpnStartInFlight` was cleared
         vpn.$status.sink { [weak self] status in
             MainActor.assumeIsolated { self?.vpnStatusChanged(status) }
         }.store(in: &cancellables)
@@ -799,6 +840,7 @@ final class TunnelManager: ObservableObject {
             if Task.isCancelled { return }
             engine?.stop()
         }
+        exitGeoTask?.cancel(); exitGeoTask = nil   // #470: never annotate a session that is gone
         lastRecord = nil
         // #333: stopping our own listener opens the async-teardown window during
         // which the port reads busy on our ghost. Record it so the *next* connect
@@ -828,7 +870,13 @@ final class TunnelManager: ObservableObject {
     /// and blip the UI mid-connect. Real start failures are covered anyway:
     /// they either throw out of `vpn.start` (caught below) or arrive as a
     /// status change after the handshake, when this flag is false again.
-    private var vpnStartInFlight = false
+    /// #470: a COUNT, not a Bool. `disconnect()` does not cancel a handshake
+    /// Task, so a quick disconnect → connect runs two handshakes at once; the
+    /// first one's `defer` used to clear the flag while the second `vpn.start`
+    /// was still mid-save, and the second's pre-start `.disconnected` snapshot
+    /// then passed the guard below and blipped the UI mid-connect.
+    /// #470 was: private var vpnStartInFlight = false
+    private var vpnStartsInFlight = 0
 
     /// VPN-mode counterpart of `start(record:)`: builds a `VPNConfig` from the
     /// (already secret-hydrated, same as the proxy path) record and hands it to
@@ -841,12 +889,30 @@ final class TunnelManager: ObservableObject {
             state = .failed(L10n.stateConnectFailed.localized())
             return
         }
+        // boc #470: the VPN branch skipped both halves of the proxy `preflight`.
+        // (1) No `startSession`, so a VPN-only user had NO connection log file —
+        // every line stayed memory-only and vanished with the process. (2) No
+        // structural validation, so a blanked key (subscription re-import, an
+        // edited record) reached the appex, failed inside `rt.setKey` and came
+        // back as the generic "VPN tunnel disconnected" with no hint at the
+        // cause. Same order as the proxy path: session, validate, then dial.
+        LogStore.shared.startSession(.connection)
         // videochannel pumps frames through an in-app WKWebView; an appex has
         // no UI process, so the packet-tunnel provider cannot run it.
         guard params.transport != "videochannel" else {
+            LogStore.shared.log(.connection, "✗ \(L10n.vpnVideochannelUnsupported.localized())")
             state = .failed(L10n.vpnVideochannelUnsupported.localized())
             return
         }
+        if let problem = Self.validate(params: params) {
+            LogStore.shared.log(.connection, "✗ \(problem)")
+            state = .failed(problem)
+            return
+        }
+        LogStore.shared.log(.connection,
+            L10n.connectingOlcrtc_fmt.formatted(params.carrier, params.transport, params.clientID),
+            code: .connecting)  // OLC-1002 — the appex logs its own milestones from here on
+        // eoc #470
         let s = SettingsStore.shared
         let config = VPNConfig(from: params,
                                dns: s.dnsServer,
@@ -856,8 +922,9 @@ final class TunnelManager: ObservableObject {
         state = .connecting
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.vpnStartInFlight = true
-            defer { self.vpnStartInFlight = false }
+            // #470 was: self.vpnStartInFlight = true / defer { … = false }
+            self.vpnStartsInFlight += 1
+            defer { self.vpnStartsInFlight -= 1 }
             do {
                 try await self.vpn.start(config)
                 // The user hit disconnect while the handshake was in flight
@@ -881,7 +948,30 @@ final class TunnelManager: ObservableObject {
     private func vpnStatusChanged(_ status: VPNController.Status) {
         guard activeMode == .vpn else { return }
         // Pre-start snapshot emitted inside `vpn.start` — not a drop.
-        if vpnStartInFlight, status == .disconnected { return }
+        // #470 was: if vpnStartInFlight, status == .disconnected { return }
+        if vpnStartsInFlight > 0, status == .disconnected { return }
+        // boc #470: a `.disconnected` that arrives with NO provider error is, by
+        // iOS's own definition (`fetchLastDisconnectError` → nil), not a failure:
+        // the user toggled the tunnel off in Settings > VPN, or another VPN took
+        // the slot. It used to become red "Connection failed · VPN tunnel
+        // disconnected" plus the error haptic. A genuine drop still lands as
+        // `.failed(reason)`: VPNController re-emits `.disconnected` once the
+        // provider's error has been fetched (#469), and that second pass carries
+        // the reason. `lastRecord`/`activeMode` are deliberately kept so that
+        // second pass is not filtered out by the guard above.
+        if status == .disconnected, vpn.lastDisconnectReason == nil {
+            if lastRecord != nil {
+                // Explicit level: the keyword classifier would file a line
+                // containing "error" / "failure" as red, which is the point missed.
+                LogStore.shared.log(.connection,
+                    "• VPN tunnel stopped — no provider error reported (Settings > VPN toggle, or another VPN took over): "
+                    + "treated as idle, not a failure; a provider error fetched later still lands as one",
+                    level: .info)
+            }
+            state = .disconnected
+            return
+        }
+        // eoc #470
         if let next = Self.connectionState(forVPNStatus: status,
                                            hasRecord: lastRecord != nil,
                                            reason: vpn.lastDisconnectReason) {
@@ -901,6 +991,11 @@ final class TunnelManager: ObservableObject {
     /// - `.disconnected` with a record still held means the tunnel dropped
     ///   under us → `.failed` with the provider's reason when available;
     ///   without a record it's an ordinary idle `.disconnected`.
+    /// #470: `vpnStatusChanged` no longer routes a reason-less `.disconnected`
+    ///   through here (a stop without a provider error is idle, not failed), so
+    ///   the generic `vpnDisconnected` fallback below is only reachable when a
+    ///   caller passes `reason: nil` explicitly — it stays for the pinned
+    ///   contract in `VPNStatusMappingTests` and as the safety net.
     nonisolated static func connectionState(forVPNStatus status: VPNController.Status,
                                             hasRecord: Bool,
                                             reason: String?) -> ConnectionState? {
@@ -928,14 +1023,29 @@ final class TunnelManager: ObservableObject {
     // hands off to the shared recovery sink (`requestReconnect`, #270) rather
     // than just dropping — see the Recovery section for the backoff policy.
 
+    /// #470: how often the keep-alive loop re-checks the setting while it is 0.
+    private nonisolated static let keepAliveIdlePollSeconds = 5
+
     private func startKeepAliveIfEnabled() {
         keepAliveTask?.cancel(); keepAliveTask = nil
-        let interval = SettingsStore.shared.keepAliveSeconds
-        guard interval > 0 else { return }
+        // #470 was: `let interval = SettingsStore.shared.keepAliveSeconds` +
+        // `guard interval > 0 else { return }` — one snapshot at `.connected`, so
+        // turning keep-alive on (or changing it) in Settings mid-session did
+        // nothing until the next connect while Settings showed it as on. The
+        // loop now re-reads the setting every tick and idles while it is 0
+        // instead of returning (a returned loop never restarts — the same rule
+        // the per-view `.task` loops follow).
 
         keepAliveTask = Task { @MainActor [weak self] in
             var failCount = 0  // consecutive failures; resets on any success or recent activity
             while !Task.isCancelled {
+                // boc #470
+                let interval = SettingsStore.shared.keepAliveSeconds
+                guard interval > 0 else {
+                    try? await Task.sleep(for: .seconds(Self.keepAliveIdlePollSeconds))
+                    continue
+                }
+                // eoc #470
                 try? await Task.sleep(for: .seconds(interval))
                 guard !Task.isCancelled, let self else { return }
                 guard self.state.isConnected else { return }
@@ -982,7 +1092,16 @@ final class TunnelManager: ObservableObject {
                     // HTTP 200 through the live node's own SOCKS port. Re-stamped
                     // every tick, so the live node never goes stale while up.
                     if let id = self.lastRecord?.id {
-                        HealthCoordinator.shared.noteLiveVerified(recordID: id, rttMs: nil)
+                        // #470: carry the live rtt forward. `noteLiveVerified`
+                        // replaces the whole NodeHealth, and the Diagnostics card
+                        // publishes a real sample every 8 s (HealthCard
+                        // .publishLiveLatency) — a nil here wiped it on every
+                        // tick, so the chip flipped "48 ms · now" ↔ "now".
+                        // Only a `.working` entry can hold this session's sample.
+                        // #470 was: HealthCoordinator.shared.noteLiveVerified(recordID: id, rttMs: nil)
+                        let live = HealthCoordinator.shared.health(for: id)
+                        let rtt = live?.resolvedKind == .working ? live?.rttMs : nil
+                        HealthCoordinator.shared.noteLiveVerified(recordID: id, rttMs: rtt)
                     }
                 } else {
                     failCount += 1
@@ -1045,9 +1164,20 @@ final class TunnelManager: ObservableObject {
     private func requestReconnect(reason: String) {
         guard lastRecord != nil, recoveryTask == nil else { return }
         LogStore.shared.log(.connection, L10n.reconnecting_fmt.formatted(reason), code: .reconnecting)  // OLC-1013
+        // #470: this loop's own stamp — see `recoveryGeneration`.
+        recoveryGeneration &+= 1
+        let generation = recoveryGeneration
         recoveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.recoveryTask = nil }
+            // #470 was: defer { self.recoveryTask = nil } — ran when a CANCELLED
+            // loop finally exited (it can sit for seconds in the awaited detached
+            // stop or in `connectAndAwait`, neither of which observes
+            // cancellation) and nilled the handle of the loop `handlePathUpdate`
+            // + `requestReconnect` had started meanwhile. From then on that live
+            // loop was invisible: its `.failed` stopped the background keeper
+            // (the #445 fix-3 defect), a further path event stacked a third
+            // loop beside it, and a user connect could not cancel it.
+            defer { if self.recoveryGeneration == generation { self.recoveryTask = nil } }
             var attempt = 0
             // #453: protocols already tried this recovery run (seeded with the
             // starting record) so a failover hop never re-picks one.
@@ -1072,8 +1202,12 @@ final class TunnelManager: ObservableObject {
                 // #438: jittered so simultaneously-dropped clients don't rejoin the
                 // carrier room in lockstep.
                 let delay = Self.jitteredBackoffSeconds(attempt: attempt, random: .random(in: 0..<1))
+                // #470: coded like the sink-entry line above — the catalog files
+                // the per-attempt progression under OLC-1013 too, and a search
+                // for the code used to show one line per recovery episode.
                 LogStore.shared.log(.connection,
-                    L10n.reconnectAttempt_fmt.formatted(attempt + 1, budget, Int(delay)))
+                    L10n.reconnectAttempt_fmt.formatted(attempt + 1, budget, Int(delay)),
+                    code: .reconnecting)  // OLC-1013
                 try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled, let record = self.lastRecord else { return }
                 // Tear down whatever is bound to the old/dead path, then attempt a
