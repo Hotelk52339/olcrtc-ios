@@ -33,7 +33,7 @@ enum NodeHealthKind: String, Codable, Sendable {
 
 /// #456: one persisted verification result. No secrets: rtt, dates, a stable
 /// reason CODE and a short redacted engineering detail. The human sentence is
-/// derived at display time via L10n (never cached — CLAUDE.md).
+/// derived at display time via L10n (never cached — AGENTS.md).
 struct NodeHealth: Codable, Equatable, Sendable {
     var kind: String            // NodeHealthKind.rawValue
     var checkedAt: Date

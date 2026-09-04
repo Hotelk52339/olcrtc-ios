@@ -248,7 +248,7 @@ olcrtc-ios/                      the iOS app (this repo)
 ├── docs/uri.md                 olcrtc:// URI format reference
 ├── olcrtc-upstream/            Git submodule — openlibrecommunity/olcrtc @ master (upstream source)
 ├── project.yml                 XcodeGen spec (source of truth; .xcodeproj is generated, gitignored)
-├── AGENTS.md, CONTRIBUTING.md  AI-agent + contributor guides
+├── AGENTS.md, CONTRIBUTING.md  project context + contributor guide
 └── .gitmodules
 ```
 
@@ -261,7 +261,7 @@ olcrtc-ios/                      the iOS app (this repo)
 - **this repo** — the iOS app itself.
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for conventions and **[AGENTS.md](AGENTS.md)**
-for the AI-agent workflow.
+for the commands, the architecture and the cross-file contracts.
 
 ---
 
@@ -459,7 +459,7 @@ Client log lines carry a stable code such as `[OLC-1026]`. Open the **Logs** tab
 
 Contributions are welcome. Before opening a PR:
 
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) for the conventions (Conventional Commits, English-only, task markers), and [AGENTS.md](AGENTS.md) if you work with an AI coding agent.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for the conventions (Conventional Commits, English-only, task markers), and [AGENTS.md](AGENTS.md) for the commands, the architecture and the contracts to keep in sync.
 - Work is tracked in a local Backlog.md ledger (maintainer-side); open an issue or PR to propose a change.
 - `xcodebuild test` and the `scripts/srv.sh` parity check run in [CI](.github/workflows/ci.yml) on every PR; keep them green.
 
