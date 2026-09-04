@@ -349,7 +349,11 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(SettingsStore.Defaults.logBufferRange.contains(SettingsStore.Defaults.logBufferSize))
         XCTAssertTrue(SettingsStore.Defaults.containerLogsTailRange.contains(SettingsStore.Defaults.containerLogsTail))
         XCTAssertTrue(SettingsStore.Defaults.keepAliveRange.contains(SettingsStore.Defaults.keepAliveSeconds))
-        XCTAssertTrue((0...(SettingsStore.fontSizes.count - 1)).contains(SettingsStore.Defaults.fontSizeIndex))
+        // #471 was: `0...` — but the range this value is actually clamped to
+        // starts at the "System" sentinel (-1), which #470 made the default when
+        // the font slider was removed. The test must assert the REAL range.
+        XCTAssertTrue((SettingsStore.systemFontSizeIndex...(SettingsStore.fontSizes.count - 1))
+            .contains(SettingsStore.Defaults.fontSizeIndex))
         XCTAssertTrue(SettingsStore.Defaults.vpsAutoPingRange.contains(SettingsStore.Defaults.vpsAutoPingInterval))   // #470
     }
 }
