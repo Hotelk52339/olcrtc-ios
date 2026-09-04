@@ -3084,6 +3084,11 @@ struct ServersView: View {
             }
             serverStore.update(updated, password: nil)
             // eoc #469
+            // #472: the key just changed on both sides. `ConnectionStore.update`
+            // has already dropped the stale verdict; measure the new one now so
+            // the row answers by itself instead of waiting for the user to press
+            // Verify — the complaint that opened this task.
+            await verifyLinked(host.id)
             // boc #452: sibling protocol containers were restarted with the SAME
             // new key — refresh every matching record so a multi-protocol host
             // stays fully usable after a rotation.
