@@ -269,15 +269,29 @@ struct LogsView: View {
     private var currentEntries: [LogEntry] {
         if selection == .containerLogs {
             guard let host = selectedHost else { return [] }
-            return store.containerEntries[host.logFilePrefix] ?? []
+            // #476 was: `store.containerEntries[host.logFilePrefix]` — the host's
+            // single buffer, shown whichever protocol the picker named.
+            return store.containerEntries[selectedContainerKey(host)] ?? []
         }
         return store.entries[selection] ?? []
+    }
+
+    /// #476: the buffer key for the container the picker currently names,
+    /// falling back to the host's primary — the same resolution the fetch uses,
+    /// so what is displayed and what is fetched can never disagree.
+    private func selectedContainerKey(_ host: ServerHost) -> String {
+        let items = containers(of: host)
+        let name = items.first(where: { $0.name == selectedContainerName })?.name
+            ?? items.first?.name
+            ?? host.lastContainerName
+            ?? ""
+        return LogStore.containerKey(prefix: host.logFilePrefix, container: name)
     }
 
     private var currentFileName: String {
         if selection == .containerLogs {
             guard let host = selectedHost else { return "—_container.log" }
-            return "\(host.logFilePrefix)_container.log"
+            return "\(selectedContainerKey(host))_container.log"
         }
         return selection.logFileName
     }
@@ -310,11 +324,21 @@ struct LogsView: View {
                 out.append(.init(title: cat.title, file: cat.logFileName, entries: entries))
             }
         }
+        // #476 was: the map was keyed by `logFilePrefix` alone, which no longer
+        // matches a buffer key (`<prefix>__<container>`), so every exported
+        // container section would have fallen back to the raw key. Match on the
+        // prefix the key starts with, and name the protocol the log came from.
         let labels = serverStore.hosts.reduce(into: [String: String]()) { $0[$1.logFilePrefix] = $1.label }
-        for (prefix, entries) in store.containerEntries where !entries.isEmpty {
-            let name = labels[prefix] ?? prefix
+        for (key, entries) in store.containerEntries where !entries.isEmpty {
+            let host = labels.first { key == $0.key || key.hasPrefix($0.key + "__") }
+            // Split on the FIRST separator: a host label or a container name may
+            // itself contain an underscore, and taking the last piece would then
+            // print a fragment.
+            let container = key.range(of: "__").map { String(key[$0.upperBound...]) } ?? ""
+            let name = [host?.value ?? key, container.isEmpty ? nil : container]
+                .compactMap { $0 }.joined(separator: " · ")
             out.append(.init(title: "\(name) — \(LogCategory.containerLogs.title)",
-                             file: "\(prefix)_container.log", entries: entries))
+                             file: "\(key)_container.log", entries: entries))
         }
         return out
     }
@@ -380,7 +404,7 @@ struct LogsView: View {
     private var peerCountLabel: some View {
         if selection == .containerLogs,
            let host = selectedHost,
-           let peers = store.peerCounts[host.logFilePrefix] {
+           let peers = store.peerCounts[selectedContainerKey(host)] {   // #476
             Text(L10n.logsPeerCount_fmt.formatted(peers))
                 .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .monospacedDigit()

@@ -996,6 +996,10 @@ enum L10n: String, CaseIterable {
     case settingsSectionConnection
     case settingsSectionProxy
     case settingsProxyAddressLabel          // #474: what to type into another app
+    // #475: a check the user asked for, and its answer
+    case updateCheckNowAction
+    case updateUpToDate_fmt                 // %@ = the version being run
+    case updateCheckFailed
 
     // #470: strings the review-batch fixes reference
     case protocolRecreateAction             // row menu: re-create a protocol whose container is gone

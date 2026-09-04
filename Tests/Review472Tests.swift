@@ -94,3 +94,36 @@ final class Review472Tests: XCTestCase {
                       "renaming measures nothing — the verdict still stands")
     }
 }
+
+// #476: container logs are keyed by the container, not by the host. A host runs
+// one container per protocol, and they all wrote into a single per-host buffer —
+// so the Logs picker changed which container was FETCHED but never what was
+// shown, and a sibling protocol's output could not be read at all.
+@MainActor
+final class ContainerLogKeyTests: XCTestCase {
+
+    func testTwoProtocolsOnOneHostGetDifferentBuckets() {
+        let primary = LogStore.containerKey(prefix: "nl", container: "olcrtc-server-abc")
+        let sibling = LogStore.containerKey(prefix: "nl", container: "olcrtc-server-abc-telemost")
+        XCTAssertNotEqual(primary, sibling, "this equality is the bug: one buffer for both")
+    }
+
+    func testTheSameContainerOnTwoHostsStaysApart() {
+        XCTAssertNotEqual(LogStore.containerKey(prefix: "nl", container: "olcrtc-server-abc"),
+                          LogStore.containerKey(prefix: "de", container: "olcrtc-server-abc"))
+    }
+
+    func testTheKeyIsUsableAsAFileName() {
+        // It becomes `<key>_container.log`, so nothing in it may be a path
+        // separator or a character the file system argues about.
+        let key = LogStore.containerKey(prefix: "nl", container: "olcrtc/server:abc 1")
+        XCTAssertFalse(key.contains("/"))
+        XCTAssertFalse(key.contains(":"))
+        XCTAssertFalse(key.contains(" "))
+    }
+
+    func testTheKeyIsStable() {
+        XCTAssertEqual(LogStore.containerKey(prefix: "nl", container: "olcrtc-server-abc"),
+                       LogStore.containerKey(prefix: "nl", container: "olcrtc-server-abc"))
+    }
+}

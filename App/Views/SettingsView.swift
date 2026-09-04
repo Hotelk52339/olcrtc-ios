@@ -51,6 +51,11 @@ struct SettingsView: View {
     /// per-server container buffers and the host picker's "primary" star.
     @ObservedObject var serverStore: ServerHostStore
     @ObservedObject var connections: ConnectionStore
+    /// #475: the update checker, so "Check now" and the daily check are the same
+    /// object and cannot disagree about what is available. Declared LAST because
+    /// the memberwise initialiser follows declaration order, and every existing
+    /// call site keeps its argument order.
+    @ObservedObject var updateChecker: UpdateChecker
 
     /// #455: confirm before "Reset all settings" — restores defaults (incl.
     /// tunnel mode → proxy), which unsticks any state that would otherwise
@@ -239,6 +244,10 @@ struct SettingsView: View {
         Section {
             // #360: opt-out of the daily, anonymous GitHub-Releases update check.
             Toggle(L10n.updateCheckLabel.localized(), isOn: $settings.updateCheckEnabled)
+            // #475: the daily check waits 24 h and says nothing when there is
+            // nothing to say. Asking directly is a different act and gets an
+            // answer either way.
+            updateCheckNowRow
         } header: {
             Text(L10n.settingsSectionUpdates.localized())
         } footer: {
@@ -455,6 +464,37 @@ struct SettingsAdvancedView: View {
                 .textSelection(.enabled)
         }
     }
+
+    // boc #475
+    @ViewBuilder
+    private var updateCheckNowRow: some View {
+        Button {
+            Task { await updateChecker.checkNow() }
+        } label: {
+            HStack {
+                Text(L10n.updateCheckNowAction.localized())
+                Spacer()
+                if updateChecker.manual == .checking { ProgressView() }
+            }
+        }
+        .disabled(updateChecker.manual == .checking)
+        updateCheckNowResult
+    }
+
+    /// The answer, when there is one. A newer release opens the update sheet
+    /// instead, so this only ever reports "nothing new" or "could not ask".
+    @ViewBuilder
+    private var updateCheckNowResult: some View {
+        switch updateChecker.manual {
+        case .upToDate(let version):
+            TunnelSettingsNote(text: L10n.updateUpToDate_fmt.formatted(version))
+        case .failed:
+            TunnelSettingsNote(text: L10n.updateCheckFailed.localized())
+        case .idle, .checking:
+            EmptyView()
+        }
+    }
+    // eoc #475
 
     private var portRow: some View {
         HStack {

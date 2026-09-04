@@ -151,7 +151,8 @@ struct MainTabView: View {
             // LogsView(subject: .all) needs; the tunnel-mode picker and the
             // failover toggle moved here from the deleted Config tab.
             SettingsView(tunnel: tunnel, botStore: botStore,
-                         serverStore: serverStore, connections: store)
+                         serverStore: serverStore, connections: store,
+                         updateChecker: updateChecker)   // #475
                 .tabItem { Label(L10n.tabSettings.localized(), systemImage: "gearshape") }
                 .tag(2)
         }

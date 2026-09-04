@@ -505,11 +505,15 @@ final class Provisioner: ObservableObject {
             // their own stamp carry the previous line's date forward
             // (multi-line panics etc.). #295: per-server file/buffer, keyed
             // by the sanitised server-name prefix.
-            let prefix = host.logFilePrefix
+            // #476 was: `host.logFilePrefix` — the host alone, so every protocol
+            // on it appended to one buffer and the Logs picker could not switch.
+            let prefix = LogStore.containerKey(prefix: host.logFilePrefix, container: containerName)
             // #338: session divider with the command + time before the fetched
             // block (replaces the generic "── new session ──", design_handoff §2).
             LogStore.shared.startContainerSession(serverPrefix: prefix,
-                divider: "── podman logs --tail \(tail) · \(Self.fetchStamp.string(from: Date())) ──")
+                // #476: the block says which container it came from — the buffers
+                // are separate now, but an exported file is read out of context.
+                divider: "── podman logs --tail \(tail) \(containerName) · \(Self.fetchStamp.string(from: Date())) ──")
             var carry = Date()
             for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
                 let raw = String(line)
