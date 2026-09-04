@@ -151,7 +151,8 @@ struct MainTabView: View {
             // LogsView(subject: .all) needs; the tunnel-mode picker and the
             // failover toggle moved here from the deleted Config tab.
             SettingsView(tunnel: tunnel, botStore: botStore,
-                         serverStore: serverStore, connections: store)
+                         serverStore: serverStore, connections: store,
+                         updateChecker: updateChecker)   // #475
                 .tabItem { Label(L10n.tabSettings.localized(), systemImage: "gearshape") }
                 .tag(2)
         }
@@ -192,7 +193,12 @@ struct MainTabView: View {
                 // repeatedly costs nothing, and it obeys the user's switch.
                 // #470 was: `if SettingsStore.shared.refreshOnEntry { … }` on
                 // EVERY `.active` — see `sweepOnActivate`.
-                if SettingsStore.shared.refreshOnEntry, sweepOnActivate {
+                // #474: a return to the foreground is what re-arms automatic
+                // checking; between two returns the app checks itself exactly
+                // once, whichever screen asks first.
+                HealthCoordinator.shared.noteForegrounded()
+                if SettingsStore.shared.refreshOnEntry, sweepOnActivate,
+                   HealthCoordinator.shared.claimAutomaticSweep() {
                     sweepOnActivate = false
                     HealthCoordinator.shared.verifyDue(store.connections, using: tunnel)
                 }

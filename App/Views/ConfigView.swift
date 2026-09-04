@@ -30,7 +30,8 @@ import SwiftUI
 // #471 (design pass D): not one cell of that table changed — it moved behind a
 // `DisclosureGroup`. It answers a question asked once, and it was the FIRST
 // thing in Settings, permanently open. The mode section gained the one fact
-// proxy mode is used through: the port (`TunnelSettingsPortRow`, read-only).
+// proxy mode is used through: the address, which lives with the port it
+// belongs to under Settings › Advanced › Proxy (#474).
 
 // MARK: - Mode picker
 
@@ -72,9 +73,10 @@ struct TunnelSettingsModeSection: View {
             // rather than a fact. In VPN mode there is no local listener to
             // point anything at, so the row would be a number that means
             // nothing — it is not drawn.
-            if settings.tunnelMode == .proxy {
-                TunnelSettingsPortRow()
-            }
+            // #474 was: `TunnelSettingsPortRow()` — a bare number on the first
+            // screen of Settings. What someone pointing another app at the
+            // tunnel needs is the whole address, and that now sits with the port
+            // it belongs to, under Advanced › Proxy.
             // #471 was: `TunnelSettingsComparison()` mounted directly — a 3×2
             // prose table, six cells, permanently the first thing in Settings,
             // explaining a choice that is made once. The table itself is the
@@ -114,31 +116,6 @@ struct TunnelSettingsModeSection: View {
 
 // MARK: - Port summary (#471)
 
-/// #471: the local SOCKS port as a READ-ONLY fact, on the main Settings list,
-/// under the mode picker that decides whether it means anything. Proxy mode
-/// works by pointing another app at `127.0.0.1:<this>`, so the number has to be
-/// legible without hunting; changing it is a different act and lives on
-/// Settings › Advanced › Proxy, next to "Random port" and the availability
-/// check. `.monospacedDigit()` and not a mono face: a port is a measured value,
-/// not an address (`Theme` reserves the mono face for those).
-struct TunnelSettingsPortRow: View {
-    @ObservedObject private var settings = SettingsStore.shared
-
-    /// Explicit (and empty) so the initializer is unambiguously `internal` —
-    /// the stored property is `private` and SettingsView.swift builds this from
-    /// another file.
-    init() {}
-
-    var body: some View {
-        HStack {
-            Text(L10n.settingsPortLabel.localized())
-            Spacer()
-            Text("\(settings.socksPort)")
-                .monospacedDigit()
-                .foregroundStyle(Theme.Palette.textSecondary)
-        }
-    }
-}
 
 // MARK: - When the app opens (#460, was Reliability / auto-failover — #453)
 

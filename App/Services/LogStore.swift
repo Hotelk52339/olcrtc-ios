@@ -426,6 +426,21 @@ final class LogStore: ObservableObject {
         log(category, "# \(Self.appVersionString())")
     }
 
+    // boc #476: a host runs one container per protocol (#452), and every one of
+    // them wrote into the SAME buffer, keyed by the host alone. The Logs screen
+    // then showed that one buffer whatever the picker said, so choosing a
+    // protocol changed which container was FETCHED but never what was displayed:
+    // jitsi and telemost read identically, and the telemost output could not be
+    // seen at all. A log belongs to the container it came from.
+    //
+    // The key is the host's own prefix plus the container, so the file name
+    // stays recognisable and two protocols cannot collide.
+    nonisolated static func containerKey(prefix: String, container: String) -> String {
+        let safe = container.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" }
+        return "\(prefix)__\(String(safe))"
+    }
+    // eoc #476
+
     /// #295: start (or resume) the per-server container-log file for
     /// `serverPrefix` (a sanitised `ServerHost.logFilePrefix`). Each server's
     /// container output accumulates in `<serverPrefix>_container.log`.

@@ -66,7 +66,14 @@ struct TelemostRoomButton: View {
     var body: some View {
         OlcCard {
             VStack(alignment: .leading, spacing: Theme.Metrics.s3) {
-                OlcStatusPill(tone: tone, title: title, subtitle: subtitle)
+                // #473 was: the pill was drawn in every phase, and at `.idle` it
+                // restated the account line the sheet now carries above — the
+                // same fact twice on one short sheet. This pill reports an
+                // OUTCOME; at rest there is none, and the button says what the
+                // press will do.
+                if phase != .idle {
+                    OlcStatusPill(tone: tone, title: title, subtitle: subtitle)
+                }
                 roomLine
                 hazardNote
                 actions
@@ -99,6 +106,8 @@ struct TelemostRoomButton: View {
         case .failed:  return L10n.telemostRoomFailedTitle.localized()
         case .working: return L10n.telemostRoomWorkingTitle.localized()
         case .done:    return L10n.telemostRoomDoneTitle.localized()
+        // #473: unreachable in the view (the pill is hidden at rest); kept so the
+        // switch stays exhaustive and the type keeps describing every phase.
         case .idle:
             return hasAccount ? L10n.telemostRoomIdleTitle.localized()
                               : L10n.telemostRoomNoAccountTitle.localized()
@@ -275,6 +284,7 @@ struct TelemostRoomSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Metrics.s4) {
                 header
+                accountStatus   // #473
                 control
                 accountFooter
             }
@@ -282,6 +292,21 @@ struct TelemostRoomSheet: View {
         }
         .background(Theme.Palette.bg)
     }
+
+    // boc #473: whether an account is linked was only ever stated by the CONTROL's
+    // title — and that title belongs to `phase`, so the moment a room started
+    // being created (or failed) the fact disappeared. It is the one thing this
+    // sheet exists to set up, so it gets its own line that does not move: linked
+    // or not, always, above the button that depends on it.
+    private var accountStatus: some View {
+        OlcStatusPill(
+            tone:     hasAccount ? .ok : .unknown,
+            title:    hasAccount ? L10n.telemostRoomIdleTitle.localized()
+                                 : L10n.telemostRoomNoAccountTitle.localized(),
+            subtitle: hasAccount ? L10n.telemostRoomKeychainNote.localized()
+                                 : L10n.telemostRoomNoAccountBody.localized())
+    }
+    // eoc #473
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.s2) {
@@ -307,13 +332,11 @@ struct TelemostRoomSheet: View {
     @ViewBuilder
     private var accountFooter: some View {
         if hasAccount {
-            VStack(alignment: .leading, spacing: Theme.Metrics.s2) {
-                Text(L10n.telemostRoomKeychainNote.localized())
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.Palette.textTertiary)
-                OlcButton(L10n.telemostRoomForgetAccountAction.localized(),
-                          systemImage: "trash", role: .ghost, action: onForgetAccount)
-            }
+            // #473 was: this also printed `telemostRoomKeychainNote`, which the
+            // account row above now states — the same sentence twice on one
+            // short sheet. The exit door is what belongs down here.
+            OlcButton(L10n.telemostRoomForgetAccountAction.localized(),
+                      systemImage: "trash", role: .ghost, action: onForgetAccount)
         }
     }
 

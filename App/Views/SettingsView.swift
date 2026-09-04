@@ -51,6 +51,11 @@ struct SettingsView: View {
     /// per-server container buffers and the host picker's "primary" star.
     @ObservedObject var serverStore: ServerHostStore
     @ObservedObject var connections: ConnectionStore
+    /// #475: the update checker, so "Check now" and the daily check are the same
+    /// object and cannot disagree about what is available. Declared LAST because
+    /// the memberwise initialiser follows declaration order, and every existing
+    /// call site keeps its argument order.
+    @ObservedObject var updateChecker: UpdateChecker
 
     /// #455: confirm before "Reset all settings" — restores defaults (incl.
     /// tunnel mode → proxy), which unsticks any state that would otherwise
@@ -239,6 +244,10 @@ struct SettingsView: View {
         Section {
             // #360: opt-out of the daily, anonymous GitHub-Releases update check.
             Toggle(L10n.updateCheckLabel.localized(), isOn: $settings.updateCheckEnabled)
+            // #475: the daily check waits 24 h and says nothing when there is
+            // nothing to say. Asking directly is a different act and gets an
+            // answer either way.
+            updateCheckNowRow
         } header: {
             Text(L10n.settingsSectionUpdates.localized())
         } footer: {
@@ -246,6 +255,37 @@ struct SettingsView: View {
             Text(L10n.updateCheckFooter.localized())
         }
     }
+
+    // boc #475
+    @ViewBuilder
+    private var updateCheckNowRow: some View {
+        Button {
+            Task { await updateChecker.checkNow() }
+        } label: {
+            HStack {
+                Text(L10n.updateCheckNowAction.localized())
+                Spacer()
+                if updateChecker.manual == .checking { ProgressView() }
+            }
+        }
+        .disabled(updateChecker.manual == .checking)
+        updateCheckNowResult
+    }
+
+    /// The answer, when there is one. A newer release opens the update sheet
+    /// instead, so this only ever reports "nothing new" or "could not ask".
+    @ViewBuilder
+    private var updateCheckNowResult: some View {
+        switch updateChecker.manual {
+        case .upToDate(let version):
+            TunnelSettingsNote(text: L10n.updateUpToDate_fmt.formatted(version))
+        case .failed:
+            TunnelSettingsNote(text: L10n.updateCheckFailed.localized())
+        case .idle, .checking:
+            EmptyView()
+        }
+    }
+    // eoc #475
 
     // MARK: About (#471 — was `infoSection`)
 
@@ -415,14 +455,15 @@ struct SettingsAdvancedView: View {
     // the same fault as findings 10/11/20, one screen down. Both sentences are
     // notes on their own rows now, and `socksAuthFooter` explains the auth
     // toggle again instead of nothing explaining it.
-    // #471: the header names the thing, not the wire protocol, and the main list
-    // keeps a read-only summary of the port (`TunnelSettingsPortRow`) — someone
-    // pointing OTHER apps at the tunnel needs to READ that number far more often
-    // than to change it.
+    // #471: the header names the thing, not the wire protocol.
+    // #474: and the address someone types into another app lives here, beside
+    // the port it is built from, instead of as a bare number on the first
+    // screen of Settings.
     @ViewBuilder
     private var proxySection: some View {
         Section {
             portRow
+            proxyAddressRow   // #474
             TunnelSettingsNote(text: L10n.socksPortChangeNote.localized())
             // #460 was: the whole check ran inline in this button's action — it
             // is a method now, so one code path answers the question.
@@ -439,6 +480,20 @@ struct SettingsAdvancedView: View {
         // one or tapping "Random port" left "free" / "in use" beside a port
         // nobody had checked — the next connect could then fail with OLC-1026.
         .onChange(of: settings.socksPort) { _, _ in portCheck = nil }
+    }
+
+    // #474: the number alone answers nothing — what goes into another app's
+    // proxy settings is host AND port. Printed as one selectable line so it can
+    // be copied rather than transcribed, and stated for what it is: a local
+    // address that only answers while the tunnel is up in proxy mode.
+    private var proxyAddressRow: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
+            Text(L10n.settingsProxyAddressLabel.localized())
+            Text("127.0.0.1:\(settings.socksPort)")
+                .font(Theme.Typography.mono)
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .textSelection(.enabled)
+        }
     }
 
     private var portRow: some View {
@@ -1057,12 +1112,14 @@ struct BotEditorView: View {
 #if DEBUG
 #Preview("Settings — Dark") {
     SettingsView(tunnel: TunnelManager(), botStore: BotStore(),
-                 serverStore: ServerHostStore(), connections: ConnectionStore())
+                 serverStore: ServerHostStore(), connections: ConnectionStore(),
+                 updateChecker: UpdateChecker())
         .preferredColorScheme(.dark)
 }
 #Preview("Settings — Light") {
     SettingsView(tunnel: TunnelManager(), botStore: BotStore(),
-                 serverStore: ServerHostStore(), connections: ConnectionStore())
+                 serverStore: ServerHostStore(), connections: ConnectionStore(),
+                 updateChecker: UpdateChecker())
         .preferredColorScheme(.light)
 }
 // #471: the Advanced screen is seven sections deep behind a push — previewing

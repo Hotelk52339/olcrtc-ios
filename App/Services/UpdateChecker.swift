@@ -39,6 +39,46 @@ final class UpdateChecker: ObservableObject {
     /// Set when a newer release is found; the App-root `.sheet` observes it.
     @Published var available: Available?
 
+    // boc #475: the automatic check is deliberately silent — it runs once a day
+    // and must never interrupt. A check the USER asks for is the opposite: it
+    // has to say something, including when the answer is "nothing new", because
+    // a button that reports nothing cannot be told from a button that is broken.
+    enum ManualCheck: Equatable {
+        case idle
+        case checking
+        case upToDate(String)   // the version being run
+        case failed
+    }
+    @Published private(set) var manual: ManualCheck = .idle
+
+    /// Checks now, whatever the interval says, and reports the outcome. A newer
+    /// release still arrives through `available`, which raises the same sheet
+    /// the automatic check does — so there is one update flow, not two.
+    func checkNow(settings: SettingsStore = .shared, now: Date = Date()) async {
+        manual = .checking
+        guard let tag = await Self.fetchLatestTag() else {
+            manual = .failed
+            LogStore.shared.log(.connection, "⚠ Update check failed (asked for)")
+            return
+        }
+        settings.lastUpdateCheck = now
+        let current = Self.currentVersion()
+        guard Self.isNewer(latestTag: tag, thanCurrent: current) else {
+            manual = .upToDate(current)
+            LogStore.shared.log(.connection, "✓ Update check: \(current) is the latest")
+            return
+        }
+        let version = Self.normalize(tag)
+        available = Available(
+            version: version,
+            releasePageURL: AppConstants.Update.releasePageURL(tag: tag),
+            sideStoreURL: AppConstants.Update.sideStoreURL(tag: tag),
+            liveContainerURL: AppConstants.Update.liveContainerURL(tag: tag))
+        manual = .idle   // the sheet is the answer
+        LogStore.shared.log(.connection, "⬆ Update available: \(version) (running \(current))")
+    }
+    // eoc #475
+
     // MARK: Config
 
     /// Once per 24h. Stored as a constant (not user-tunable) — the only thing
