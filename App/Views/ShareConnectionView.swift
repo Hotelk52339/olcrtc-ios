@@ -41,7 +41,7 @@ struct ShareConnectionView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.s4) {   // #471: B9 — 16 → s4
                     // #456: what this link grants must be the FIRST thing on
                     // screen, not a conclusion the user draws from the absence of
                     // a warning.
@@ -53,25 +53,34 @@ struct ShareConnectionView: View {
                     connectionOnlyBadge
 
                     Text(L10n.shareConnectionExplanation.localized())
-                        .font(.subheadline)
+                        // #471: B9 — prose is step 3 of the scale.
+                        // #471 was: .font(.subheadline)
+                        .font(Theme.Typography.body)
                         .foregroundStyle(Theme.Palette.textSecondary)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(L10n.shareConnectionURIHeader.localized())
-                            .tracking(0.6)
-                            .font(Theme.Typography.sectionHeader)
-                            .textCase(.uppercase)
-                            .foregroundStyle(Theme.Palette.textSecondary)
+                    // boc #471: B8 — one of the five hand-rolled uppercase labels
+                    // that each used a different (font, tint, tracking) recipe.
+                    // `OlcSectionHeader` is the system's one section-header
+                    // treatment and carries its own bottom gap, so the stack that
+                    // holds it no longer adds a second one.
+                    // #471 was: VStack(spacing: 6) { Text(header).tracking(0.6)
+                    //   .font(Theme.Typography.sectionHeader).textCase(.uppercase)
+                    //   .foregroundStyle(Theme.Palette.textSecondary); OlcCard {…} }
+                    VStack(alignment: .leading, spacing: 0) {
+                        OlcSectionHeader(L10n.shareConnectionURIHeader.localized())
                         OlcCard {
                             Text(uri)
-                                .font(.system(.caption, design: .monospaced))
+                                // #471: the URI is step 6 (addresses / URIs), via
+                                // its token. #471 was: .system(.caption, design: .monospaced)
+                                .font(Theme.Typography.mono)
                                 .foregroundStyle(Theme.Palette.textSecondary)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+                    // eoc #471
 
-                    VStack(spacing: 8) {
+                    VStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
                         OlcButton(L10n.copyURIAction.localized(), systemImage: "doc.on.doc",
                                   role: .secondary, fillWidth: true) {
                             UIPasteboard.general.string = uri
@@ -93,7 +102,9 @@ struct ShareConnectionView: View {
                         NavigationLink {
                             QRCodeView(uri: uri)
                                 .padding(32)
-                                .navigationTitle(conn.displayName)
+                                // #470: service first, like every other surface
+                                // (#461) — the record label repeats the server.
+                                .navigationTitle(ConnectionNaming.service(conn.details))
                                 .navigationBarTitleDisplayMode(.inline)
                         } label: {
                             Label(L10n.actionQR.localized(), systemImage: "qrcode")
@@ -112,7 +123,7 @@ struct ShareConnectionView: View {
                         fullAccessSection(fa)
                     }
                 }
-                .padding(16)
+                .padding(Theme.Metrics.s4)   // #471: B9 — 16 → s4
             }
             .navigationTitle(L10n.shareConnectionTitle.localized())
             .navigationBarTitleDisplayMode(.inline)
@@ -141,15 +152,16 @@ struct ShareConnectionView: View {
         // a safety claim the screen itself contradicts further down.
         if fullAccess == nil {
         OlcCard {
-            HStack(spacing: 8) {
+            HStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
                 Image(systemName: "lock.shield")
                     .foregroundStyle(Theme.Palette.green)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471: 2 → s1
                     Text(L10n.shareConnectionOnlyBadge.localized())
                         .font(Theme.Typography.statusTitle)
                         .foregroundStyle(Theme.Palette.textPrimary)
                     Text(L10n.shareConnectionOnlySub.localized())
-                        .font(.caption)
+                        // #471: B9 — step 5 through its token. was: .font(.caption)
+                        .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.Palette.textSecondary)
                 }
             }
@@ -165,24 +177,25 @@ struct ShareConnectionView: View {
     /// Copy / Share actions. The secret is never logged — only the action is.
     @ViewBuilder
     private func fullAccessSection(_ fa: FullAccessShare) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider().overlay(Theme.Palette.separator).padding(.vertical, 4)
+        // boc #471: B8 + B9 — the sheet's second hand-rolled uppercase label
+        // goes through `OlcSectionHeader` too, and the stack lands on the grid.
+        // #471 was: spacing: 6 + Text(header).tracking(0.6).font(sectionHeader)
+        //   .textCase(.uppercase).foregroundStyle(Theme.Palette.textSecondary)
+        VStack(alignment: .leading, spacing: Theme.Metrics.s2) {
+            Divider().overlay(Theme.Palette.separator).padding(.vertical, Theme.Metrics.s1)
 
-            Text(L10n.shareFullAccessHeader.localized())
-                .tracking(0.6)
-                .font(Theme.Typography.sectionHeader)
-                .textCase(.uppercase)
-                .foregroundStyle(Theme.Palette.textSecondary)
+            OlcSectionHeader(L10n.shareFullAccessHeader.localized())
 
             // Destructive-style warning — always visible, even before reveal.
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: Theme.Metrics.s2) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Theme.Palette.red)
                 Text(L10n.shareFullAccessWarning.localized())
-                    .font(.subheadline)
+                    // #471: prose is step 3. was: .font(.subheadline)
+                    .font(Theme.Typography.body)
                     .foregroundStyle(Theme.Palette.textSecondary)
             }
-            .padding(12)
+            .padding(Theme.Metrics.s3)   // #471: B9 — 12 → s3
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.Palette.redWeak,
                         in: RoundedRectangle(cornerRadius: Theme.Metrics.controlRadius, style: .continuous))
@@ -195,14 +208,16 @@ struct ShareConnectionView: View {
             } else if let link = fa.encoded() {
                 OlcCard {
                     Text(link)
-                        .font(.system(.caption, design: .monospaced))
+                        // #471: step 6 (the link is an address). #471 was:
+                        // .font(.system(.caption, design: .monospaced))
+                        .font(Theme.Typography.mono)
                         .foregroundStyle(Theme.Palette.textSecondary)
                         .textSelection(.enabled)
                         .lineLimit(3)
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                VStack(spacing: 8) {
+                VStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
                     OlcButton(L10n.shareFullAccessCopy.localized(), systemImage: "doc.on.doc",
                               role: .danger, fillWidth: true) {
                         UIPasteboard.general.string = link
@@ -223,5 +238,6 @@ struct ShareConnectionView: View {
                 }
             }
         }
+        // eoc #471
     }
 }

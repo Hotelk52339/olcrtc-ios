@@ -51,6 +51,12 @@ struct ServersView: View {
     // #452 was: reconfigureFor : ServerHost? — now a targeted request (container
     // + record + seed values), so a protocol row reconfigures ITS container.
     @State private var reconfigureRequest : ReconfigureRequest?
+    /// #470: what the LAST reconfigure on each host targeted. `HostDisplay.failed`
+    /// carries the op but not the container, so the card's Retry rebuilt the
+    /// PRIMARY's request after a sibling-row failure — the expected outcome of
+    /// renewing the live telemost carrier (#463) — and confirming it restarted
+    /// the wrong container. Retry re-opens THIS request instead.
+    @State private var lastReconfigure    : [UUID: ReconfigureRequest] = [:]
     @State private var botConfigFor   : ServerHost?   // #419: per-server bot sheet
     // #339 was: logsPayload (ContainerLogsPayload?) — the container-logs sheet
     // is gone; the action routes to the Logs tab instead.
@@ -125,6 +131,14 @@ struct ServersView: View {
     // outside-`run` protocol ops (add/remove/sibling start/stop), mirroring
     // how rotateKey/recoverConnection run without a HostOp.
     @State private var carrierRows          : [UUID: [SSHRunner.CarrierInfo]] = [:]
+    // boc #470: the row list's own clocks. `carrierListInFlight` is the hosts
+    // whose `listCarriers` is running right now — the card's lazy first load
+    // and the on-entry pass both fired it on first entry, two SSH logins racing
+    // for `carrierRows`. `carrierRowsAt` is when each host's rows were last
+    // actually READ, so the entry pass can skip a listing the card just made.
+    @State private var carrierListInFlight  : Set<UUID> = []
+    @State private var carrierRowsAt        : [UUID: Date] = [:]
+    // eoc #470
     @State private var addProtocolFor       : ServerHost?
     @State private var removeCarrierConfirm : CarrierRemoveRequest?
     @State private var recoverRowRequest    : CarrierRecoverRequest?
@@ -140,6 +154,16 @@ struct ServersView: View {
     // rather than observed so this file depends on no observability contract.
     @State private var telemostRenew        : TelemostRenewRequest?
     @State private var telemostPhase        : TelemostRoomPhase = .idle
+    /// #470: WHICH row's renewal `telemostPhase` describes (its container id).
+    /// The premise above — one renewal in flight, so one phase — held only
+    /// while the SSH lane was busy; the room-creation half runs before any SSH
+    /// op starts, and the sheet can be dismissed at any time. Opening another
+    /// telemost row then reset the phase the running renewal kept writing, and
+    /// its `.done(room)` landed in whichever sheet was open. A sheet now reads
+    /// the phase only when it is about its own row, and `renewTelemostRoom`
+    /// holds `carrierBusyHostID` for its whole duration, so a second renewal
+    /// cannot start beside it.
+    @State private var telemostPhaseOwner   : String?
     @State private var telemostAccount      = false
     // eoc #463
     // #374 was: pingTimer (Timer?) — a repeating Timer that re-pinged EVERY
@@ -183,8 +207,18 @@ struct ServersView: View {
                 ForEach(serverStore.hosts) { host in
                     hostCard(host)
                 }
-                .onDelete { serverStore.remove(at: $0) }
-                listFooter
+                // #470 was: `.onDelete { serverStore.remove(at: $0) }` — a
+                // swipe deleted the host AND its Keychain SSH password / private
+                // key on the spot, while the same verb on the Manage screen asks
+                // first. Both paths now end in `hostConfirmations`' dialog.
+                .onDelete { offsets in
+                    removeHost = offsets.first.flatMap {
+                        serverStore.hosts.indices.contains($0) ? serverStore.hosts[$0] : nil
+                    }
+                }
+                // #471 was: `listFooter` — a FOURTH age ("checked 2 min ago"),
+                // centred under the last card, restating the oldest of the ages
+                // each card already prints beside its own claim.
             }
         }
     }
@@ -288,35 +322,30 @@ struct ServersView: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(.visible, for: .tabBar)
             .contentMargins(.bottom, Theme.Metrics.s6, for: .scrollContent)
+            // #471: the token grid used to stop at the card edge. Inside a card
+            // blocks are 20pt apart; between cards the gap was `olcCardRow`'s
+            // 8 + 8 PLUS the List's ~35pt default section spacing — ≈51pt
+            // outside against 20 inside, a 2.5x ratio, which is exactly why the
+            // screen read "half empty" while each card read "a dense slab".
+            // 8 + 16 + 8 = 32 = `s7`, "screen-level separation", and 1.6x the
+            // in-card block gap. Here rather than in `listChrome`, which
+            // already carries eight modifiers (this file has blown the
+            // type-checker's budget three times).
+            .listSectionSpacing(Theme.Metrics.s4)
     }
     // eoc #461
 
-    /// #459: the one fact worth the space under the last card — how old the
-    /// oldest server reading on screen is. No instruction and no "pull to
-    /// refresh" caption: the gesture is standard, and a line telling the user to
-    /// perform a standard gesture is exactly the kind of word this pass removes.
-    /// Absent entirely when nothing has ever been read.
-    @ViewBuilder
-    private var listFooter: some View {
-        if let oldest = oldestReadDate {
-            Section {
-                Text(L10n.healthCheckedAgo_fmt.formatted(
-                        HealthAge.phrase(Date().timeIntervalSince(oldest))))
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.Palette.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
-        }
-    }
-
-    /// #459: the oldest REAL reading among the hosts on screen (`lastProbeOK`,
-    /// never the attempt clock). nil ⇒ no host has ever answered, so the footer
-    /// says nothing rather than dating a guess.
-    private var oldestReadDate: Date? {
-        serverStore.hosts.compactMap { lastProbeOK[$0.id] }.min()
-    }
+    // boc #471 was: `listFooter` + `oldestReadDate` — "checked 2 min ago",
+    // centred under the last card.
+    //
+    // #459 called it "the one fact worth the space under the last card". It is
+    // the fourth place that fact was written: the status pill dates its own
+    // claim, every protocol chip carries its own age, and `readStamp` (also
+    // deleted) said it a third time 8pt under the pill. An age that qualifies
+    // NOTHING in particular — the oldest reading among all hosts on screen —
+    // cannot be acted on; an age beside the claim it dates can. Each card dates
+    // itself now (`HostHeadline.reduce`), so the footer has nothing left to add.
+    // eoc #471
 
     // #457 (audit fix): ServersView.coreStack carried 21 chained modifiers in a
     // single expression and CI failed with "unable to type-check this expression
@@ -412,7 +441,7 @@ struct ServersView: View {
                 Text(alertText ?? "")
             }
             .confirmationDialog(
-                removeHost.map { L10n.removeHostConfirmTitle.formatted($0.label) } ?? "",
+                removeHost.map { L10n.removeHostConfirmTitle_fmt.formatted($0.label) } ?? "",
                 isPresented: Binding(
                     get: { removeHost != nil },
                     set: { if !$0 { removeHost = nil } }
@@ -708,10 +737,47 @@ struct ServersView: View {
         // probe threw, so a failed auto-check made an hours-old base read as a
         // present-tense reading and skipped the honest `.notChecked` headline.
         let age = lastProbeOK[host.id].map { Date().timeIntervalSince($0) }
+        let tally = verifiedTally(host)   // #471
         return HostHeadline.reduce(display: state, reachable: reachable,
                                    lastProbeAge: age, health: hostHealth(host),
-                                   probeError: lastProbeError[host.id])   // #469
+                                   probeError: lastProbeError[host.id],   // #469
+                                   verified: tally.verified,              // #471
+                                   total: tally.total,
+                                   verifiedAge: tally.age)
     }
+
+    // boc #471: the tally that replaces `failureBanner`.
+    //
+    // NOT `health.failingCount` minus anything: that helper deliberately does
+    // not count `.inconclusive` / `.never` as failures ("couldn't check" is not
+    // a verdict), so `total - failing` would report an unchecked protocol as
+    // verified — fake green, in the one number the pill now leads with. This
+    // counts only `.isVerified`, which is the single place in the app green is
+    // granted (App/Models/NodeHealth.swift).
+    //
+    // The age is the OLDEST of those verified readings, so "2 of 2 protocols
+    // verified 2 min ago" is true of every one of them rather than of the
+    // luckiest. nil when nothing is verified — there is no age to date a
+    // verification that did not happen, and `HostHeadline.subtitle` falls back
+    // to the health vocabulary's own dated sentence.
+    //
+    // The denominator is the larger of "records we can measure" and "rows drawn
+    // below", for #470's reason: a container with no saved record still draws a
+    // row, and a count that ignored it said "1 of 2" above three rows.
+    private func verifiedTally(_ host: ServerHost) -> (verified: Int, total: Int, age: TimeInterval?) {
+        let ids = hostRecords(host).map(\.id)
+        let now = Date()
+        var verified = 0
+        var oldest: Date?
+        for id in ids where health.display(for: id, now: now).isVerified {
+            verified += 1
+            guard let at = health.health(for: id)?.checkedAt else { continue }
+            if oldest == nil || at < oldest! { oldest = at }
+        }
+        let total = max(ids.count, (carrierRows[host.id] ?? []).count)
+        return (verified, total, oldest.map { now.timeIntervalSince($0) })
+    }
+    // eoc #471
 
     // #459 was: `unverifiedCount(_:)` — the aggregate "N more not checked" that
     // fed the card's sweep note. The note is gone (pull-to-refresh checks
@@ -769,6 +835,10 @@ struct ServersView: View {
     private func run(_ op: HostOp, on host: ServerHost,
                      _ work: @escaping (_ secret: SSHSecret) async throws -> HostBase?) async {
         guard !anyBusy else { return }
+        // #470: claim the host for the whole op so the unattended Telemost
+        // renewal (its own Provisioner) cannot restart a container underneath it.
+        Provisioner.enterHost(host.id)
+        defer { Provisioner.leaveHost(host.id) }
         let prev = currentBase(host)
         display[host.id] = .start(op, from: prev)
 
@@ -782,6 +852,18 @@ struct ServersView: View {
 
         do {
             let resolved = try await work(secret)
+            // boc #470: a base the op returned IS a fresh reading of the server
+            // (every op ends in `probeReadiness`; uninstall's is the script's own
+            // confirmation), yet only `checkServer` stamped the clocks — so after
+            // Start on a never-probed host the button read "Stop server" while
+            // the headline still said "Not checked yet", and with the entry probe
+            // on, the stamp said "read 5 min ago" seconds after the op's probe.
+            if resolved != nil {
+                lastProbe[host.id]      = Date()
+                lastProbeOK[host.id]    = Date()
+                lastProbeError[host.id] = nil
+            }
+            // eoc #470
             // One terminal change — the probe result is authoritative (no optimism);
             // else the op's nominal target; else keep the previous base (e.g. reboot).
             let base = HostDisplay.terminalBase(op: op, probed: resolved, previous: prev)
@@ -812,7 +894,9 @@ struct ServersView: View {
         case .update:        await update(host)
         case .reboot:        await reboot(host)
         case .install:       installFor = host
-        case .reconfigure:   reconfigureRequest = primaryReconfigureRequest(host)   // #452
+        // #470: the request that failed, not the primary's — see `lastReconfigure`.
+        // #470 was: reconfigureRequest = primaryReconfigureRequest(host)   // #452
+        case .reconfigure:   reconfigureRequest = lastReconfigure[host.id] ?? primaryReconfigureRequest(host)
         case .uninstall:     uninstallConfirmHost = host
         case .deepUninstall: deepUninstallConfirmHost = host
         }
@@ -914,8 +998,10 @@ struct ServersView: View {
     // type-checker's expression budget twice already (see `carrierModals`).
     // #459: same rule, one more file — the pushed management screen is
     // App/Views/ServerAdvancedView.swift, and `advancedView(_:)` below is its
-    // glue. `quickActions(_:)` is the card's new button row, resolved the same
     // way: plain values and closures, nothing rendered here.
+    // #471 was: "…`quickActions(_:)` is the card's new button row" — that row
+    // is deleted; `machineLine(_:)` and `verifiedTally(_:)` are the resolvers
+    // this pass adds, and both return plain values too.
     //
     // #457 was: hostCard / hostCardTop / hostCardBottom / statusRegion /
     // processCaption / metricsStrip / pingMiniStat / actionBar / primaryButton /
@@ -928,8 +1014,12 @@ struct ServersView: View {
                 // #452: lazy first load of the protocol rows (skipped while an op
                 // holds the SSH lane; refreshed after every op anyway).
                 .onAppear {
+                    // #470: not while the on-entry pass is reading this host (it
+                    // lists the rows itself) and not on top of a listing already
+                    // in flight — the two used to race on first entry.
                     guard carrierRows[host.id] == nil, host.lastContainerName != nil,
-                          !actionsDisabled else { return }
+                          !actionsDisabled, !entryRefreshing,
+                          !carrierListInFlight.contains(host.id) else { return }
                     Task { await refreshCarriers(host.id) }
                 }
                 .olcCardRow()
@@ -941,10 +1031,11 @@ struct ServersView: View {
     /// a memberwise init, and getting it wrong is a compile error.
     private func serverCard(_ host: ServerHost) -> ServerCardView {
         let state  = displayState(host)
-        // #457 (requirement 2): the count the headline is allowed to be
-        // optimistic about. `summary` reports the BEST evidence, so without this
-        // a host with one working and one dead protocol reads as simply fine.
-        let counts = health.failingCount(for: hostRecords(host).map(\.id))
+        // #471 was: `let counts = health.failingCount(...)` feeding
+        // `failingCount:` / `protocolCount:` — the card's deleted failure
+        // banner. The same question is answered by `verifiedTally`, inside the
+        // headline, so the card gets one claim instead of a claim plus a
+        // contradiction of it.
         // A protocol-level op holds the SSH lane just like a HostOp does, so it
         // locks the host's actions too (they would collide on one connection).
         let locked = actionsDisabled || carrierBusyHostID != nil
@@ -953,59 +1044,40 @@ struct ServersView: View {
             addressLine:     addressLine(host),
             headline:        headline(host, state: state),
             progress:        statusBarFraction(state),
-            readCaption:     readCaptionText(host),        // #459
-            failingCount:    counts.failing,
-            protocolCount:   counts.total,
-            metrics:         metrics(host),
+            machineLine:     machineLine(host),            // #471
             rows:            carrierRows[host.id] ?? [],
             rowsBusy:        carrierBusyHostID == host.id,
             canAddProtocol:  !missingCarriers(host).isEmpty,
             actionsDisabled: locked,
             primary:         primaryAction(state),
-            quickActions:    quickActions(host),           // #459
+            canOpenLogs:     hasContainer(host),           // #471 was: quickActions(host)
             menuItems:       menuItems(host),
             onPrimary:       { runPrimary(host, state: state) },
             onAddProtocol:   { addProtocolFor = host },
+            onLogs:          { logsForHost = host },       // #471
             onManage:        { advancedForHost = AdvancedHostRoute(host: host) },   // #459
             row:             { rowView(host, row: $0) })
     }
 
-    // boc #459: the verbs the owner reaches for constantly, lifted out of a
-    // thirteen-item ⋯ menu and onto the card.
+    // boc #471 was: `quickActions(_:)` — the card's one visible quick-action
+    // button ("Container logs"), gated on `hasContainer`.
     //
-    // Gated on `hasContainer`: before anything is installed the card's whole
-    // offer is its primary CTA, and Logs would be reading an empty server. That
-    // gate is also what stops the row from ever duplicating the primary
-    // button — `primary == .check` happens only on `HostBase.unknown`, which is
-    // not `hasContainer`, so the row is absent exactly then.
+    // #459 lifted it out of a thirteen-item ⋯ menu and #461 cut it from two
+    // buttons to one; this pass takes the last of it off the card's action
+    // stack. Nothing is removed from the app: the same verb, the same gate and
+    // the same destination (`logsForHost`) are a text link in the card's
+    // `manageRow` now, beside "Manage ›". What that buys is the hierarchy — a
+    // card that ended in a grey full-width button above a red full-width button
+    // above a hairline above a tiny grey link ends in ONE filled button and one
+    // row of two links, and the loudest thing on it is the action it is
+    // actually offering.
     //
-    // boc #461: ONE verb, not two. **Check server** did nothing that the
-    // pull-to-refresh gesture on this list does not already do: per host,
-    // `silentProbe` runs the same `doPing` + the same readiness probe, writes
-    // the same stats, the same base and the same `lastProbeOK` stamp — and the
-    // pull additionally does it for EVERY host and then forces
-    // `health.verifyAll`. Two controls, one job; the owner's word for the pair
-    // was "illogical". The ONE thing the button did that the pull did not — the
-    // #302 container auto-detect/adopt — is now `adoptOrphanContainer`, which
-    // BOTH paths call, so deleting the button costs nothing.
-    // #461 was: this array led with
-    //     ServerQuickAction(title: L10n.vpsCheckServer.localized(),
-    //                       systemImage: "antenna.radiowaves.left.and.right") {
-    //         Task { await checkServer(host) }
-    //     },
-    // `checkServer` itself STAYS: `ServerPrimaryAction.check` is still the only
-    // CTA a never-checked host (`HostBase.unknown`) gets, and such a host has no
-    // container, so it never has a quick-action row to reach it from either.
-    private func quickActions(_ host: ServerHost) -> [ServerQuickAction] {
-        guard hasContainer(host) else { return [] }
-        return [
-            ServerQuickAction(title: L10n.actionContainerLogs.localized(),
-                              systemImage: "arrow.down.doc") {
-                logsForHost = host
-            }
-        ]
-    }
-    // eoc #461
+    // The gate is `canOpenLogs: hasContainer(host)` in `serverCard`, verbatim
+    // what this function guarded on, so a never-installed server still shows
+    // nothing but its primary CTA — and `primary == .check` (the only case that
+    // could duplicate a Logs verb) still happens exactly on `HostBase.unknown`,
+    // which has no container.
+    // eoc #471
 
     /// #459: resolves one host into `ServerAdvancedView`'s inputs. Every row
     /// keeps the exact state it always set, so each destructive verb still ends
@@ -1014,7 +1086,10 @@ struct ServersView: View {
         ServerAdvancedView(
             hostLabel:           host.label,
             isKeyAuth:           host.authMethod == .privateKey,
-            hasRecoverOption:    hasContainer(host) && host.lastConnectionID == nil,
+            // #470 was: `host.lastConnectionID == nil` — a link pointing at a
+            // record the user has since deleted is not a link, but it hid the one
+            // action that could restore the connection.
+            hasRecoverOption:    hasContainer(host) && linkedConnection(host) == nil,
             hasLinkedConnection: linkedConnection(host) != nil,
             hasContainer:        hasContainer(host),
             canDeepUninstall:    currentBase(host) != .noPodman,
@@ -1027,7 +1102,15 @@ struct ServersView: View {
             onReboot:            { rebootConfirmHost = host },
             onUninstall:         { uninstallConfirmHost = host },
             onDeepUninstall:     { deepUninstallConfirmHost = host },
-            onRemoveHost:        { removeHost = host })
+            onRemoveHost:        { removeHost = host },
+            // boc #471: the Machine section — what the card stopped drawing.
+            // `readCaptionText` is unchanged and still the ONLY caller of
+            // `vpsReadAge_fmt`; it dates NUMBERS here instead of dating a claim
+            // the status pill now dates itself.
+            addressLine:         addressLine(host),
+            machine:             machineStats(host),
+            readCaption:         readCaptionText(host))
+            // eoc #471
     }
 
     /// #451: a key-auth host can't produce a full-access link (it would have to
@@ -1072,7 +1155,11 @@ struct ServersView: View {
         ProtocolRowView(
             title:             CarrierTransportMatrix.carrierLabel(row.provider),
             transport:         CarrierTransportMatrix.transportLabel(row.transport),
-            isPrimary:         row.isPrimary,
+            // #471 was: `isPrimary: row.isPrimary` — the row printed a
+            // `primary` tag for it. Which container anchors the deploy dir is
+            // an internal concept; `SSHRunner.CarrierInfo.isPrimary` still
+            // drives the things it actually governs (remove-sibling guards,
+            // rotate-key, the carrier list).
             isLive:            isLiveRow(row),
             isRunningOnServer: Self.isUp(row.status),
             health:            rowHealth(host, row: row),
@@ -1141,6 +1228,13 @@ struct ServersView: View {
 
     // MARK: The read stamp
     //
+    // #471: still built here, drawn one screen away — it is the footer of the
+    // Manage screen's Machine section (App/Views/ServerAdvancedView.swift),
+    // where it dates the four readings above it. On the CARD the age is folded
+    // into the status pill's own subtitle by `HostHeadline.reduce`, because an
+    // age belongs beside the claim it dates and the card's claim is the pill.
+    // #471 was: `ServerCardView.readStamp`, a second line under that pill.
+    //
     // boc #459: what is LEFT of the process caption — its age, and only its age.
     //
     // #459 was: `processCaptionText` + `processWord(_:)` → "Server process is
@@ -1177,9 +1271,12 @@ struct ServersView: View {
     // so the card draws them below the protocol rows. The formatting statics stay
     // on this type — `VPSStatFormattingTests` pins them by name.
 
-    private func metrics(_ host: ServerHost) -> ServerCardMetrics {
+    /// #471 was: `metrics(_:) -> ServerCardMetrics`, feeding the card's 2x2
+    /// grid. Same readings, same formatters, one screen further in: the Manage
+    /// screen's Machine section.
+    private func machineStats(_ host: ServerHost) -> ServerMachineStats {
         let stats = vpsStats[host.id]
-        return ServerCardMetrics(
+        return ServerMachineStats(
             ping:     pingValue(host),
             pingTone: pingTone(host),
             // #346: labels through L10n (ru = en for the abbreviations); units
@@ -1191,9 +1288,33 @@ struct ServersView: View {
             uptime:   Self.shortUptime(stats?.uptime))
     }
 
+    // boc #471: the machine, as ONE caption under the card's address line.
+    //
+    // Three readings, not four: PING leaves the card entirely. It is a TCP-22
+    // round-trip to the SSH port, printed in the same `ms` unit as the verified
+    // end-to-end latency on the protocol row directly below it and routinely
+    // disagreeing with it — two latencies on one screen, the disease the
+    // Connect tab documents having cured. Whether the host answers at all is
+    // already the pill's `.unreachable` state, and the number itself survives
+    // on the Manage screen.
+    //
+    // "" when nothing has been read: a line of three em-dashes is noise, not
+    // honesty, and the pill above it already says the host has not answered.
+    private func machineLine(_ host: ServerHost) -> String {
+        guard let stats = vpsStats[host.id] else { return "" }
+        return L10n.vpsMachineLine_fmt.formatted(Self.shortUsage(stats.disk),
+                                                 Self.shortRAM(stats.ram),
+                                                 Self.shortUptime(stats.uptime))
+    }
+    // eoc #471
+
     private func pingValue(_ host: ServerHost) -> String {
         switch pingLatencies[host.id] {
-        case .some(.some(let ms)): return String(format: "%.0fms", ms)
+        // #470 was: `String(format: "%.0fms", ms)` — the one unit on this card
+        // that has a localized form («мс»), rendered in English under a
+        // Russian «Ping». The health chips already use this key for the same
+        // value; the G/M/d suffixes in the other stats stay as #346 decided.
+        case .some(.some(let ms)): return L10n.healthLatencyMs_fmt.formatted(Int(ms.rounded()))
         case .some(.none):         return "✕"
         case .none:                return "—"
         }
@@ -1260,10 +1381,12 @@ struct ServersView: View {
     // sat below Stop and above Update with nothing to tell them apart.
     //
     // Where the other eight went, and why NOTHING was removed from the app:
-    //   Container logs               → a visible button (`quickActions`)
-    //                                  (#461 was: "Check server, Container logs"
-    //                                  — Check server duplicated pull-to-refresh
-    //                                  and is gone; see `quickActions`)
+    //   Container logs               → a text link on the card, beside
+    //                                  "Manage ›" (#471 was: a visible
+    //                                  full-width button, `quickActions`; #461
+    //                                  was: "Check server, Container logs" —
+    //                                  Check server duplicated pull-to-refresh
+    //                                  and is gone)
     //   Start / Stop / Install       → the card's primary button ALREADY offered
     //                                  exactly these, keyed off the same base;
     //                                  they were a literal duplicate
@@ -1342,7 +1465,27 @@ struct ServersView: View {
     /// #456: how stale a host's SSH probe must be before entering the tab re-runs it.
     private static let entryProbeStaleSeconds: TimeInterval = 120
 
+    /// #470: a connection removed from the Connections tab leaves its id behind
+    /// in the host that linked it. The id resolves to nothing, so every slot
+    /// lookup misses and the card keeps offering actions for a record that is
+    /// gone. Drop the dangling links whenever this tab opens.
+    private func pruneDanglingLinks() {
+        for host in serverStore.hosts {
+            var fixed = host
+            if let id = host.lastConnectionID,
+               !connections.connections.contains(where: { $0.id == id }) {
+                fixed.lastConnectionID = nil
+            }
+            if let extras = host.extraConnectionIDs {
+                let live = extras.filter { id in connections.connections.contains { $0.id == id } }
+                fixed.extraConnectionIDs = live.isEmpty ? nil : live
+            }
+            if fixed != host { serverStore.update(fixed, password: nil) }
+        }
+    }
+
     private func refreshOnEntry() async {
+        pruneDanglingLinks()   // #470
         // #458: the user's switch. Off ⇒ nothing happens on entry and every
         // reading keeps its honest age until they ask for a check themselves.
         guard SettingsStore.shared.refreshOnEntry else { return }
@@ -1356,6 +1499,14 @@ struct ServersView: View {
         for host in due {
             if Task.isCancelled { return }
             await silentProbe(host)
+            // boc #470: the card's own lazy first load may be landing right now,
+            // or may just have landed — one listing per host per entry, not two
+            // SSH logins racing for `carrierRows`. A pull (`refreshAllHosts`)
+            // is forced and does not skip.
+            if carrierListInFlight.contains(host.id) { continue }
+            if let at = carrierRowsAt[host.id],
+               Date().timeIntervalSince(at) < Self.entryProbeStaleSeconds { continue }
+            // eoc #470
             await refreshCarriers(host.id)
         }
         // Returns immediately: the coordinator serialises the probes, caps the
@@ -1652,13 +1803,29 @@ struct ServersView: View {
             params.wbToken = primary.wbToken
             // #452: with extras every record (primary included) is suffixed by
             // its carrier, so the per-protocol connections stay tellable-apart.
-            let record = ConnectionRecord(
-                name: Self.recordName(host: host, carrier: primary.carrier, multi: !extras.isEmpty),
-                details: .olcrtc(params))
-            connections.add(record)
+            // boc #470: an install over a host that still links records — its
+            // container vanished, or the user chose "Reinstall anyway" — is an
+            // uninstall of everything the host linked (srv.sh force-removes every
+            // olcrtc-server-* first) followed by a fresh install. It used to
+            // `add` beside the old records: the list grew a twin with the same
+            // name, the dead twin stayed the primary, and auto-connect dialled
+            // it. The #467 rule applies — correct the linked record in place,
+            // add only when the slot holds none; an extra the reinstall does not
+            // bring back follows the uninstall rule (`clearInstalledState`).
+            // #470 was:
+            //     let record = ConnectionRecord(name: …, details: .olcrtc(params))
+            //     connections.add(record)
+            //     var updated = host
+            //     updated.lastContainerName = result.containerName
+            //     updated.lastConnectionID  = record.id
             var updated = host
             updated.lastContainerName = result.containerName
-            updated.lastConnectionID  = record.id
+            updated.lastConnectionID  = upsertRecord(
+                id: host.lastConnectionID,
+                name: Self.recordName(host: host, carrier: primary.carrier, multi: !extras.isEmpty),
+                params: params)
+            var spareExtras = host.extraConnectionIDs ?? []
+            // eoc #470
             // boc #452: additional protocols — one add-carrier.sh run each. A
             // per-protocol failure skips just that protocol (collected into one
             // alert) instead of failing the whole install.
@@ -1672,11 +1839,15 @@ struct ServersView: View {
                     let extraCfg = try OlcrtcURI.parse(extraResult.uri)
                     var extraParams = OlcrtcConnection(from: extraCfg)
                     extraParams.wbToken = extra.wbToken
-                    let extraRecord = ConnectionRecord(
+                    // #470: reuse this carrier's previous extra record (see above).
+                    let reuse = spareExtras.first { recordCarrier($0) == extra.carrier }
+                    spareExtras.removeAll { $0 == reuse }
+                    // #470 was: let extraRecord = ConnectionRecord(name: …, details: …)
+                    //           connections.add(extraRecord); extraIDs.append(extraRecord.id)
+                    extraIDs.append(upsertRecord(
+                        id: reuse,
                         name: Self.recordName(host: host, carrier: extra.carrier, multi: true),
-                        details: .olcrtc(extraParams))
-                    connections.add(extraRecord)
-                    extraIDs.append(extraRecord.id)
+                        params: extraParams))
                     LogStore.shared.log(.provisioning,
                         "＋ protocol \(extra.carrier)/\(extra.transport) added → \(extraResult.containerName)")
                 } catch {
@@ -1685,6 +1856,9 @@ struct ServersView: View {
                         "✗ extra protocol \(extra.carrier) failed: \(error.localizedDescription)")
                 }
             }
+            // #470: extras the reinstall did not bring back — their containers
+            // are gone, exactly as after an uninstall.
+            forgetSupersededRecords(spareExtras)
             updated.extraConnectionIDs = extraIDs.isEmpty ? nil : extraIDs
             serverStore.update(updated, password: nil)
             if !failedCarriers.isEmpty {
@@ -1809,6 +1983,14 @@ struct ServersView: View {
         // telemost renewal): is the live tunnel riding the record we are about
         // to reconfigure?
         let wasRiding = recordID != nil && tunnel.connectedRecord?.id == recordID
+        // #470: remember WHAT this run targets, so the card's Retry re-opens the
+        // sheet on the same container with the same values (see `lastReconfigure`).
+        lastReconfigure[host.id] = ReconfigureRequest(
+            host: host, containerName: containerName, recordID: recordID,
+            initialCarrier: options.carrier, initialTransport: options.transport,
+            initialRoom: options.roomID,
+            initialWbToken: options.wbToken.isEmpty ? nil : options.wbToken,
+            initialJitsiBase: options.carrier == "jitsi" ? options.jitsiBaseURL : nil)
         await run(.reconfigure, on: host) { secret in
             let newURI = try await provisioner.reconfigure(on: host, secret: secret,
                                                            containerName: containerName, options: options)
@@ -1926,8 +2108,20 @@ struct ServersView: View {
     // duplicate every time. Match by slot and carrier; use the room only to
     // break ties.
     private func connectionRecord(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> ConnectionRecord? {
+        // #470: the resolution itself is the pure static below, so the #467
+        // order is pinned by `Review470ServersTests` instead of trusted.
+        Self.resolveRecord(host: host, row: row, records: connections.connections)
+    }
+
+    /// #470: the #467 row → record resolution as a pure function. Order:
+    /// own slot exact → own slot by carrier → any linked exact → any linked by
+    /// carrier → an unlinked import, exact only. This is the READ resolver —
+    /// what a row connects and verifies through; the write side is
+    /// `resolveSlotRecord`.
+    static func resolveRecord(host: ServerHost, row: SSHRunner.CarrierInfo,
+                              records: [ConnectionRecord]) -> ConnectionRecord? {
         func record(_ id: UUID) -> ConnectionRecord? {
-            connections.connections.first { $0.id == id }
+            records.first { $0.id == id }
         }
         func carrier(of rec: ConnectionRecord) -> String? {
             if case .olcrtc(let p) = rec.details { return p.carrier }
@@ -1942,20 +2136,53 @@ struct ServersView: View {
         // A host can legitimately hold two rows of the SAME carrier (the primary
         // and a sibling), so resolve inside the row's own slot first — that is
         // what keeps a sibling from claiming the primary's record.
-        let slotIDs: [UUID] = row.isPrimary
-            ? [host.lastConnectionID].compactMap { $0 }
-            : (host.extraConnectionIDs ?? [])
-        let slot = slotIDs.compactMap(record)
-        if let rec = slot.first(where: exact) { return rec }
-        if let rec = slot.first(where: { carrier(of: $0) == row.provider }) { return rec }
+        if let rec = resolveSlotRecord(host: host, isPrimary: row.isPrimary,
+                                       carrier: row.provider, room: row.room,
+                                       records: records) { return rec }
         // Then anything else linked to this host, then an unlinked import.
         let linked = ([host.lastConnectionID].compactMap { $0 } + (host.extraConnectionIDs ?? []))
             .compactMap(record)
         if let rec = linked.first(where: exact) { return rec }
         if let rec = linked.first(where: { carrier(of: $0) == row.provider }) { return rec }
-        return connections.connections.first(where: exact)
+        return records.first(where: exact)
     }
     // eoc #467
+
+    /// #470: the WRITE-side twin of `resolveRecord`, for what destroys or
+    /// re-keys a record: strictly the row's OWN slot (the host's extras for a
+    /// sibling, `lastConnectionID` for the primary) — exact carrier+room first,
+    /// then carrier alone — and nothing beyond it. `resolveRecord`'s wider
+    /// fallbacks exist so a row can still be CONNECTED through a record the
+    /// host merely knows about; handed to Remove protocol they deleted the
+    /// primary's record (same carrier, the sibling's own record gone) and the
+    /// host's link dangled, and handed to the post-rotation refresh they
+    /// rewrote another host's key.
+    static func resolveSlotRecord(host: ServerHost, isPrimary: Bool, carrier: String, room: String,
+                                  records: [ConnectionRecord]) -> ConnectionRecord? {
+        func params(_ rec: ConnectionRecord) -> OlcrtcConnection? {
+            if case .olcrtc(let p) = rec.details { return p }
+            return nil
+        }
+        let slotIDs: [UUID] = isPrimary
+            ? [host.lastConnectionID].compactMap { $0 }
+            : (host.extraConnectionIDs ?? [])
+        let slot = slotIDs.compactMap { id in records.first { $0.id == id } }
+        if let rec = slot.first(where: { rec in
+            guard let p = params(rec) else { return false }
+            return p.carrier == carrier && p.roomID == room
+        }) { return rec }
+        return slot.first(where: { params($0)?.carrier == carrier })
+    }
+
+    /// #470: the row is the container's CURRENT room; a record that resolved by
+    /// carrier alone (the #467 fallback) may still hold the room the server has
+    /// since LEFT — a renewal made elsewhere, another device, a hand edit. The
+    /// verdict under such a row was measured against that old room, and Verify
+    /// would dial it again. An empty row room is an unread yaml, not a drift.
+    static func roomDrifted(_ record: ConnectionRecord?, from row: SSHRunner.CarrierInfo) -> Bool {
+        guard let record, case .olcrtc(let p) = record.details, !row.room.isEmpty else { return false }
+        return p.roomID != row.room
+    }
 
     /// Whether the LIVE tunnel runs through this row's protocol (carrier+room).
     private func isLiveRow(_ row: SSHRunner.CarrierInfo) -> Bool {
@@ -2024,7 +2251,12 @@ struct ServersView: View {
         // assume the protocol already works. Whichever item the verdict points
         // at is hoisted to the top and skipped in its usual position below, so
         // the menu never lists the same action twice.
-        if suggested == .recoverConnection { items.append(recoverItem(host, row: row)) }
+        // #470: …and so must a mismatch the app can see for free — the record's
+        // room is no longer the room the container serves (`roomDrifted`).
+        // Recover is the fix that ends it, so it leads, like a verdict's own fix.
+        let drifted = Self.roomDrifted(connectionRecord(host, row: row), from: row)
+        // #470 was: if suggested == .recoverConnection { items.append(recoverItem(host, row: row)) }
+        if suggested == .recoverConnection || drifted { items.append(recoverItem(host, row: row)) }
         if suggested == .checkRoom         { items.append(reconfigureItem(host, row: row)) }
         // eoc #457
         // #456: Verify comes next — the honest answer to "can I use this?" is one
@@ -2046,6 +2278,18 @@ struct ServersView: View {
                 if row.isPrimary { Task { await stop(host) } }
                 else             { Task { await stopCarrier(host, row: row) } }
             })
+        } else if !row.isPrimary, row.status == .notFound {
+            // boc #470: the yaml is there but its container is not
+            // (`STATUS=missing`, e.g. removed by hand). "Start" here ran
+            // `podman start` on a name that does not exist and could only fail
+            // with a raw podman error — a dead end whose one real exit was
+            // Remove + Add protocol. add-carrier.sh replaces in place (it
+            // `rm -f`s a same-named container and rewrites the yaml), so the
+            // row can be rebuilt from exactly what it still describes.
+            items.append(.action(L10n.protocolRecreateAction.localized(), systemImage: "arrow.clockwise.circle") {
+                Task { await addCarrier(host, options: recreateOptions(host, row: row)) }
+            })
+            // eoc #470
         } else {
             items.append(.action(L10n.protocolStartAction.localized(), systemImage: "play.fill") {
                 if row.isPrimary { Task { await startContainer(host) } }
@@ -2105,12 +2349,25 @@ struct ServersView: View {
         guard let host = serverStore.hosts.first(where: { $0.id == hostID }),
               let cname = host.lastContainerName,
               let secret = secret(for: host) else { return }
+        carrierListInFlight.insert(hostID)            // #470
+        defer { carrierListInFlight.remove(hostID) }  // #470
         do {
             carrierRows[hostID] = try await provisioner.listCarriers(
                 on: host, secret: secret, baseContainer: cname)
+            carrierRowsAt[hostID] = Date()            // #470: the rows' own read clock
         } catch {
             LogStore.shared.log(.provisioning,
                 "⚠ protocol list failed: \(error.localizedDescription)")
+            // boc #470: the previous rows used to stay put — hours-old podman
+            // state per protocol under a read stamp the readiness probe (a
+            // different SSH call) had just refreshed, and with rows on screen
+            // the Scan item that repairs a stale container name never showed.
+            // Nothing is asserted from a listing that did not happen: the card
+            // says the protocols have not been read, and the next appear
+            // re-fetches them (`hostCard`'s lazy load keys on nil).
+            carrierRows[hostID]   = nil
+            carrierRowsAt[hostID] = nil
+            // eoc #470
         }
     }
 
@@ -2131,16 +2388,33 @@ struct ServersView: View {
             // in the URI, carry it from the options (same as install).
             var params = OlcrtcConnection(from: cfg)
             params.wbToken = options.wbToken
-            let record = ConnectionRecord(
+            // boc #470: the #467 rule here too. The extras slot may already hold
+            // this carrier's record — the yaml vanished and "Add protocol" offers
+            // the carrier again, or a `.notFound` row is being re-created — and
+            // `add` grew a second record for one protocol. Correct it in place.
+            // #470 was: let record = ConnectionRecord(name: …, details: .olcrtc(params))
+            //           connections.add(record)
+            //           updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []) + [record.id]
+            let reuse = Self.resolveSlotRecord(host: host, isPrimary: false,
+                                               carrier: options.carrier, room: options.roomID,
+                                               records: connections.connections)
+            let addedID = upsertRecord(
+                id: reuse?.id,
                 name: Self.recordName(host: host, carrier: options.carrier, multi: true),
-                details: .olcrtc(params))
-            connections.add(record)
+                params: params)
             var updated = host
-            updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []) + [record.id]
+            var extraIDs = updated.extraConnectionIDs ?? []
+            if !extraIDs.contains(addedID) { extraIDs.append(addedID) }
+            updated.extraConnectionIDs = extraIDs
+            // eoc #470
             serverStore.update(updated, password: nil)
             LogStore.shared.log(.provisioning,
                 "＋ protocol \(cfg.carrier)/\(cfg.transport) added → \(result.containerName)")
-            alertText = L10n.protocolAdded_fmt.formatted(cfg.carrier, cfg.transport)
+            // #470: the service's name, as the row underneath prints it (#461).
+            // #470 was: .formatted(cfg.carrier, cfg.transport)
+            alertText = L10n.protocolAdded_fmt.formatted(
+                CarrierTransportMatrix.carrierLabel(cfg.carrier),
+                CarrierTransportMatrix.transportLabel(cfg.transport))
             await refreshCarriers(host.id)
             // boc #456: prove the protocol we just added actually carries
             // traffic, and remember the room it used. Fire-and-forget: this
@@ -2148,7 +2422,7 @@ struct ServersView: View {
             // and a ~10 s probe must not keep the row's menus locked — the chip
             // renders `.checking` on its own while the coordinator works.
             rememberRoom(options)
-            let addedID = record.id
+            // #470 was: let addedID = record.id
             Task { await verifyRecord(addedID) }
             // eoc #456
         } catch {
@@ -2174,7 +2448,16 @@ struct ServersView: View {
             try await provisioner.removeCarrier(
                 on: host, secret: secret, baseContainer: cname,
                 container: row.container, configFile: row.file)
-            if let record = connectionRecord(host, row: row) {
+            // #470 was: `connectionRecord(host, row: row)` — the READ resolver,
+            // whose fallbacks reach the primary's record and unlinked imports.
+            // With the sibling's own record gone it deleted the primary's (same
+            // carrier) and left `lastConnectionID` dangling, or dropped a QR
+            // import of the same room. Only a record in the extras slot goes.
+            // `isPrimary: false` unconditionally: the script has just refused
+            // anything that names the primary, so this can only be a sibling.
+            if let record = Self.resolveSlotRecord(host: host, isPrimary: false,
+                                                   carrier: row.provider, room: row.room,
+                                                   records: connections.connections) {
                 connections.remove(id: record.id)
                 var updated = host
                 updated.extraConnectionIDs = (updated.extraConnectionIDs ?? []).filter { $0 != record.id }
@@ -2246,10 +2529,81 @@ struct ServersView: View {
     }
 
     /// #452: connection naming — a multi-protocol install suffixes every record
-    /// with its carrier ("MyVPS · Telemost"); single-protocol keeps the label.
+    /// with its carrier ("MyVPS · telemost"); single-protocol keeps the label.
+    /// #470: the suffix is the RAW carrier id, never its localized label. The
+    /// label was stamped into a persisted name in whichever language was on at
+    /// install time, and `ConnectionNaming.stripCarrierSuffix` recognises the
+    /// id or the CURRENT label only — so a record installed in Russian kept
+    /// «zaza · Яндекс Телемост» under an English hero that already said
+    /// "Yandex Telemost" above it. A persisted token stays locale-stable
+    /// (CLAUDE.md); the service's name is drawn at render time from the id.
+    /// #470 was: multi ? "\(host.label) · \(CarrierTransportMatrix.carrierLabel(carrier))" : host.label
     static func recordName(host: ServerHost, carrier: String, multi: Bool) -> String {
-        multi ? "\(host.label) · \(CarrierTransportMatrix.carrierLabel(carrier))" : host.label
+        multi ? "\(host.label) · \(carrier)" : host.label
     }
+
+    // boc #470: the #467 rule for every path that PRODUCES a connection from the
+    // server — install, reinstall, add protocol, re-create.
+
+    /// When `id` still resolves, correct that record in place (its id is what
+    /// auto-connect, a live tunnel, the health history and the user's name hang
+    /// off) and return it; otherwise add a fresh record and return the new id.
+    /// Params straight from the server never know the LOCAL SOCKS credentials,
+    /// so those ride along from the prior record — the same merge as recover.
+    private func upsertRecord(id: UUID?, name: String, params: OlcrtcConnection) -> UUID {
+        if let id, var found = connections.connections.first(where: { $0.id == id }),
+           case .olcrtc(let prior) = found.details {
+            var merged = params
+            merged.socksUser = prior.socksUser
+            merged.socksPass = prior.socksPass
+            found.details = .olcrtc(merged)
+            connections.update(found)
+            return id
+        }
+        let record = ConnectionRecord(name: name, details: .olcrtc(params))
+        connections.add(record)
+        return record.id
+    }
+
+    /// The carrier a linked record holds, for matching a reinstall's extras to
+    /// the records the host linked before it.
+    private func recordCarrier(_ id: UUID) -> String? {
+        guard let rec = connections.connections.first(where: { $0.id == id }),
+              case .olcrtc(let p) = rec.details else { return nil }
+        return p.carrier
+    }
+
+    /// Records whose containers a reinstall has just destroyed without
+    /// bringing them back — the `clearInstalledState` rule, on that subset.
+    private func forgetSupersededRecords(_ ids: [UUID]) {
+        guard SettingsStore.shared.autoRemoveConnectionOnUninstall else { return }
+        for id in ids {
+            guard let conn = connections.connections.first(where: { $0.id == id }) else { continue }
+            connections.remove(id: id)
+            LogStore.shared.log(.provisioning, "Connection «\(conn.displayName)» also removed from list.")
+        }
+    }
+
+    /// The add-carrier.sh options that rebuild a sibling whose container is
+    /// gone, from the row the yaml still describes — plus what the yaml row does
+    /// not carry (the wbstream token, the sei tuning), read from the record in
+    /// the extras slot. A jitsi row's room is the full URL, which the script
+    /// keeps verbatim, so the base URL never matters here.
+    private func recreateOptions(_ host: ServerHost, row: SSHRunner.CarrierInfo) -> InstallOptions {
+        var options = InstallOptions(carrier: row.provider, transport: row.transport, roomID: row.room)
+        if let rec = Self.resolveSlotRecord(host: host, isPrimary: false,
+                                            carrier: row.provider, room: row.room,
+                                            records: connections.connections),
+           case .olcrtc(let p) = rec.details {
+            options.wbToken  = p.wbToken
+            options.seiFPS   = p.seiFPS
+            options.seiBatch = p.seiBatch
+            options.seiFrag  = p.seiFrag
+            options.seiACK   = p.seiACK
+        }
+        return options
+    }
+    // eoc #470
 
     /// Primary reconfigure entry (action bar / host menu / retry): targets the
     /// primary container, seeded from its row when the rows are loaded.
@@ -2328,10 +2682,22 @@ struct ServersView: View {
     // path never had to face: renewing the carrier you are standing on.
 
     private func beginTelemostRenew(_ host: ServerHost, row: SSHRunner.CarrierInfo) {
-        telemostPhase   = .idle
+        // #470 was: `telemostPhase = .idle` unconditionally — see
+        // `telemostPhaseOwner`. A renewal still running keeps its phase (and
+        // re-opening ITS row shows it); any other row starts idle.
+        if !telemostWorking {
+            telemostPhase      = .idle
+            telemostPhaseOwner = row.container
+        }
         telemostAccount = YandexSessionStore.hasStoredSession()
         telemostRenew   = TelemostRenewRequest(host: host, row: row,
                                                recordID: connectionRecord(host, row: row)?.id)
+    }
+
+    /// #470: a renewal is between Create and its outcome.
+    private var telemostWorking: Bool {
+        if case .working = telemostPhase { return true }
+        return false
     }
 
     /// Resolves the request into the sheet's inputs. Concrete return type, plain
@@ -2341,7 +2707,10 @@ struct ServersView: View {
         TelemostRoomSheet(
             serverLabel:     req.host.label,
             hasAccount:      telemostAccount,
-            phase:           telemostPhase,
+            // #470: only this row's own phase — another row's outcome is not
+            // this sheet's to show.
+            // #470 was: phase: telemostPhase,
+            phase:           telemostPhaseOwner == req.id ? telemostPhase : .idle,
             hazard:          telemostHazard(req),
             busy:            actionsDisabled || carrierBusyHostID != nil,
             onSignedIn:      { adoptYandexSession($0) },
@@ -2387,6 +2756,16 @@ struct ServersView: View {
 
     private func renewTelemostRoom(_ req: TelemostRenewRequest) async {
         guard !actionsDisabled, carrierBusyHostID == nil else { return }
+        // boc #470: hold the protocol-op lane for the WHOLE renewal, the
+        // room-creation half included. That half ran with nothing locked, so a
+        // second Create (another row, or this one re-opened) passed the guard
+        // above, and the two flows then wrote one phase in turns — and the
+        // later `reconfigure` was refused by `run` while its caller still
+        // reported "Room replaced". Same serialisation as add/remove protocol.
+        carrierBusyHostID = req.host.id
+        defer { carrierBusyHostID = nil }
+        telemostPhaseOwner = req.id
+        // eoc #470
 
         telemostPhase = .working(L10n.telemostRoomWorkingCreate.localized())
         // #463 (audit) was: `let room: String` — `createRoom()` returns a
@@ -2559,6 +2938,7 @@ struct ServersView: View {
                 clientID:     "default",
                 vp8FPS:       cfg.vp8FPS,
                 vp8BatchSize: cfg.vp8BatchSize,
+                wbToken:      cfg.wbToken,      // #470: the server's own auth.token, if any
                 seiFPS:       cfg.seiFPS   ?? 30,
                 seiBatch:     cfg.seiBatch ?? 10,
                 seiFrag:      cfg.seiFrag  ?? 1200,
@@ -2583,6 +2963,7 @@ struct ServersView: View {
                     if case .olcrtc(let p) = rec.details { return p.carrier == cfg.carrier }
                     return false
                 }
+            let recoveredID: UUID   // #470: the record to re-measure below
             if var found = existing {
                 // #469: `params` comes from the server's yaml, which knows nothing
                 // about the local SOCKS credentials, the WB token the record
@@ -2594,11 +2975,14 @@ struct ServersView: View {
                 if case .olcrtc(let prior) = found.details {
                     merged.socksUser     = prior.socksUser
                     merged.socksPass     = prior.socksPass
-                    merged.wbToken       = prior.carrier == merged.carrier ? prior.wbToken : ""
+                    // #470: a token the server reported wins; the prior one only fills a gap
+                    merged.wbToken       = !merged.wbToken.isEmpty ? merged.wbToken
+                                         : (prior.carrier == merged.carrier ? prior.wbToken : "")
                     merged.roomCreatedAt = prior.roomID == merged.roomID ? prior.roomCreatedAt : nil
                 }
                 found.details = .olcrtc(merged)
                 connections.update(found)
+                recoveredID = found.id
             } else {
                 let record = ConnectionRecord(
                     name: Self.recordName(host: host, carrier: cfg.carrier, multi: asExtra),
@@ -2611,9 +2995,22 @@ struct ServersView: View {
                     updated.lastConnectionID = record.id
                 }
                 serverStore.update(updated, password: nil)
+                recoveredID = record.id
             }
             // eoc #467
-            alertText = L10n.recoverResultSuccess_fmt.formatted(cfg.carrier, cfg.transport)
+            // #470: the service's name, as the row prints it (#461).
+            // #470 was: .formatted(cfg.carrier, cfg.transport)
+            alertText = L10n.recoverResultSuccess_fmt.formatted(
+                CarrierTransportMatrix.carrierLabel(cfg.carrier),
+                CarrierTransportMatrix.transportLabel(cfg.transport))
+            // boc #470: the record just changed under its verdict. Reconfigure,
+            // add-carrier and start all re-measure; recover did not, so the row
+            // kept its red "key no longer matches" — Recover still hoisted at
+            // the top of its menu — for up to 30 minutes after the alert said
+            // the recover succeeded, and the user ran it again. Fire-and-forget
+            // like add-carrier: the chip renders `.checking` on its own.
+            Task { await verifyRecord(recoveredID) }
+            // eoc #470
         // boc #314: server.yaml unreadable/unparseable — the key/params can't
         // be extracted read-only, so offer the "generate new key" fallback
         // instead of a dead-end error alert. Other errors (SSH, network,
@@ -2690,6 +3087,18 @@ struct ServersView: View {
             // boc #452: sibling protocol containers were restarted with the SAME
             // new key — refresh every matching record so a multi-protocol host
             // stays fully usable after a rotation.
+            // boc #470: the match was carrier+room inside the extras, then the
+            // SAME match over EVERY record in the app. Both halves were wrong
+            // since #467: the room is mutable, so a sibling whose room had moved
+            // matched nothing and kept its dead key while the log said "Rotated
+            // N sibling carrier(s) too"; and the app-wide half rewrote any record
+            // that shared the room — another host's, which then carried THIS
+            // host's key. Slot first (exact, then carrier — the #467 order); past
+            // it only a record no host links at all (an import of this very
+            // room), never another host's.
+            let linkedAnywhere = Set(serverStore.hosts.flatMap { h in
+                [h.lastConnectionID].compactMap { $0 } + (h.extraConnectionIDs ?? [])
+            })
             for sib in result.siblings {
                 guard let sibCfg = try? OlcrtcURI.parse(sib.uri) else { continue }
                 func matches(_ rec: ConnectionRecord) -> Bool {
@@ -2698,11 +3107,18 @@ struct ServersView: View {
                     }
                     return false
                 }
-                let linked = (updated.extraConnectionIDs ?? [])
-                    .compactMap { id in connections.connections.first(where: { $0.id == id }) }
-                    .first(where: matches)
-                guard let match = linked ?? connections.connections.first(where: matches),
+                // #470 was:
+                //     let linked = (updated.extraConnectionIDs ?? [])
+                //         .compactMap { id in connections.connections.first(where: { $0.id == id }) }
+                //         .first(where: matches)
+                //     guard let match = linked ?? connections.connections.first(where: matches),
+                let slot = Self.resolveSlotRecord(host: updated, isPrimary: false,
+                                                  carrier: sibCfg.carrier, room: sibCfg.roomID,
+                                                  records: connections.connections)
+                let orphan = connections.connections.first { !linkedAnywhere.contains($0.id) && matches($0) }
+                guard let match = slot ?? orphan,
                       case .olcrtc(let old) = match.details else { continue }
+                // eoc #470
                 // Mirror the reconfigure merge (#355-style): only the key/room/
                 // transport come from the URI; tuning + secrets are preserved.
                 let refreshed = OlcrtcConnection(
@@ -2726,7 +3142,11 @@ struct ServersView: View {
                 connections.update(updatedRecord)
             }
             // eoc #452
-            alertText = L10n.rotateKeyResultAdded_fmt.formatted(cfg.carrier, cfg.transport)
+            // #470: the service's name, as the row prints it (#461).
+            // #470 was: .formatted(cfg.carrier, cfg.transport)
+            alertText = L10n.rotateKeyResultAdded_fmt.formatted(
+                CarrierTransportMatrix.carrierLabel(cfg.carrier),
+                CarrierTransportMatrix.transportLabel(cfg.transport))
             await refreshCarriers(host.id)   // #452
         } catch {
             alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
@@ -2755,12 +3175,18 @@ struct ServersView: View {
                         .foregroundStyle(.secondary)
                         .padding()
                 } else {
+                    // #471: the type scale and the spacing grid, applied to the
+                    // last block in this file that still wrote raw steps. The
+                    // container NAME keeps `.system(.body, design: .monospaced)`
+                    // — it is an identifier, and the scale's `mono` token is the
+                    // caption-sized step, which is a size change, not a token
+                    // migration. Left for whoever adds a body-mono token.
                     List(foundContainers) { container in
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .center, spacing: Theme.Metrics.s3) {
+                            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {
                                 Text(container.name)
                                     .font(.system(.body, design: .monospaced))
-                                HStack(spacing: 8) {
+                                HStack(spacing: Theme.Metrics.s2) {
                                     // boc #457: the bare 8pt unlabelled dot is gone — a shape
                                     // whose only channel was hue, next to text that already
                                     // says the same thing.
@@ -2769,21 +3195,23 @@ struct ServersView: View {
                                     // — the LAST podman-"Up"→green rule left in the app.
                                     // #457 was: Circle().fill(…).frame(width: 8, height: 8)
                                     Image(systemName: Self.scanGlyph(container.status))
-                                        .font(.caption)
+                                        .font(Theme.Typography.caption)   // #471 was: .caption
                                         .foregroundStyle(Theme.Palette.textTertiary)
                                     // eoc #457
                                     Text(container.status.shortLabel)
-                                        .font(.caption)
+                                        .font(Theme.Typography.caption)   // #471 was: .caption
                                         .foregroundStyle(.secondary)
                                     if !container.carrier.isEmpty {
                                         Text("· \(container.carrier)/\(container.transport)")
-                                            .font(.caption)
+                                            .font(Theme.Typography.caption)   // #471 was: .caption
                                             .foregroundStyle(.tertiary)
                                     }
                                 }
                                 if !container.roomID.isEmpty {
                                     Text(L10n.roomPrefix_fmt.formatted(container.roomID))
-                                        .font(.caption2)
+                                        // #471 was: `.caption2` — the seventh
+                                        // size step Theme.swift abolished.
+                                        .font(Theme.Typography.caption)
                                         .foregroundStyle(.tertiary)
                                 }
                             }
@@ -2793,7 +3221,7 @@ struct ServersView: View {
                             }
                             .buttonStyle(.bordered)
                             .tint(.accentColor)
-                            .font(.caption)
+                            .font(Theme.Typography.caption)   // #471 was: .caption
                         }
                     }
                 }

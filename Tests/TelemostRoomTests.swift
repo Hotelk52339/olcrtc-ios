@@ -302,12 +302,16 @@ final class YandexSessionCookieTests: XCTestCase {
         XCTAssertNil(YandexSessionStore.sessionCookie(in: [cookie]))
     }
 
-    func testEmptyValuedCookieIsRejected() {
+    func testEmptyValuedCookieIsRejected() throws {
         // Foundation may refuse to build a cookie with an empty value at all;
         // when it does build one, the store must still reject it.
         guard let cookie = HTTPCookie(properties: [
             .name: "Session_id", .value: "", .domain: ".yandex.ru", .path: "/",
-        ]) else { return }
+        ]) else {
+            // #470 was: `return` — a green run that had verified nothing. A skip
+            // shows in the report as what it is.
+            throw XCTSkip("Foundation refused an empty cookie value; the store's own guard was not exercised")
+        }
         XCTAssertFalse(YandexSessionStore.isSessionCookie(cookie))
     }
 
@@ -401,8 +405,32 @@ final class YandexSessionStoreTests: XCTestCase {
         // Nothing in the whole app-domain defaults may carry the value.
         let defaults = UserDefaults.standard.dictionaryRepresentation()
         for (key, value) in defaults {
-            XCTAssertFalse("\(value)".contains(fixture),
+            // #470 was: `"\(value)".contains(fixture)` — a `Data` value prints as
+            // "N bytes", so a session "cached" as UTF-8 or base64 bytes passed.
+            XCTAssertFalse(Self.carries(fixture, in: value),
                            "session cookie leaked into UserDefaults key \(key)")
         }
     }
+
+    // boc #470
+    /// Whether `value` — a String, a Data (raw UTF-8, or base64 text of the
+    /// needle), or any array / dictionary nesting of those — contains `needle`
+    /// in a form a reader of the preferences plist could recover.
+    private static func carries(_ needle: String, in value: Any) -> Bool {
+        let base64 = Data(needle.utf8).base64EncodedString()
+        switch value {
+        case let s as String:
+            return s.contains(needle) || s.contains(base64)
+        case let d as Data:
+            let text = String(decoding: d, as: UTF8.self)
+            return text.contains(needle) || text.contains(base64)
+        case let a as [Any]:
+            return a.contains { carries(needle, in: $0) }
+        case let m as [AnyHashable: Any]:
+            return m.values.contains { carries(needle, in: $0) }
+        default:
+            return "\(value)".contains(needle)
+        }
+    }
+    // eoc #470
 }

@@ -1142,6 +1142,11 @@ enum SSHRunner {
             // the relay BEFORE tearing it down and say what actually happened —
             // including that the command probably DID run server-side, which is
             // the part that decides what the owner should do next.
+            // #470: PROXY mode only. In VPN mode there is no relay to sample
+            // (`SSHTransport.route` dials direct inside the packet tunnel), so
+            // the same self-teardown surfaces as a bare Citadel error here; the
+            // caller has to decide "this op restarts the container the live
+            // record rides" BEFORE the op (ServersView's `isLiveRow`).
             let tunnelCollapsed = relay?.isTransportDown ?? false
             try? await client.close()
             relay?.close()          // #462
@@ -1244,19 +1249,29 @@ enum SSHRunner {
         // being retried and re-wrapped as a connect failure.
         _ = try authenticationMethod(username: host.username, secret: secret)
         var previousRoute: SSHTransport.Route?
+        // #470: a relay that failed to open already spent the tunnel path's
+        // budget (up to 15 s), but `previousRoute` recorded the DIRECT dial that
+        // replaced it — so attempt 2 asked `nextRoute` for the tunnel again and
+        // paid the same 15 s twice, against the "once each way" rule above.
+        // Remember the failure for the rest of THIS connect and snapshot only
+        // the direct path after it.
+        var tunnelPathFailed = false
         for attempt in 1...2 {
             // #462: re-snapshot per attempt — the tunnel may have come up (or
             // dropped) since the last one, and an honest answer now beats a
             // cached one. In VPN mode this is always `.direct`: the packet tunnel
             // already carries the direct dial (default route, no excludes) and
             // there is no in-app SOCKS listener to relay through.
-            let available = await SSHTransport.currentRoute()
+            // #470 was: `let available = await SSHTransport.currentRoute()`
+            var available = SSHTransport.Route.direct
+            if !tunnelPathFailed { available = await SSHTransport.currentRoute() }
             let requested = SSHTransport.nextRoute(attempt: attempt,
                                                    previous: previousRoute,
                                                    available: available)
             // #462 (degrade safely): if the relay can't be built for ANY reason we
             // fall back to today's direct connect rather than failing the op.
             let relay = await openRelay(for: requested, host: host)
+            if relay == nil, requested.isTunnel { tunnelPathFailed = true }   // #470
             let route: SSHTransport.Route = (relay == nil) ? .direct : requested
             previousRoute = route
 
@@ -1307,9 +1322,21 @@ enum SSHRunner {
                     try await Task.sleep(for: .seconds(Self.sshRetryDelay))
                 } else {
                     let isTimeout = desc.lowercased().contains("timeout")
-                    let hint = isTimeout
-                        ? L10n.sshPortNotResponding_fmt.formatted(host.port, host.host)
-                        : desc
+                    // boc #470: on the tunnel route the relay exists only because
+                    // the SOCKS CONNECT to host:port already succeeded — the port
+                    // DID respond. A timeout there is Citadel's fixed 10 s login
+                    // window expiring on the relayed path, so name that instead of
+                    // sending the user to check whether SSH is open.
+                    // #470 was: `let hint = isTimeout ? sshPortNotResponding_fmt… : desc`
+                    let hint: String
+                    if !isTimeout {
+                        hint = desc
+                    } else if route.isTunnel {
+                        hint = L10n.sshTunnelLoginTimedOut_fmt.formatted(host.host, host.port)
+                    } else {
+                        hint = L10n.sshPortNotResponding_fmt.formatted(host.port, host.host)
+                    }
+                    // eoc #470
                     throw ProvisionError.sshConnect(hint)
                 }
             }
@@ -1630,6 +1657,12 @@ enum SSHRunner {
         var seiBatch: Int?
         var seiFrag : Int?
         var seiACK  : Int?
+        // #470: wbstream `auth.token` (srv.sh / add-carrier.sh write it as
+        // `  token:` under `auth:`). The client must present the SAME token the
+        // server was installed with; recovering without it produced a record
+        // that failed auth while the alert said "Recovered wbstream/…".
+        // Defaulted so the memberwise construction below stays as it was.
+        var wbToken : String = ""
     }
 
     enum RecoverConfigError: LocalizedError {
@@ -1714,9 +1747,15 @@ enum SSHRunner {
             seiACK   = values["ack_timeout_ms"].flatMap(Int.init)
         }
 
+        // #470: the token is carrier-bound (installEnv only ever emits it for
+        // wbstream), so the same gate here — a stray `token:` under another
+        // provider is not something the client should start sending.
+        let wbToken = carrier == "wbstream" ? (values["token"] ?? "") : ""
+
         return RecoveredConfig(carrier: carrier, transport: transport, roomID: roomID, key: key,
                                vp8FPS: vp8FPS, vp8BatchSize: vp8BatchSize,
-                               seiFPS: seiFPS, seiBatch: seiBatch, seiFrag: seiFrag, seiACK: seiACK)
+                               seiFPS: seiFPS, seiBatch: seiBatch, seiFrag: seiFrag, seiACK: seiACK,
+                               wbToken: wbToken)   // #470
     }
 
     /// Reads the deployed `server.yaml` + `~/.olcrtc_key` for `containerName` and
@@ -1786,6 +1825,9 @@ enum SSHRunner {
     static func deepUninstallScript(containerName: String?, removeImage: Bool) -> String {
         var lines: [String] = []
         if let name = containerName {
+            // #470: the `<name>-<carrier>` siblings (#452) bind-mount the deploy dir
+            // removed below — take them down first, like uninstallScript (#469).
+            lines.append("for c in $(podman ps -a --format '{{.Names}}' | grep '^\(shellSafe(name))-' 2>/dev/null); do podman stop \"$c\" 2>/dev/null; podman rm \"$c\" 2>/dev/null; done")
             lines.append("podman stop \"\(shellSafe(name))\" 2>/dev/null || true")
             lines.append("podman rm \"\(shellSafe(name))\" 2>/dev/null || true")
         } else {

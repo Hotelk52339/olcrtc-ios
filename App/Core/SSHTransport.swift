@@ -420,6 +420,17 @@ enum SSHTransport {
             // to the direct probe before answering — the same "both ways, once"
             // rule `nextRoute` applies to the dial itself.
             // #462 was: `return (success: false, ms: nil, viaTunnel: true)`
+            // #470: say so. This probe decides aborts, and a log that read
+            // "reachable (direct)" or "not responding" with no trace of the
+            // tunnel attempt could not tell "tunnel never used" from "tunnel
+            // refused" (REP byte, auth rejection, handshake timeout).
+            // `SSHTransportError` descriptions carry no credentials; the port is
+            // the only detail — the same rule as `SSHRunner.openRelay`.
+            let detail = "\(error)"
+            await MainActor.run {
+                LogStore.shared.log(.provisioning,
+                    "⚠ tunnel probe failed (SOCKS 127.0.0.1:\(socksPort)): \(detail) — probing direct")
+            }
             let result = await NetPing.tcp(host: host,
                                            port: UInt16(clamping: port),
                                            timeout: timeout)

@@ -50,26 +50,68 @@ final class L10nTests: XCTestCase {
     // Format-string consistency: cases whose names end with `_fmt` must contain
     // at least one placeholder in EVERY language. Catches translators who drop
     // the %@/%d/%lld marker accidentally.
+    // #470: and the SAME specifiers in the SAME order in every language.
+    // `L10n.formatted` is `String(format:arguments:)`, so a Russian string that
+    // swaps "%@ … %d" to "%d … %@", or adds a third "%@", passed the old
+    // "contains at least one" check and would read an Int as an object pointer
+    // (or off the end of the argument list) at runtime — e.g. the expiry alert
+    // crashing at the moment the room is about to die. Positional forms
+    // (`%1$@`) are not used in the tables; if one is ever introduced, this
+    // order comparison has to sort by position instead.
     func testFormatCasesContainPlaceholders() {
         // A String enum's rawValue equals the case name verbatim, and every
         // format case is named with a literal `_fmt` suffix (installResultSuccess_fmt,
         // …). The check was `hasSuffix("Fmt")`, which matched ZERO cases — the
         // loop was vacuous and never validated anything.
         for key in L10n.allCases where key.rawValue.hasSuffix("_fmt") {
-            assertHasPlaceholder(L10nTable.english[key], key: key, lang: "en")
-            assertHasPlaceholder(L10nTable.russian[key], key: key, lang: "ru")
+            let en = L10nTable.english[key] ?? ""
+            let ru = L10nTable.russian[key] ?? ""
+            let enSpecs = Self.specifiers(in: en)
+            let ruSpecs = Self.specifiers(in: ru)
+            XCTAssertFalse(enSpecs.isEmpty,
+                "[en] \(key.rawValue) is a *_fmt case but has no %@/%d/etc placeholder: \(en.debugDescription)")
+            XCTAssertFalse(ruSpecs.isEmpty,
+                "[ru] \(key.rawValue) is a *_fmt case but has no %@/%d/etc placeholder: \(ru.debugDescription)")
+            XCTAssertEqual(enSpecs, ruSpecs,
+                "\(key.rawValue): en \(enSpecs) vs ru \(ruSpecs) — String(format:) needs the same specifiers in the same order")
         }
+    }
+    // #470 was: assertHasPlaceholder(_:key:lang:) — "contains at least one of
+    // %@ %d %lld %f %.0f %.1f %.2f", per language, with no cross-language check.
+
+    // boc #470
+    /// The inverse rule: a value carrying a `%` specifier that is NOT a `_fmt`
+    /// case escapes the check above entirely — `removeHostConfirmTitle`
+    /// ("Remove %@?", consumed with `.formatted(…)` in ServersView) is exactly
+    /// that today. It is listed here rather than renamed, because the rename
+    /// touches L10n.swift, both tables and ServersView. The set is compared for
+    /// EQUALITY: the rename, or a new offender, fails this test and updates it.
+    func testEveryPlaceholderBelongsToAFormatCase() {
+        let knownExceptions: Set<String> = []   // #470: removeHostConfirmTitle is _fmt now
+        var offenders: Set<String> = []
+        for key in L10n.allCases where !key.rawValue.hasSuffix("_fmt") {
+            for value in [L10nTable.english[key], L10nTable.russian[key]].compactMap({ $0 })
+            where !Self.specifiers(in: value).isEmpty {
+                offenders.insert(key.rawValue)
+            }
+        }
+        XCTAssertEqual(offenders, knownExceptions,
+            "a value with a % specifier must live in a *_fmt case (or be listed above, with its reason)")
     }
 
-    private func assertHasPlaceholder(_ value: String?, key: L10n, lang: String) {
-        guard let v = value else {
-            XCTFail("[\(lang)] missing translation for \(key.rawValue)"); return
+    /// The `%` conversion specifiers of a `String(format:)` string, in order:
+    /// %[positional$][flags][width][.precision][length]conversion. The space
+    /// flag is deliberately not accepted, so prose like "50% done" never reads
+    /// as `% d`; an escaped `%%` is not in the tables either.
+    private static func specifiers(in value: String) -> [String] {
+        let pattern = #"%(\d+\$)?[-+0#]*\d*(\.\d+)?(ll|l|h)?[@dfsxXuioceEgGp]"#
+        let regex = try! NSRegularExpression(pattern: pattern)
+        let whole = NSRange(value.startIndex..., in: value)
+        return regex.matches(in: value, range: whole).compactMap {
+            Range($0.range, in: value).map { String(value[$0]) }
         }
-        let placeholders = ["%@", "%d", "%lld", "%f", "%.0f", "%.1f", "%.2f"]
-        let hasOne = placeholders.contains(where: { v.contains($0) })
-        XCTAssertTrue(hasOne,
-            "[\(lang)] \(key.rawValue) is a *_fmt case but has no %@/%d/etc placeholder: \(v.debugDescription)")
     }
+    // eoc #470
 
     // MARK: AppLocale
 

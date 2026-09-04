@@ -85,10 +85,12 @@ struct BotSettingsView: View {
 
     private var emptyRegistrySection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(L10n.botNoBotsTitle.localized()).font(.headline)
+            VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471: B9 — 6 → s2
+                // #471: B9 — the empty state's subject is step 2 (`title`), its
+                // sentence step 5. #471 was: .font(.headline) / .font(.caption)
+                Text(L10n.botNoBotsTitle.localized()).font(Theme.Typography.title)
                 Text(L10n.botNoBotsHint.localized())
-                    .font(.caption).foregroundStyle(Theme.Palette.textSecondary)
+                    .font(Theme.Typography.caption).foregroundStyle(Theme.Palette.textSecondary)
             }
         }
     }
@@ -98,7 +100,7 @@ struct BotSettingsView: View {
             // #428: status and the Check button share one row (was a status row
             // above a full-width Check button). The button's own spinner covers
             // the busy state, so the separate ProgressView is gone.
-            HStack(spacing: 12) {
+            HStack(spacing: Theme.Metrics.s3) {   // #471: B9 — 12 → s3
                 Text(statusLabel).foregroundStyle(statusTone)
                 Spacer(minLength: 8)
                 OlcButton(L10n.botCheckAction.localized(),
@@ -110,12 +112,14 @@ struct BotSettingsView: View {
             }
             if let d = deployed, !botStore.bots.contains(where: { $0.name == d.marker }) {
                 Text(L10n.botUnknownFound_fmt.formatted(d.marker))
-                    .font(.caption).foregroundStyle(Theme.Palette.orange)
+                    .font(Theme.Typography.caption).foregroundStyle(Theme.Palette.orange)   // #471: B9
             }
         } header: {
             Text(L10n.botSheetTitle.localized())
         } footer: {
-            Text(L10n.botSheetFooter.localized()).font(.caption2)
+            // #471: B9 — a Form footer already renders at the caption step;
+            // `.caption2` only pushed it BELOW the scale. was: .font(.caption2)
+            Text(L10n.botSheetFooter.localized())
         }
     }
 
@@ -149,7 +153,8 @@ struct BotSettingsView: View {
             }
         } footer: {
             // #428: point the user to where the token lives (it's not editable here).
-            Text(L10n.botTokenManageHint.localized()).font(.caption2)
+            // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+            Text(L10n.botTokenManageHint.localized())
         }
     }
 
@@ -192,8 +197,8 @@ struct BotSettingsView: View {
 
     @ViewBuilder
     private func labeledField(_ label: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption).foregroundStyle(Theme.Palette.textTertiary)
+        VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471: B9 — 2 → s1
+            Text(label).font(Theme.Typography.caption).foregroundStyle(Theme.Palette.textTertiary)   // #471: B9
             TextField("", text: text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()

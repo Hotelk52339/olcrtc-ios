@@ -18,12 +18,23 @@ final class BotStore: ObservableObject {
     private static let keychainService = "olcrtc.bot.token"
 
     init() {
-        load()
+        // boc #470: "never stored" and "stored but unreadable" looked the same
+        // here — `load()` swallowed the decode error and left `bots` empty — so
+        // the first-run seed below wrote itself over a blob this build could not
+        // read (a platform rawValue from a newer build, a corrupt byte) through
+        // `didSet`, on launch, before the user touched anything; every deployed
+        // bot's token was then orphaned in the Keychain under a UUID the app no
+        // longer knew. An unreadable registry now stays on disk until the user's
+        // own first change (a build that can read it gets it back) and renders
+        // empty; only a genuinely absent one is seeded.
+        let stored = load()
         // Seed a default Telegram bot on first run so the registry is never empty
         // and the per-server sheet always has something to pick.
-        if bots.isEmpty {
+        // #470 was: if bots.isEmpty {
+        if bots.isEmpty, !stored {
             bots = [BotIdentity(name: BotIdentity.defaultName, platform: .telegram)]
         }
+        // eoc #470
     }
 
     func add(_ bot: BotIdentity, token: String) {
@@ -76,10 +87,19 @@ final class BotStore: ObservableObject {
             UserDefaults.standard.set(data, forKey: storeKey)
         }
     }
-    private func load() {
-        if let data = UserDefaults.standard.data(forKey: storeKey),
-           let list = try? JSONDecoder().decode([BotIdentity].self, from: data) {
+    // boc #470: returns whether a registry blob exists at all, readable or not,
+    // and says so in the log when it is not — `init` seeds only when it does not.
+    // #470 was: `if let data = …, let list = try? decode(…) { bots = list }` (Void).
+    private func load() -> Bool {
+        guard let data = UserDefaults.standard.data(forKey: storeKey) else { return false }
+        if let list = try? JSONDecoder().decode([BotIdentity].self, from: data) {
             bots = list
+        } else {
+            LogStore.shared.log(.connection,
+                "⚠ Bot registry could not be read — showing an empty list; the stored copy is kept",
+                level: .warn)
         }
+        return true
     }
+    // eoc #470
 }

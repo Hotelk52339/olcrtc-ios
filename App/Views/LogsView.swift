@@ -114,6 +114,10 @@ struct LogsView: View {
     // telemost sibling, the telemost log (where the traffic actually is) could
     // not be read at all.
     @State private var selectedContainerName: String?
+    /// #470: the container the running fetch targets — what the phase line
+    /// prints. #470 was: `phaseText(1)` printed `selectedHost?.lastContainerName`
+    /// (always the primary) while `primaryAction` fetched the picked sibling.
+    @State private var fetchingContainerName: String?
     @State private var fetchPhase: Int?
     @State private var alertText: String?  // #297
 
@@ -348,17 +352,19 @@ struct LogsView: View {
     /// `doc.text` + monospaced file name + right-aligned line count.
     private var fileHeaderRow: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: Theme.Metrics.s2) {   // #471: B9 — 6 → s2
                 Image(systemName: "doc.text")
-                    .font(.caption)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                     .foregroundStyle(Theme.Palette.textSecondary)
                 Text(currentFileName)
-                    .font(.system(.caption, design: .monospaced))
+                    // #471: B9 — a file name is step 6, via its token.
+                    // #471 was: .font(.system(.caption, design: .monospaced))
+                    .font(Theme.Typography.mono)
                     .foregroundStyle(Theme.Palette.textSecondary)
                 Spacer(minLength: 8)
                 peerCountLabel
                 Text(L10n.logsLineCount_fmt.formatted(currentEntries.count))
-                    .font(.caption2)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(Theme.Palette.textTertiary)
             }
@@ -376,11 +382,11 @@ struct LogsView: View {
            let host = selectedHost,
            let peers = store.peerCounts[host.logFilePrefix] {
             Text(L10n.logsPeerCount_fmt.formatted(peers))
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .monospacedDigit()
                 .foregroundStyle(Theme.Palette.textSecondary)
             Text("·")
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .foregroundStyle(Theme.Palette.textTertiary)
         }
     }
@@ -433,10 +439,11 @@ struct LogsView: View {
     /// fetch runs. #457: a subject-pinned host drops the picker entirely.
     private var containerSourceCard: some View {
         OlcCard {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s3) {   // #471: B9 — 10 → s3
                 if serverStore.hosts.isEmpty && subject.host == nil {
                     Text(L10n.logsContainerNoServers.localized())
-                        .font(.subheadline)
+                        // #471: B9 — prose is step 3. was: .font(.subheadline)
+                        .font(Theme.Typography.body)
                         .foregroundStyle(Theme.Palette.textSecondary)
                 } else {
                     containerSourceControls
@@ -452,7 +459,7 @@ struct LogsView: View {
     }
 
     private var containerSourceControls: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: Theme.Metrics.s3) {   // #471: B9 — 10 → s3
             if subject.host == nil {
                 hostPicker
             }
@@ -467,16 +474,17 @@ struct LogsView: View {
     }
 
     private func fetchProgress(_ phase: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471: B9 — 6 → s2
             HStack {
                 Text(phaseText(phase))
-                    .font(.system(.caption, design: .monospaced))
+                    // #471 was: .font(.system(.caption, design: .monospaced))
+                    .font(Theme.Typography.mono)
                     .foregroundStyle(Theme.Palette.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
                 Text("\(min(phase + 1, Self.fetchPhaseCount))/\(Self.fetchPhaseCount)")
-                    .font(.caption2)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(Theme.Palette.textTertiary)
             }
@@ -488,27 +496,18 @@ struct LogsView: View {
     /// #468: every container this host runs, primary first. Derived from local
     /// records (`extraConnectionIDs` → carrier → `<base>-<carrier>`), never from
     /// an SSH scan — the picker has to be there before any connection is made.
+    /// #470: the derivation itself is `ContainerLogTargets.targets` (pure,
+    /// unit-tested); this only attaches the labels. The primary reads its own
+    /// protocol name when the app knows it, so the picker says "Jitsi / Yandex
+    /// Telemost" rather than "Primary / Yandex Telemost".
+    // #470 was: the `guard let base` / `for id in extraConnectionIDs` loop inline
+    // here plus `primaryLabel(_ host:)` — both private to the view, untestable.
     private func containers(of host: ServerHost) -> [(name: String, label: String)] {
-        guard let base = host.lastContainerName else { return [] }
-        var out: [(name: String, label: String)] = [(base, primaryLabel(host))]
-        for id in host.extraConnectionIDs ?? [] {
-            guard let rec = connections.connections.first(where: { $0.id == id }),
-                  case .olcrtc(let p) = rec.details else { continue }
-            out.append((SSHRunner.siblingContainerName(base: base, carrier: p.carrier),
-                        CarrierTransportMatrix.carrierLabel(p.carrier)))
+        ContainerLogTargets.targets(host: host, records: connections.connections).map { t in
+            (name: t.name,
+             label: t.carrier.map { CarrierTransportMatrix.carrierLabel($0) }
+                        ?? L10n.logsContainerPrimary.localized())
         }
-        return out
-    }
-
-    /// The primary's own protocol name when the app knows it, so the picker reads
-    /// "Jitsi / Yandex Telemost" rather than "Primary / Yandex Telemost".
-    private func primaryLabel(_ host: ServerHost) -> String {
-        if let id = host.lastConnectionID,
-           let rec = connections.connections.first(where: { $0.id == id }),
-           case .olcrtc(let p) = rec.details {
-            return CarrierTransportMatrix.carrierLabel(p.carrier)
-        }
-        return L10n.logsContainerPrimary.localized()
     }
 
     @ViewBuilder
@@ -516,7 +515,11 @@ struct LogsView: View {
         let items = containers(of: host)
         if items.count > 1 {
             OlcChipPicker(selection: Binding<String?>(
-                get: { selectedContainerName ?? items[0].name },
+                // #470: a name that belongs to another host (or to a sibling since
+                // removed) highlighted NO chip — resolve it the way the Fetch
+                // does, so the chip always shows the container the command hits.
+                // #470 was: get: { selectedContainerName ?? items[0].name }
+                get: { items.first(where: { $0.name == selectedContainerName })?.name ?? items[0].name },
                 set: { selectedContainerName = $0 }
             ), options: items.map { (Optional($0.name), $0.label) })
         }
@@ -527,12 +530,12 @@ struct LogsView: View {
         if orderedHosts.count <= 3 {
             OlcChipPicker(selection: Binding(
                 get: { selectedHost?.id },
-                set: { selectedHostID = $0 }
+                set: { selectedHostID = $0; selectedContainerName = nil }   // #470: a protocol picked on the previous host is no choice on this one
             ), options: orderedHosts.map { ($0.id as UUID?, hostLabel($0)) })
         } else {
             Picker(L10n.logsContainerSelectServer.localized(), selection: Binding(
                 get: { selectedHost?.id },
-                set: { selectedHostID = $0 }
+                set: { selectedHostID = $0; selectedContainerName = nil }   // #470: a protocol picked on the previous host is no choice on this one
             )) {
                 ForEach(orderedHosts) { host in
                     Text(hostLabel(host)).tag(Optional(host.id))
@@ -563,7 +566,9 @@ struct LogsView: View {
         case 0:  return L10n.logsPhaseConnecting.localized()
         case 1:  return L10n.logsPhaseCommand_fmt.formatted(
                      SettingsStore.shared.containerLogsTailLines,
-                     selectedHost?.lastContainerName ?? "olcrtc")
+                     // #470: the container the fetch is actually running against.
+                     // #470 was: selectedHost?.lastContainerName ?? "olcrtc"
+                     fetchingContainerName ?? selectedHost?.lastContainerName ?? "olcrtc")
         default: return L10n.logsPhaseReceiving.localized()
         }
     }
@@ -580,7 +585,7 @@ struct LogsView: View {
         // #457 was: also published `router.fetchingHostID` so a card on ANOTHER
         // tab could draw a busy indicator. The fetch is on screen now.
         fetchPhase = 0
-        defer { fetchPhase = nil }
+        defer { fetchPhase = nil; fetchingContainerName = nil }   // #470 was: defer { fetchPhase = nil }
 
         var target = host
         if target.lastContainerName == nil {
@@ -589,11 +594,25 @@ struct LogsView: View {
             // this branch was a no-op dead end). Scan for an existing olcrtc
             // container instead, mirroring #302's ServersView fold-in.
             do {
-                guard let found = try await provisioner.scanContainers(on: target, password: pw).first else {
+                // boc #470: adopt only an UNAMBIGUOUS answer. `.first` of a scan
+                // that listed several olcrtc containers (an old install beside a
+                // new one, a sibling beside its primary) became the card's
+                // primary silently — Stop / Start and every row then targeted
+                // it. ServersView puts the same situation to the user as a
+                // choice; here the honest move is to say so and send them there.
+                // #470 was: guard let found = try await provisioner.scanContainers(on: target, password: pw).first else { … }
+                let found = try await provisioner.scanContainers(on: target, password: pw)
+                guard let only = found.first else {
                     alertText = L10n.scanNoContainers.localized(); return
                 }
-                target.lastContainerName = found.name
+                guard found.count == 1 else {
+                    alertText = L10n.logsScanAmbiguous_fmt.formatted(found.count); return
+                }
+                target.lastContainerName = only.name
                 serverStore.update(target, password: nil)
+                LogStore.shared.log(.provisioning,
+                    "→ Logs: \(target.label) had no known container — adopted \(only.name) from the scan")
+                // eoc #470
             } catch {
                 alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription); return
             }
@@ -602,9 +621,15 @@ struct LogsView: View {
         // #468 was: `target.lastContainerName` unconditionally — the primary, and
         // only ever the primary. Honour the picker; fall back to the primary when
         // the chosen name does not belong to this host (the host was switched).
-        let available = containers(of: target).map { $0.name }
-        let chosen = selectedContainerName.flatMap { available.contains($0) ? $0 : nil }
-        guard let cname = chosen ?? target.lastContainerName else { return }
+        // #470: resolved through the pure helper (tested), and remembered so the
+        // phase line prints the command that is actually running.
+        // #470 was: let available = containers(of: target).map { $0.name }
+        //           let chosen = selectedContainerName.flatMap { available.contains($0) ? $0 : nil }
+        //           guard let cname = chosen ?? target.lastContainerName else { return }
+        let targets = ContainerLogTargets.targets(host: target, records: connections.connections)
+        guard let cname = ContainerLogTargets.resolve(selected: selectedContainerName, in: targets)
+        else { return }
+        fetchingContainerName = cname
         do {
             _ = try await provisioner.containerLogs(
                 on: target, password: pw, containerName: cname,
@@ -612,6 +637,50 @@ struct LogsView: View {
         } catch {
             alertText = L10n.stateErrorPrefix_fmt.formatted(error.localizedDescription)
         }
+    }
+}
+
+// MARK: - ContainerLogTargets (#470)
+
+/// #470: the pure derivation behind the #468 protocol picker, lifted out of
+/// `LogsView` so it can be unit-tested (Tests/Review470Chunk4Tests.swift): which
+/// containers a host runs, and which of them a Fetch targets when the picked
+/// name may belong to another host.
+enum ContainerLogTargets {
+    struct Target: Equatable {
+        let name: String
+        /// The carrier the container serves when a local record says so; nil for
+        /// a primary whose connection the app does not know.
+        let carrier: String?
+    }
+
+    /// Every container `host` runs, primary first: the primary is
+    /// `lastContainerName`; each sibling is `<base>-<carrier>`
+    /// (`SSHRunner.siblingContainerName`) for the carrier of the record behind
+    /// `extraConnectionIDs`. Local records only, never an SSH scan. No known
+    /// primary ⇒ nothing — a sibling name cannot be formed without the base.
+    static func targets(host: ServerHost, records: [ConnectionRecord]) -> [Target] {
+        guard let base = host.lastContainerName else { return [] }
+        var out = [Target(name: base, carrier: carrier(of: host.lastConnectionID, in: records))]
+        for id in host.extraConnectionIDs ?? [] {
+            guard let c = carrier(of: id, in: records) else { continue }
+            out.append(Target(name: SSHRunner.siblingContainerName(base: base, carrier: c), carrier: c))
+        }
+        return out
+    }
+
+    /// The container a Fetch runs against: `selected` when it is one of
+    /// `targets`, else the primary — a name picked on another host (or for a
+    /// sibling since removed) never leaks into this host's command.
+    static func resolve(selected: String?, in targets: [Target]) -> String? {
+        if let selected, targets.contains(where: { $0.name == selected }) { return selected }
+        return targets.first?.name
+    }
+
+    private static func carrier(of id: UUID?, in records: [ConnectionRecord]) -> String? {
+        guard let id, let rec = records.first(where: { $0.id == id }),
+              case .olcrtc(let p) = rec.details else { return nil }
+        return p.carrier
     }
 }
 
@@ -708,14 +777,18 @@ struct LogBodyView: View {
             // Share/Copy for the full history.
             let visible = LogRendering.capped(items)
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.s2) {   // #471: B9 — 8 → s2
                     if visible.count < items.count {
                         Text(L10n.logsRenderTruncated_fmt.formatted(visible.count))
-                            .font(.caption2)
+                            .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                             .foregroundStyle(Theme.Palette.textTertiary)
                     }
                     Text(LogRendering.attributed(visible))
-                        .font(.system(.caption2, design: .monospaced))
+                        // #471: B9 — the log body is the canonical step-6 case, but
+                        // it was drawn at `.caption2`, the seventh step Theme
+                        // abolished. Same mono face, now on the scale.
+                        // #471 was: .font(.system(.caption2, design: .monospaced))
+                        .font(Theme.Typography.mono)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }

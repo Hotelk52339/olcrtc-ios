@@ -26,6 +26,11 @@ import SwiftUI
 // so it stays exactly as it is, and `TunnelSettingsComparisonRow` / `…Cell` are
 // the shape to reuse anywhere else two options have to be compared. The second
 // section here is no longer "Reliability" — see `TunnelSettingsOnOpenSection`.
+//
+// #471 (design pass D): not one cell of that table changed — it moved behind a
+// `DisclosureGroup`. It answers a question asked once, and it was the FIRST
+// thing in Settings, permanently open. The mode section gained the one fact
+// proxy mode is used through: the port (`TunnelSettingsPortRow`, read-only).
 
 // MARK: - Mode picker
 
@@ -60,7 +65,25 @@ struct TunnelSettingsModeSection: View {
             if case .unavailable(let reason) = tunnel.vpn.capability {
                 TunnelSettingsUnavailableNote(reason: reason)
             }
-            TunnelSettingsComparison()
+            // boc #471
+            // In proxy mode the port is the ANSWER to "where do I point the
+            // other app?", so it is readable here without a push; editing it
+            // lives on Settings › Advanced › Proxy, where it is a decision
+            // rather than a fact. In VPN mode there is no local listener to
+            // point anything at, so the row would be a number that means
+            // nothing — it is not drawn.
+            if settings.tunnelMode == .proxy {
+                TunnelSettingsPortRow()
+            }
+            // #471 was: `TunnelSettingsComparison()` mounted directly — a 3×2
+            // prose table, six cells, permanently the first thing in Settings,
+            // explaining a choice that is made once. The table itself is the
+            // pattern the owner singled out as reading well, so not one cell of
+            // it changed; it is one tap away instead of always open.
+            DisclosureGroup(L10n.tunnelCompareDisclosure.localized()) {
+                TunnelSettingsComparison()
+            }
+            // eoc #471
         } header: {
             Text(L10n.configModeSectionHeader.localized())
         }
@@ -76,10 +99,44 @@ struct TunnelSettingsModeSection: View {
         }
         return [
             OlcOption(value: TunnelMode.proxy, label: TunnelMode.proxy.title),
+            // #470 was: `disabled: vpnUnavailableReason != nil`. The capability
+            // flips to `.unavailable` both when the entitlement is missing AND
+            // when the user simply declined the system consent alert — and a
+            // declined consent is retryable, but the chip locked them out until
+            // relaunch. The reason is still spelled out under the picker
+            // (`TunnelSettingsUnavailableNote`) and in VoiceOver.
             OlcOption(value: TunnelMode.vpn, label: TunnelMode.vpn.title,
-                      disabled: vpnUnavailableReason != nil,
+                      disabled: false,
                       disabledReason: vpnUnavailableReason),
         ]
+    }
+}
+
+// MARK: - Port summary (#471)
+
+/// #471: the local SOCKS port as a READ-ONLY fact, on the main Settings list,
+/// under the mode picker that decides whether it means anything. Proxy mode
+/// works by pointing another app at `127.0.0.1:<this>`, so the number has to be
+/// legible without hunting; changing it is a different act and lives on
+/// Settings › Advanced › Proxy, next to "Random port" and the availability
+/// check. `.monospacedDigit()` and not a mono face: a port is a measured value,
+/// not an address (`Theme` reserves the mono face for those).
+struct TunnelSettingsPortRow: View {
+    @ObservedObject private var settings = SettingsStore.shared
+
+    /// Explicit (and empty) so the initializer is unambiguously `internal` —
+    /// the stored property is `private` and SettingsView.swift builds this from
+    /// another file.
+    init() {}
+
+    var body: some View {
+        HStack {
+            Text(L10n.settingsPortLabel.localized())
+            Spacer()
+            Text("\(settings.socksPort)")
+                .monospacedDigit()
+                .foregroundStyle(Theme.Palette.textSecondary)
+        }
     }
 }
 
@@ -215,7 +272,9 @@ struct TunnelSettingsComparisonCell: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Theme.Palette.textPrimary)
             Text(value)
-                .font(.footnote)
+                // #471 was: `.font(.footnote)` — a step the six-step scale does
+                // not have. The cell's text is untouched (design section C).
+                .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -236,7 +295,10 @@ struct TunnelSettingsNote: View {
 
     var body: some View {
         Text(text)
-            .font(.footnote)
+            // #471 was: `.font(.footnote)` — not a step on the six-step scale
+            // (Theme.swift). This one line renders every per-row explanation in
+            // Settings, so it is the single biggest type-scale site in the app.
+            .font(Theme.Typography.caption)
             .foregroundStyle(Theme.Palette.textSecondary)
     }
 }
@@ -248,11 +310,13 @@ struct TunnelSettingsUnavailableNote: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // #471 was: `.font(.footnote)` on both lines — same step swap as
+            // `TunnelSettingsNote`, which this note sits beside.
             Text(L10n.configVPNUnavailableFooter.localized())
-                .font(.footnote)
+                .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.Palette.red)
             Text(reason)
-                .font(.footnote)
+                .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.Palette.textSecondary)
         }
     }

@@ -6,29 +6,33 @@ import SwiftUI
 // used to be hardcoded, plus the two sections the deleted Config tab held.
 //
 // #460 (screenshot findings 10, 11, 13, 20, 21): regrouped BY SUBJECT, and
-// every explanation now sits with the control it explains.
+// every explanation now sits with the control it explains. A `Form` footer
+// belongs to its whole SECTION, so an explanation written for one control kept
+// rendering under an unrelated row four positions down; the fix, applied
+// everywhere, is a note row (`TunnelSettingsNote`) directly under its control,
+// and a footer only where it explains the whole section.
 //
-// The old shape had one "Connection" section carrying a start timeout,
-// auto-connect, a VPS-uninstall side effect, a keep-alive interval, background
-// audio, a wedge-restart toggle, update checking AND the log level — eight rows,
-// three or four subjects, one header. Worse, a `Form` footer belongs to its
-// whole SECTION, so the keep-alive explainer rendered four rows below the field
-// it describes; "Logs" and "Diagnostics" had the same fault. Two fixes, applied
-// everywhere: split a section until its header names ONE subject, and when a
-// section legitimately holds several controls, move each explanation to a note
-// row directly under its own control (`TunnelSettingsNote`) instead of pooling
-// them in a trailing footer. A footer survives only where it explains the whole
-// section — or the single row above it.
+// #471 (design pass D): the list had reached fourteen sections and ~35
+// controls, and the ones a *user of a VPN app* changes were interleaved with
+// the ones a *server admin or a developer* tunes — a start timeout above a
+// language picker, a codec batch size above "Check for updates". One rule
+// decides where a control lives now: if changing it is part of USING the app it
+// is on this list; if it is tuning, it is behind the single "Advanced" push
+// (`SettingsAdvancedView`, below). Six sections, ordered by how often they are
+// touched:
 //
-// Section order (top-down by consequence):
-//   Tunnel mode · When the app opens | Starting a connection · Staying connected
-//   | SOCKS5 · DNS · vp8channel | Servers | IP check · Speed test | Logs
-//   | Updates · Appearance | About
+//   Tunnel · When the app opens · Staying connected · Appearance · Updates · About
 //
-// #460 was: tunnel · SOCKS5 · DNS · vp8channel · Connection · Bots ·
-// Diagnostics · Logs · Appearance · info — ten Form children, which is also the
-// ViewBuilder ceiling; the sections are grouped into eight `@ViewBuilder`
-// properties so the list can keep growing.
+// Nothing was deleted from the app: every control that left this list is on
+// Advanced, one tap away. What WAS deleted is dead machinery — the preset chip
+// rows under the numeric fields (the defaults ARE the presets, and "Reset all
+// settings" restores them) and the `ScrollViewReader` left behind by #470's
+// font slider.
+//
+// #471 was: tunnelGroup · connectionGroup (start + stay-connected) ·
+// networkGroup (SOCKS5 + DNS + vp8channel) · serversSection · checksGroup
+// (IP check + speed test) · logsSection · appGroup (updates + appearance) ·
+// infoSection — eight `@ViewBuilder` groups holding fourteen sections.
 //
 // Reads/writes go through SettingsStore.shared, which mirrors UserDefaults.
 // SwiftUI rebinds on @Published changes automatically.
@@ -36,11 +40,10 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     // #300: live tunnel state, needed to tell "port busy because our tunnel
-    // reserved it" apart from "port busy because something else holds it" —
-    // the old check compared configured ports only, so it reported "in use
-    // by tunnel" even while disconnected. #313: the gate now reads
-    // `tunnel.boundPort` — the port the session actually bound — so a live
-    // port edit in Settings can't mislabel the check either.
+    // reserved it" apart from "port busy because something else holds it".
+    // #471: the port check itself moved to `SettingsAdvancedView`; what this
+    // tab still needs `tunnel` for is the mode picker's lock, the VPN
+    // capability probe — and handing it to the Advanced screen.
     @ObservedObject var tunnel: TunnelManager
     /// #420: bot registry (shared with Servers). Managed in `BotsSettingsView`.
     @ObservedObject var botStore: BotStore
@@ -49,35 +52,6 @@ struct SettingsView: View {
     @ObservedObject var serverStore: ServerHostStore
     @ObservedObject var connections: ConnectionStore
 
-    @State private var portCheck: PortAvailability.PortState?
-    @State private var socksPassInput: String = ""
-    @State private var socksPassLoaded = false
-    @FocusState private var anyFieldFocused: Bool
-
-    /// #280: live slider position while dragging the font size. Non-nil only
-    /// during a drag; the committed value lands in `settings.fontSizeIndex` on
-    /// release, so the whole app re-lays out once instead of on every tick.
-    @State private var fontDragIndex: Double?
-
-    private var fontLiveIndex: Int {
-        let raw = Int((fontDragIndex ?? Double(settings.fontSizeIndex)).rounded())
-        // (audit) the leftmost position is the -1 "System" sentinel — follow
-        // the iOS Text Size setting instead of overriding it.
-        return max(SettingsStore.systemFontSizeIndex, min(SettingsStore.fontSizes.count - 1, raw))
-    }
-
-    /// Display label for the live slider position ("System" at the sentinel).
-    private var fontLiveLabel: String {
-        fontLiveIndex == SettingsStore.systemFontSizeIndex
-            ? L10n.fontSizeSystem.localized()
-            : SettingsStore.fontSizeLabels[fontLiveIndex]
-    }
-
-    /// #298: scroll anchor for the Font control. Committing the font size relayouts
-    /// the whole app (dynamic type), moving the viewport — we scroll back here to
-    /// keep the control in place.
-    private static let fontAnchorID = "settingsFontAnchor"
-
     /// #455: confirm before "Reset all settings" — restores defaults (incl.
     /// tunnel mode → proxy), which unsticks any state that would otherwise
     /// need an app reinstall.
@@ -85,28 +59,27 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                // #460: the modifier stack is split across two small wrappers,
-                // the idiom ConnectionsView/ServersView adopted after this
-                // repo's SwiftUI type-checker failures — no single expression
-                // carries the whole chain.
-                formWiring(formChrome(settingsForm), proxy: proxy)
-            }
+            // #460: the modifier stack is split across two small wrappers,
+            // the idiom ConnectionsView/ServersView adopted after this
+            // repo's SwiftUI type-checker failures — no single expression
+            // carries the whole chain.
+            // #471 was: wrapped in `ScrollViewReader { proxy in … }`, and
+            // `formWiring(_:proxy:)` took that proxy — the scroll-back hack for
+            // the font slider #470 deleted. Nothing read it any more.
+            formWiring(formChrome(settingsForm))
         }
     }
 
-    /// Eight children — each one a section or a small group of them. Keep it
-    /// under ten: `ViewBuilder` has no eleventh-child overload.
+    /// #471: six children, in the order a user meets them. Keep it under ten:
+    /// `ViewBuilder` has no eleventh-child overload.
     private var settingsForm: some View {
         Form {
-            tunnelGroup
-            connectionGroup
-            networkGroup
-            serversSection
-            checksGroup
-            logsSection
-            appGroup
-            infoSection
+            TunnelSettingsModeSection(tunnel: tunnel)
+            TunnelSettingsOnOpenSection()
+            stayConnectedSection
+            appearanceSection
+            updatesSection
+            aboutSection
         }
     }
 
@@ -132,10 +105,9 @@ struct SettingsView: View {
             // never pops the system consent alert. Drives the VPN chip's
             // enabled state in the mode section.
             .task { await tunnel.vpn.probeCapability() }
-            .onDisappear { socksPassLoaded = false }
     }
 
-    private func formWiring(_ content: some View, proxy: ScrollViewProxy) -> some View {
+    private func formWiring(_ content: some View) -> some View {
         content
             // #455: reset-to-defaults confirm (unsticks a wedged state
             // without reinstalling; connections and servers are kept).
@@ -150,139 +122,363 @@ struct SettingsView: View {
                 Text(L10n.resetSettingsConfirmBody.localized())
             }
             .navigationTitle(L10n.settingsTitle.localized())
+            // #471 was: a keyboard `ToolbarItemGroup` with a "Done" button. No
+            // row on this list opens a keyboard any more — every text field
+            // moved to Advanced, which carries that toolbar now.
+    }
+
+    // MARK: Pull to refresh (#460)
+
+    /// #460: requirement 27 — "the swipe should refresh everything on whichever
+    /// screen I am on". Settings owns no server state; what DOES go stale while
+    /// this screen is open is whether this install is allowed to run the system
+    /// VPN at all (a re-signed sideload loses that entitlement, and the mode
+    /// picker's VPN chip is gated on it), and that is re-read for real.
+    /// #471 was: also `runPortCheck()`. The port field and its verdict moved to
+    /// Advanced with the rest of the proxy rows — refreshing a check whose
+    /// result is on another screen is a spinner that shows nothing.
+    private func refreshSettings() async {
+        await tunnel.vpn.probeCapability()
+    }
+
+    // MARK: Staying connected (#460)
+
+    // #471: two rows, both about a session that is already up — keep it alive
+    // while the app is in the background, and move it to another protocol when
+    // the one in use stops answering.
+    // #471 was: this section also held the tunnel-check interval and
+    // "Auto-restart a stuck session" (both on Advanced now — an interval and an
+    // opt-in experiment, not decisions), and the background row was labelled
+    // "Background work (audio)": the mechanism, which is not the user's concern.
+    private var stayConnectedSection: some View {
+        Section {
+            Toggle(L10n.settingsBackgroundLabel.localized(), isOn: $settings.backgroundAudio)
+            TunnelSettingsNote(text: L10n.backgroundAudioNote.localized())
+            // #471: the SAME stored value the Connect tab's card binds — one
+            // setting, two honest entry points (like Wi-Fi in Control Center and
+            // in Settings). That card only appears once the server has a second
+            // protocol; this row is always reachable.
+            Toggle(L10n.configFailoverToggle.localized(), isOn: $settings.autoFailover)
+            TunnelSettingsNote(text: L10n.connectAutoSwitchHint.localized())
+        } header: {
+            Text(L10n.settingsSectionStayConnected.localized())
+        } footer: {
+            // #470: both rows are in-app-proxy machinery — `TunnelManager`
+            // starts the audio keeper and the failover switch only when
+            // `activeMode == .proxy`; in VPN mode the core runs in the appex and
+            // neither ever fires. The Connections failover card already says so
+            // with this sentence; these notes promised otherwise.
+            // #471 was: `.font(.caption2)` — a Form footer already is a caption.
+            Text(L10n.configFailoverProxyOnlyFooter.localized())
+        }
+    }
+
+    // MARK: Appearance
+
+    private var appearanceSection: some View {
+        Section {
+            Picker(L10n.languageLabel.localized(), selection: languageBinding) {
+                ForEach(AppLocale.allCases) { locale in
+                    Text(locale.displayName).tag(locale)
+                }
+            }
+
+            // #340: appearance scheme — System / Light / Dark (applied via
+            // preferredColorScheme in App.swift). #343: relabeled "Theme" —
+            // the section header carries "Appearance" now.
+            // #456 was: "+ Gray, a real fourth colour scheme". Gray is gone (a
+            // fourth scheme diluted the palette and forced a full TabView rebuild
+            // to refresh Theme's tokens); the picker iterates allCases, so it
+            // dropped out of this list with the case, and Light is now tuned to
+            // be genuinely good rather than a fallback.
+            // #471: the DEFAULT is System now (`SettingsStore.Defaults`) — a
+            // premium iOS app follows the device unless it is told otherwise.
+            Picker(L10n.themeLabel.localized(), selection: $settings.appearanceMode) {
+                ForEach(AppearanceMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+
+            // #337: screenshot-safe mode — masks IPs in the Connections
+            // diagnostics rows and on VPS cards (display-only; copy + Logs
+            // stay real).
+            // #471: it used to be the last row of an "IP check" section, under a
+            // footer about the SPEED TEST. It is a privacy switch — how the app
+            // looks in a screenshot — not a diagnostic knob, so it sits with the
+            // other two "how the app presents itself" rows.
+            Toggle(L10n.maskIPsLabel.localized(), isOn: $settings.maskIPs)
+
+            // #470 was: the font-size row, slider and live preview. The app now
+            // follows the device's Text Size (iOS › Display & Brightness) instead
+            // of duplicating that setting behind a custom slider.
+        } header: {
+            // #343 was: sectionFont ("Font"). #470: and the font control itself
+            // is gone — the section is language + theme.
+            Text(L10n.appearanceLabel.localized())
+        } footer: {
+            // #460: wires `maskIPsFooter`, which #337 wrote and left unused.
+            // #471 was: `.font(.caption2)`.
+            Text(L10n.maskIPsFooter.localized())
+        }
+    }
+
+    /// #471: extracted so the language `Picker` stays one short expression — an
+    /// inline `Binding(get:set:)` inside a `Picker` inside a `Section` is the
+    /// shape that has broken this repo's type-checker before.
+    private var languageBinding: Binding<AppLocale> {
+        Binding(get: { AppLocale(rawValue: settings.language) ?? .english },
+                set: { settings.language = $0.rawValue })
+    }
+
+    // MARK: Updates (#460)
+
+    // #460 was: the update toggle sat in "Connection" with no explanation at
+    // all, while `updateCheckFooter` — written for exactly this row — sat unused
+    // in the L10n table. Own section, own footer, one row.
+    private var updatesSection: some View {
+        Section {
+            // #360: opt-out of the daily, anonymous GitHub-Releases update check.
+            Toggle(L10n.updateCheckLabel.localized(), isOn: $settings.updateCheckEnabled)
+        } header: {
+            Text(L10n.settingsSectionUpdates.localized())
+        } footer: {
+            // #471 was: `.font(.caption2)`.
+            Text(L10n.updateCheckFooter.localized())
+        }
+    }
+
+    // MARK: About (#471 — was `infoSection`)
+
+    // #471: the version, the unscoped way into the log reader, the one door to
+    // everything a user does not tune, and the reset. Three of the four are
+    // navigation; the fourth is the only destructive thing in Settings, and it
+    // now looks like every other destructive row in iOS.
+    private var aboutSection: some View {
+        Section {
+            versionRow
+            // #457: Logs stopped being a tab. This is its unscoped entrance —
+            // every OTHER way in is a push from the thing the log explains
+            // (a connection attempt, a provisioning run, one server's container).
+            // #460 (finding 21) was: `settingsOpenLogsRow` = "Diagnostics and
+            // logs" — a third destination sharing the word "Diagnostics" with a
+            // Connections card and a Settings section. It opens the log reader,
+            // so it says that.
+            // #471: it stays on the MAIN list even though the log knobs moved to
+            // Advanced — reading a log is a support flow, resizing its buffer is
+            // not.
+            NavigationLink {
+                LogsView(subject: .all, serverStore: serverStore, connections: connections)
+            } label: {
+                Text(L10n.settingsViewLogsRow.localized())
+            }
+            NavigationLink {
+                SettingsAdvancedView(tunnel: tunnel, botStore: botStore)
+            } label: {
+                Text(L10n.settingsAdvancedRow.localized())
+            }
+            // #455: a reset that gets the app out of any wedged state (e.g. a
+            // tunnel mode that can't be switched back) without reinstalling.
+            // #471 was: `OlcButton(role: .danger, fillWidth: true)` — a filled
+            // red button inside a grouped list, which is the one place iOS
+            // already has a convention for "this row destroys something".
+            Button(L10n.resetSettingsAction.localized(), role: .destructive) {
+                showResetConfirm = true
+            }
+        } header: {
+            Text(L10n.settingsSectionAbout.localized())
+        } footer: {
+            // #471 was: `.font(.caption2)`.
+            Text(L10n.resetSettingsFooter.localized())
+        }
+    }
+
+    private var versionRow: some View {
+        HStack {
+            Text("olcrtc-ios")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(appVersion)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var appVersion: String {
+        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2"
+        let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(v).\(b)"
+    }
+}
+
+// MARK: - SettingsAdvancedView (#471)
+//
+// The one push off the main Settings list, holding everything a server admin or
+// a developer tunes and a user of a VPN app never opens: the connection
+// intervals, the local SOCKS listener, the resolver, the video-transport
+// values, which service answers a check, and the log knobs.
+//
+// Nothing here is new — every row below was on the main Settings list before
+// #471, scattered through fourteen sections it shared with the rows people
+// actually use. The conventions are the parent's: a `Form` on the token ground,
+// a `TunnelSettingsNote` under each control it explains, a footer only where it
+// covers the whole section, and no chain long enough to worry the type-checker.
+//
+// #471 was: `socksSection`, `dnsRowSection`, `transportSection`, `startSection`,
+// half of `stayConnectedSection`, `ipCheckSection`, `speedTestSection`,
+// `logsSection` and `serversSection` — all within the first screenfuls of the
+// Settings tab.
+
+struct SettingsAdvancedView: View {
+    @ObservedObject private var settings = SettingsStore.shared
+    /// #313: the port check compares against the port the session actually
+    /// bound (`tunnel.boundPort`), not the configured one.
+    @ObservedObject var tunnel: TunnelManager
+    /// #471: the bot registry, passed through until its row finds its real home
+    /// (see `serversSection`).
+    @ObservedObject var botStore: BotStore
+
+    @State private var portCheck: PortAvailability.PortState?
+    @State private var socksPassInput: String = ""
+    @State private var socksPassLoaded = false
+    @FocusState private var anyFieldFocused: Bool
+
+    var body: some View {
+        advancedWiring(advancedChrome(advancedForm))
+    }
+
+    /// Seven children — under the ten-child `ViewBuilder` ceiling, ordered by
+    /// what a value acts on: the session, the listener, the resolver, the
+    /// codec, the checks, the logs, the registry.
+    private var advancedForm: some View {
+        Form {
+            connectionSection
+            proxySection
+            dnsRowSection
+            transportSection
+            diagnosticsSection
+            logsSection
+            serversSection
+        }
+    }
+
+    private func advancedChrome(_ content: some View) -> some View {
+        content
+            // (audit #299) token ground, like the parent Settings Form.
+            .scrollContentBackground(.hidden)
+            .background(Theme.Palette.bg)
+            .onDisappear { socksPassLoaded = false }
+    }
+
+    private func advancedWiring(_ content: some View) -> some View {
+        content
+            .navigationTitle(L10n.settingsAdvancedRow.localized())
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button(L10n.done.localized()) { anyFieldFocused = false }
                 }
             }
-            // #298: committing the font size triggers the app-wide dynamic-type
-            // relayout, which shifted the Settings viewport (it jumped). Pull the
-            // Font control back into view so the scroll position stays stable.
-            .onChange(of: settings.fontSizeIndex) { _, _ in
-                DispatchQueue.main.async {
-                    withAnimation { proxy.scrollTo(Self.fontAnchorID, anchor: .center) }
-                }
-            }
     }
 
-    // MARK: Pull to refresh (#460)
+    // MARK: Connection (#471)
 
-    /// #460: requirement 27 — "the swipe should refresh everything on whichever
-    /// screen I am on". Settings owns no server state, but two things here DO go
-    /// stale while the screen is open, and both are re-read for real (no faked
-    /// spinner): whether the configured SOCKS port is still free, and whether
-    /// this install is allowed to run the system VPN at all — a re-signed
-    /// sideload loses that entitlement, and the mode picker's VPN chip is gated
-    /// on it. The daily update check is NOT reachable from here: `UpdateChecker`
-    /// is owned by MainTabView and never passed down.
-    private func refreshSettings() async {
-        runPortCheck()
-        await tunnel.vpn.probeCapability()
+    // #471: the three values that TIME a session — how long to wait for it to
+    // come up, how often to prove it still passes traffic, and whether to
+    // restart it the moment it stops. Two intervals and an opt-in experiment
+    // (`earlyRestartOnWedge` is off by default and brittle by its own
+    // description), which is exactly why none of them is on the main list.
+    // #471 was: `startSection` (header "Starting a connection") plus two rows of
+    // `stayConnectedSection`, three sections apart.
+    private var connectionSection: some View {
+        Section {
+            numericField(L10n.startTimeoutLabel.localized(), value: $settings.startTimeoutSeconds,
+                         unit: L10n.unitSeconds.localized(),   // #455: was hardcoded "s"
+                         note: L10n.startTimeoutNote.localized())
+            numericField(L10n.tunnelCheckLabel.localized(), value: $settings.keepAliveSeconds,
+                         unit: L10n.unitSeconds.localized(),
+                         note: L10n.footerKeepAlive.localized())
+            // #440: opt-in early restart of a stuck session (off by default).
+            Toggle(L10n.earlyRestartWedgeLabel.localized(), isOn: $settings.earlyRestartOnWedge)
+            TunnelSettingsNote(text: L10n.earlyRestartWedgeNote.localized())
+        } header: {
+            Text(L10n.settingsSectionConnection.localized())
+        }
     }
 
-    // MARK: Tunnel (#457 — absorbed from the deleted Config tab)
-
-    /// #457: the Config tab's live sections, now FIRST in Settings. Both bodies
-    /// live in ConfigView.swift so this file doesn't grow (SwiftUI type-checker
-    /// budget) — see `TunnelSettingsModeSection` / `TunnelSettingsOnOpenSection`.
-    /// #460 was: `TunnelSettingsReliabilitySection` — see that file.
-    @ViewBuilder
-    private var tunnelGroup: some View {
-        TunnelSettingsModeSection(tunnel: tunnel)
-        TunnelSettingsOnOpenSection()
-    }
-
-    // MARK: Connection (#460 — was one section for four subjects)
-
-    @ViewBuilder
-    private var connectionGroup: some View {
-        startSection
-        stayConnectedSection
-    }
-
-    // MARK: Network (#460 group: the listener, the resolver, the codec)
-
-    @ViewBuilder
-    private var networkGroup: some View {
-        socksSection
-        dnsRowSection
-        transportSection
-    }
-
-    // MARK: Checks (#460 — was one "Diagnostics" section; findings 20/21)
-
-    @ViewBuilder
-    private var checksGroup: some View {
-        ipCheckSection
-        speedTestSection
-    }
-
-    // MARK: App-level (#460)
-
-    @ViewBuilder
-    private var appGroup: some View {
-        updatesSection
-        appearanceSection
-    }
-
-    // MARK: SOCKS
+    // MARK: Proxy (#471 — was the "SOCKS5" section on the main list)
 
     // #343 was: two sections (port+check / auth) with three stacked footers —
     // one section now.
     // #460: the section footer said "Port change takes effect on the next
     // connection" and rendered under the PASSWORD field whenever auth was on —
     // the same fault as findings 10/11/20, one screen down. Both sentences are
-    // notes on their own rows now, and `socksAuthFooter` (written in #343, then
-    // left unused when its section was merged away) explains the auth toggle
-    // again instead of nothing explaining it.
+    // notes on their own rows now, and `socksAuthFooter` explains the auth
+    // toggle again instead of nothing explaining it.
+    // #471: the header names the thing, not the wire protocol, and the main list
+    // keeps a read-only summary of the port (`TunnelSettingsPortRow`) — someone
+    // pointing OTHER apps at the tunnel needs to READ that number far more often
+    // than to change it.
     @ViewBuilder
-    private var socksSection: some View {
+    private var proxySection: some View {
         Section {
-            HStack {
-                Text(L10n.settingsPortLabel.localized())
-                Spacer()
-                TextField("8808", value: $settings.socksPort, format: .number.grouping(.never))
-                    .multilineTextAlignment(.trailing)
-                    .keyboardType(.numberPad)
-                    .focused($anyFieldFocused)
-                    .frame(width: 90)
-                // #455: design-system button (was a raw `.bordered`/`.small`
-                // system button — the only one left on this screen) so it
-                // matches every other control and taps with haptic feedback.
-                OlcButton(L10n.randomPortAction.localized(), role: .secondary, compact: true) {
-                    settings.socksPort = Int.random(in: 1024...65535)
-                }
-            }
+            portRow
             TunnelSettingsNote(text: L10n.socksPortChangeNote.localized())
-
             // #460 was: the whole check ran inline in this button's action — it
-            // is a method now, so the pull-to-refresh gesture runs exactly the
-            // same check instead of a second copy of it.
+            // is a method now, so one code path answers the question.
             Button { runPortCheck() } label: { portCheckLabel }
-
             Toggle(L10n.localSocksAuthLabel.localized(), isOn: $settings.localSocksAuthEnabled)
             TunnelSettingsNote(text: L10n.socksAuthFooter.localized())
             if settings.localSocksAuthEnabled {
-                TextField(L10n.socksUserLabel.localized(), text: $settings.localSocksUser)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                SecureField(L10n.socksPassLabel.localized(), text: $socksPassInput)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onAppear {
-                        if !socksPassLoaded {
-                            socksPassInput = settings.localSocksPass
-                            socksPassLoaded = true
-                        }
-                    }
-                    .onChange(of: socksPassInput) { _, v in
-                        settings.localSocksPass = v
-                    }
+                authFields
             }
         } header: {
-            Text(L10n.sectionSOCKS5.localized())
+            Text(L10n.settingsSectionProxy.localized())
         }
+        // #470: the verdict describes the port that was CHECKED. Typing a new
+        // one or tapping "Random port" left "free" / "in use" beside a port
+        // nobody had checked — the next connect could then fail with OLC-1026.
+        .onChange(of: settings.socksPort) { _, _ in portCheck = nil }
+    }
+
+    private var portRow: some View {
+        HStack {
+            Text(L10n.settingsPortLabel.localized())
+            Spacer()
+            TextField("8808", value: $settings.socksPort, format: .number.grouping(.never))
+                .multilineTextAlignment(.trailing)
+                .keyboardType(.numberPad)
+                .focused($anyFieldFocused)
+                .frame(width: 90)
+            // #455: design-system button (was a raw `.bordered`/`.small` system
+            // button) so it matches every other control and taps with haptic
+            // feedback.
+            OlcButton(L10n.randomPortAction.localized(), role: .secondary, compact: true) {
+                settings.socksPort = Int.random(in: 1024...65535)
+            }
+        }
+    }
+
+    /// #471: extracted from the section body — the `SecureField`'s two lifecycle
+    /// modifiers on top of the section's other five children was one expression
+    /// more than this repo's type-checker budget likes.
+    @ViewBuilder
+    private var authFields: some View {
+        TextField(L10n.socksUserLabel.localized(), text: $settings.localSocksUser)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+        SecureField(L10n.socksPassLabel.localized(), text: $socksPassInput)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .onAppear {
+                if !socksPassLoaded {
+                    socksPassInput = settings.localSocksPass
+                    socksPassLoaded = true
+                }
+            }
+            .onChange(of: socksPassInput) { _, v in
+                settings.localSocksPass = v
+            }
     }
 
     private var portCheckLabel: some View {
@@ -342,7 +538,10 @@ struct SettingsView: View {
                     Text(L10n.sectionDNS.localized())
                     Spacer()
                     Text(dnsSummary)
-                        .font(.system(.caption, design: .monospaced))
+                        // #471 was: `.font(.system(.caption, design: .monospaced))`
+                        // — byte-identical to the step-6 token; the scale just
+                        // gets to own the definition.
+                        .font(Theme.Typography.mono)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -361,18 +560,19 @@ struct SettingsView: View {
 
     // MARK: Numeric field helper
     //
-    // Replaces Stepper. TextField for direct entry + quick-pick row for typical
-    // values. Out-of-range entries are auto-clamped by SettingsStore.didSet.
-
-    /// A labelled quick-pick value for the log buffer size stepper row.
-    private struct Preset { let value: Int; let label: String }
+    // Replaces Stepper: a TextField for direct entry. Out-of-range entries are
+    // auto-clamped by SettingsStore.didSet.
+    //
+    // #471 was: the field, then an `OlcChipPicker` row of "preset" values, then
+    // the note — a custom control mounted inside a native Form row, six times
+    // over. The field and its unit are enough, and those presets were the
+    // defaults, which "Reset all settings" already restores.
 
     @ViewBuilder
     private func numericField(_ title: String,
-                               value: Binding<Int>,
-                               presets: [Preset],
-                               unit: String? = nil,
-                               note: String? = nil) -> some View {
+                              value: Binding<Int>,
+                              unit: String? = nil,
+                              note: String? = nil) -> some View {
         HStack {
             Text(title)
             Spacer()
@@ -384,8 +584,6 @@ struct SettingsView: View {
                 .frame(width: 80)
             if let unit { Text(unit).foregroundStyle(.secondary) }
         }
-        // #258: design-system chip picker (was a row of .mini bordered buttons).
-        OlcChipPicker(selection: value, options: presets.map { ($0.value, $0.label) })
         // #460 (findings 10/11): an explanation that belongs to ONE control
         // renders under that control, not in a section footer four rows down.
         if let note {
@@ -393,18 +591,12 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Transport tuning
+    // MARK: Video transport
 
     private var transportSection: some View {
         Section {
-            numericField(L10n.vp8FpsLabel.localized(), value: $settings.vp8FPS,
-                         presets: [Preset(value: 15, label: "15"),
-                                   Preset(value: 30, label: "30"),
-                                   Preset(value: 60, label: "60")])
-            numericField(L10n.vp8BatchLabel.localized(), value: $settings.vp8BatchSize,
-                         presets: [Preset(value: 1,  label: "1"),
-                                   Preset(value: 8,  label: "8"),
-                                   Preset(value: 64, label: "64")])
+            numericField(L10n.vp8FpsLabel.localized(), value: $settings.vp8FPS)
+            numericField(L10n.vp8BatchLabel.localized(), value: $settings.vp8BatchSize)
         } header: {
             Text(L10n.sectionVP8.localized())
         } footer: {
@@ -412,279 +604,24 @@ struct SettingsView: View {
             // symbol "MobileSetVP8Options" and the literal "transport=vp8channel".
             // Both rows here are that one subject, so a section footer is still
             // the right place — only the words changed.
+            // #471 was: `.font(.caption2)`.
             Text(L10n.vp8Note.localized())
-                .font(.caption2)
         }
     }
 
-    // MARK: Starting a connection (#460)
-
-    // #460 was: part of one "Connection" section that also held auto-connect,
-    // the VPS-uninstall side effect, keep-alive, background audio, the wedge
-    // toggle, update checking and the log level (finding 13). One row, one
-    // subject, and the footer below it can only mean that row.
-    private var startSection: some View {
-        Section {
-            numericField(L10n.startTimeoutLabel.localized(), value: $settings.startTimeoutSeconds,
-                         presets: [Preset(value: 30,  label: "30"),
-                                   Preset(value: 60,  label: "60"),
-                                   Preset(value: 120, label: "120")],
-                         unit: L10n.unitSeconds.localized())   // #455: was hardcoded "s"
-        } header: {
-            Text(L10n.settingsSectionStart.localized())
-        } footer: {
-            Text(L10n.startTimeoutNote.localized()).font(.caption2)
-        }
-    }
-
-    // MARK: Staying connected (#460)
-
-    // #460 (finding 10): `footerKeepAlive` used to be this section's footer and
-    // rendered after four unrelated rows AND the log-level picker. It is the
-    // same sentence, now attached to the field it describes; the other two rows
-    // got the notes they never had.
-    private var stayConnectedSection: some View {
-        Section {
-            numericField(L10n.tunnelCheckLabel.localized(), value: $settings.keepAliveSeconds,
-                         presets: [Preset(value: 0,  label: L10n.keepAliveOff.localized()),
-                                   Preset(value: 30, label: "30"),
-                                   Preset(value: 60, label: "60")],
-                         unit: L10n.unitSeconds.localized(),
-                         note: L10n.footerKeepAlive.localized())
-            // #440: opt-in early restart of a stuck session (off by default).
-            Toggle(L10n.earlyRestartWedgeLabel.localized(), isOn: $settings.earlyRestartOnWedge)
-            TunnelSettingsNote(text: L10n.earlyRestartWedgeNote.localized())
-            Toggle(L10n.backgroundAudioLabel.localized(), isOn: $settings.backgroundAudio)
-            TunnelSettingsNote(text: L10n.backgroundAudioNote.localized())
-        } header: {
-            Text(L10n.settingsSectionStayConnected.localized())
-        }
-    }
-
-    // MARK: Servers (#460 — the two settings that are about your VPS list)
-
-    // #460 was: `autoRemoveConnectionOnUninstall` sat under "Connection" (it is
-    // a Servers-tab side effect), and Bots was a section of its own holding one
-    // link row.
-    private var serversSection: some View {
-        Section {
-            Toggle(L10n.autoRemoveConnectionOnUninstallLabel.localized(),
-                   isOn: $settings.autoRemoveConnectionOnUninstall)
-            TunnelSettingsNote(text: L10n.autoRemoveOnUninstallNote.localized())
-            NavigationLink {
-                BotsSettingsView(botStore: botStore)
-            } label: {
-                HStack {
-                    Text(L10n.sectionBots.localized())
-                    Spacer()
-                    Text("\(botStore.bots.count)")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-        } header: {
-            Text(L10n.serversTitle.localized())
-        }
-    }
-
-    // MARK: Logs
-
-    // #343 was: three sections (buffer / container tail / clear-all) with two
-    // footers. #460 (finding 11) was: one "Logs" section whose single footer
-    // ("Maximum number of lines kept in memory per log category") rendered under
-    // the "Clear all logs" BUTTON. Everything here is one subject — logs — so
-    // the section stays whole and each explanation moved onto its own row.
-    private var logsSection: some View {
-        Section {
-            // #457: Logs stopped being a tab. This is its unscoped entrance —
-            // every OTHER way in is a push from the thing the log explains
-            // (a connection attempt, a provisioning run, one server's container).
-            // #460 (finding 21) was: `settingsOpenLogsRow` = "Diagnostics and
-            // logs" — a third destination sharing the word "Diagnostics" with a
-            // Connections card and a Settings section. It opens the log reader,
-            // so it says that.
-            NavigationLink {
-                LogsView(subject: .all, serverStore: serverStore, connections: connections)
-            } label: {
-                Text(L10n.settingsViewLogsRow.localized())
-            }
-            Picker(L10n.logLevelLabel.localized(), selection: $settings.logLevel) {
-                ForEach(LogLevel.allCases, id: \.self) { level in
-                    Text(level.label).tag(level)
-                }
-            }
-            TunnelSettingsNote(text: L10n.logLevelNote.localized())
-            numericField(L10n.logBufferLabel.localized(), value: $settings.logBufferSize,
-                         presets: [Preset(value: 500,  label: "500"),
-                                   Preset(value: 1000, label: "1k"),
-                                   Preset(value: 5000, label: "5k")],
-                         note: L10n.footerLogBuffer.localized())
-            numericField(L10n.containerLogsTailLabel.localized(), value: $settings.containerLogsTailLines,
-                         presets: [Preset(value: 100,  label: "100"),
-                                   Preset(value: 200,  label: "200"),
-                                   Preset(value: 1000, label: "1k")],
-                         note: L10n.containerLogsTailNote.localized())
-            // #258: danger design-system button (was a plain destructive row).
-            OlcButton(L10n.clearAllLogsAction.localized(), systemImage: "trash",
-                      role: .danger, fillWidth: true) {
-                LogStore.shared.clearAll()
-                // #455: the clear is instant and its effect is off-screen (the
-                // log reader is a pushed destination since #457), so confirm it fired.
-                Haptics.success()
-            }
-        } header: {
-            Text(L10n.sectionLogs.localized())
-        }
-    }
-
-    // MARK: Updates (#460)
-
-    // #460 was: the update toggle sat in "Connection" with no explanation at
-    // all, while `updateCheckFooter` — written for exactly this row — sat unused
-    // in the L10n table. Own section, own footer, one row.
-    private var updatesSection: some View {
-        Section {
-            // #360: opt-out of the daily, anonymous GitHub-Releases update check.
-            Toggle(L10n.updateCheckLabel.localized(), isOn: $settings.updateCheckEnabled)
-        } header: {
-            Text(L10n.settingsSectionUpdates.localized())
-        } footer: {
-            Text(L10n.updateCheckFooter.localized()).font(.caption2)
-        }
-    }
-
-    // MARK: Appearance
-
-    private var appearanceSection: some View {
-        Section {
-            Picker(L10n.languageLabel.localized(),
-                   selection: Binding(
-                    get: { AppLocale(rawValue: settings.language) ?? .english },
-                    set: { settings.language = $0.rawValue }
-                   )) {
-                ForEach(AppLocale.allCases) { locale in
-                    Text(locale.displayName).tag(locale)
-                }
-            }
-
-            // #340: appearance scheme — System / Light / Dark (applied via
-            // preferredColorScheme in App.swift). #343: relabeled "Theme" —
-            // the section header carries "Appearance" now.
-            // #456 was: "+ Gray, a real fourth colour scheme". Gray is gone (a
-            // fourth scheme diluted the palette and forced a full TabView rebuild
-            // to refresh Theme's tokens); the picker iterates allCases, so it
-            // dropped out of this list with the case, and Light is now tuned to
-            // be genuinely good rather than a fallback.
-            Picker(L10n.themeLabel.localized(), selection: $settings.appearanceMode) {
-                ForEach(AppearanceMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-
-            HStack {
-                Text(L10n.fontSizeLabel.localized())
-                Spacer()
-                Text(fontLiveLabel)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .id(Self.fontAnchorID)   // #298: re-anchor here after the relayout
-            fontSlider
-            fontPreview
-        } header: {
-            // #343 was: sectionFont ("Font") — the section holds language +
-            // theme + font now.
-            Text(L10n.appearanceLabel.localized())
-        } footer: {
-            // #460 (finding 18) was: `fontFooter`, which explained the control
-            // by naming the SwiftUI API it calls ("via SwiftUI dynamicTypeSize").
-            Text(L10n.fontNote.localized())
-                .font(.caption2)
-        }
-    }
-
-    // #280: drag updates local @State (cheap — only this row + the preview
-    // re-render); the app-wide `fontSizeIndex` (and its UserDefaults write +
-    // full-tree relayout) commits once, on release.
-    // (audit) range starts at the -1 "System" position: no app override, the
-    // device's Text Size (incl. AX sizes) applies; XS…XXXL stay an explicit
-    // override.
-    // #460: extracted from the section body — the Slider's six trailing
-    // closures were the heaviest single expression on this screen.
-    private var fontSlider: some View {
-        Slider(
-            value: Binding(
-                get: { fontDragIndex ?? Double(settings.fontSizeIndex) },
-                set: { fontDragIndex = $0 }
-            ),
-            in: Double(SettingsStore.systemFontSizeIndex)...Double(SettingsStore.fontSizes.count - 1),
-            step: 1,
-            label: { Text(L10n.fontSizeLabel.localized()) },
-            minimumValueLabel: { Text("A").font(.caption2) },
-            maximumValueLabel: { Text("A").font(.title3) },
-            onEditingChanged: { editing in
-                if !editing {
-                    if let v = fontDragIndex { settings.fontSizeIndex = Int(v.rounded()) }
-                    fontDragIndex = nil
-                }
-            }
-        )
-    }
-
-    // Live preview without committing: scope the dragged size to this text.
-    // (audit) the "System" position has no override — the preview renders at the
-    // inherited size (a leaf Text, so the branch swap is harmless).
-    @ViewBuilder
-    private var fontPreview: some View {
-        if fontLiveIndex == SettingsStore.systemFontSizeIndex {
-            Text(L10n.fontPreviewText.localized())
-                .foregroundStyle(.secondary)
-        } else {
-            Text(L10n.fontPreviewText.localized())
-                .foregroundStyle(.secondary)
-                .environment(\.dynamicTypeSize, SettingsStore.fontSizes[fontLiveIndex])
-        }
-    }
-
-    // MARK: IP check (#460 — half of the old "Diagnostics" section)
+    // MARK: Diagnostics (#471)
 
     // #460 (findings 20/21) was: one "Diagnostics" section holding IP sources,
     // the speed-test provider AND "Hide IP addresses", with a footer about the
-    // SPEED TEST rendering under the IP toggle. Two subjects, two sections; each
-    // footer now sits under the row it describes. "Diagnostics" also named a
-    // card on Connections and the log-viewer row below — this half is "IP check".
-    private var ipCheckSection: some View {
+    // SPEED TEST rendering under the IP toggle — so #460 split it into two
+    // sections on the main list.
+    // #471: "Hide IP addresses" is a privacy switch and went to Appearance; what
+    // is left is two source pickers — WHICH service answers a check — a fallback
+    // for a blocked network, not a preference. One section again, both rows
+    // genuinely one subject, and the footer covers the row above it.
+    private var diagnosticsSection: some View {
         Section {
-            NavigationLink {
-                IPSourcesSettingsView()
-            } label: {
-                HStack {
-                    Text(L10n.sectionIPSources.localized())
-                    Spacer()
-                    Text("\(settings.enabledIPSources.count)")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            // #337: screenshot-safe mode — masks IPs in the Connections
-            // diagnostics rows and on VPS cards (display-only; copy + Logs
-            // stay real).
-            Toggle(L10n.maskIPsLabel.localized(), isOn: $settings.maskIPs)
-        } header: {
-            Text(L10n.ipCheckTitle.localized())
-        } footer: {
-            // The IP-sources explanation lives in its own subscreen, so the one
-            // footer here belongs to the row directly above it. #460: wires
-            // `maskIPsFooter`, which #337 wrote and left unused.
-            Text(L10n.maskIPsFooter.localized())
-                .font(.caption2)
-        }
-    }
-
-    // MARK: Speed test (#460 — the other half)
-
-    private var speedTestSection: some View {
-        Section {
+            ipSourcesRow
             Picker(L10n.sectionSpeedProvider.localized(), selection: $settings.speedTestProviderID) {
                 ForEach(AppConstants.SpeedTest.providers) { p in
                     Text(Self.providerName(p)).tag(p.id)
@@ -695,13 +632,28 @@ struct SettingsView: View {
             // so it arrived clipped ("speed.cl…are.com"). The name identifies the
             // provider; the host is data and gets a full line of its own.
             Text(speedProviderHost)
-                .font(.system(.caption, design: .monospaced))
+                // #471 was: `.font(.system(.caption, design: .monospaced))`.
+                .font(Theme.Typography.mono)
                 .foregroundStyle(.secondary)
         } header: {
-            Text(L10n.settingsSectionSpeedTest.localized())
+            Text(L10n.diagnosticsTitle.localized())
         } footer: {
+            // #471 was: `.font(.caption2)`.
             Text(L10n.speedProviderFooter.localized())
-                .font(.caption2)
+        }
+    }
+
+    private var ipSourcesRow: some View {
+        NavigationLink {
+            IPSourcesSettingsView()
+        } label: {
+            HStack {
+                Text(L10n.sectionIPSources.localized())
+                Spacer()
+                Text("\(settings.enabledIPSources.count)")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
         }
     }
 
@@ -727,33 +679,69 @@ struct SettingsView: View {
         return name.prefix(1).uppercased() + String(name.dropFirst())
     }
 
-    // MARK: Info
+    // MARK: Logs
 
-    private var infoSection: some View {
+    // #343 was: three sections (buffer / container tail / clear-all) with two
+    // footers. #460 (finding 11) was: one "Logs" section whose single footer
+    // ("Maximum number of lines kept in memory per log category") rendered under
+    // the "Clear all logs" BUTTON. Everything here is one subject — logs — so
+    // the section stays whole and each explanation sits on its own row.
+    // #471: "View all logs" stayed behind on the main list (reading a log is a
+    // support flow); what moved here are the four knobs that shape it.
+    private var logsSection: some View {
         Section {
-            HStack {
-                Text("olcrtc-ios")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(appVersion)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            Picker(L10n.logLevelLabel.localized(), selection: $settings.logLevel) {
+                ForEach(LogLevel.allCases, id: \.self) { level in
+                    Text(level.label).tag(level)
+                }
             }
-            // #455: a reset that gets the app out of any wedged state (e.g. a
-            // tunnel mode that can't be switched back) without reinstalling.
-            OlcButton(L10n.resetSettingsAction.localized(), systemImage: "arrow.counterclockwise",
-                      role: .danger, fillWidth: true) {
-                showResetConfirm = true
+            TunnelSettingsNote(text: L10n.logLevelNote.localized())
+            numericField(L10n.logBufferLabel.localized(), value: $settings.logBufferSize,
+                         note: L10n.footerLogBuffer.localized())
+            numericField(L10n.containerLogsTailLabel.localized(), value: $settings.containerLogsTailLines,
+                         note: L10n.containerLogsTailNote.localized())
+            // #471 was: `OlcButton(role: .danger, fillWidth: true)` — a filled
+            // red button inside a grouped list. A native destructive row is the
+            // convention iOS already has for this.
+            Button(L10n.clearAllLogsAction.localized(), role: .destructive) {
+                LogStore.shared.clearAll()
+                // #455: the clear is instant and its effect is off-screen (the
+                // log reader is a pushed destination since #457), so confirm it fired.
+                Haptics.success()
             }
-        } footer: {
-            Text(L10n.resetSettingsFooter.localized()).font(.caption2)
+        } header: {
+            Text(L10n.sectionLogs.localized())
         }
     }
 
-    private var appVersion: String {
-        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2"
-        let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        return "\(v).\(b)"
+    // MARK: Servers (#471)
+
+    // #471: the bot registry, waiting for its real home. It is read by exactly
+    // one screen — the per-server bot sheet on the Servers tab — so the row
+    // belongs there rather than in Settings; that move is a ServersView change
+    // and not this pass's to make. Until then the row lives here: off the main
+    // list, still one push from it, and nothing becomes unreachable.
+    // #471 was: a "Servers" section on the MAIN list holding this row and the
+    // "Remove linked connection when VPS is uninstalled" toggle. That toggle is
+    // gone — removing a server now always removes the connections it created
+    // (`SettingsStore.autoRemoveConnectionOnUninstall` is pinned on), which is a
+    // sentence in the confirm dialog rather than a choice made months earlier.
+    private var serversSection: some View {
+        Section {
+            NavigationLink {
+                BotsSettingsView(botStore: botStore)
+            } label: {
+                HStack {
+                    Text(L10n.sectionBots.localized())
+                    Spacer()
+                    Text("\(botStore.bots.count)")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+        } header: {
+            Text(L10n.serversTitle.localized())
+        }
     }
 }
 
@@ -781,8 +769,8 @@ struct IPSourcesSettingsView: View {
                     }
                 }
             } footer: {
+                // #471 was: `.font(.caption2)` — a Form footer already is a caption.
                 Text(L10n.ipSourcesFooter.localized())
-                    .font(.caption2)
             }
         }
         // (audit #299) token ground, like the parent Settings Form.
@@ -803,6 +791,44 @@ struct DNSSettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @FocusState private var fieldFocused: Bool
 
+    // boc #470
+    /// The free-form field edits a DRAFT; only a valid `host:port` reaches the
+    /// store. Master's `SetDNS` rejects anything else (`validateHostPort`:
+    /// net.SplitHostPort, non-empty host, port 1…65535), so a bare "8.8.8.8" or
+    /// a trailing space failed EVERY connect with the raw Go error, and
+    /// `installEnv` baked the same string into the server's `dns:` line.
+    @State private var dnsDraft: String = SettingsStore.shared.dnsServer
+
+    private var dnsDraftBinding: Binding<String> {
+        Binding(get: { dnsDraft }, set: { value in
+            dnsDraft = value
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if Self.isValidResolver(trimmed) { settings.dnsServer = trimmed }
+        })
+    }
+
+    private var draftIsValid: Bool {
+        Self.isValidResolver(dnsDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// PURE: the Go runtime's rule, so the field refuses exactly what the core
+    /// would refuse. Tested in Tests/Review470Chunk5Tests.swift.
+    static func isValidResolver(_ value: String) -> Bool {
+        guard let colon = value.lastIndex(of: ":") else { return false }
+        var host = String(value[..<colon])
+        let portText = String(value[value.index(after: colon)...])
+        if host.hasPrefix("[") {
+            guard host.hasSuffix("]") else { return false }
+            host = String(host.dropFirst().dropLast())
+        } else if host.contains(":") {
+            return false   // an unbracketed IPv6 literal — "too many colons" to SplitHostPort
+        }
+        guard !host.isEmpty, host.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let port = Int(portText), (1...65535).contains(port) else { return false }
+        return true
+    }
+    // eoc #470
+
     /// Global presets + RU-carrier presets (labels localized). Keyed by label
     /// — values are NOT unique (Yota shares MegaFon's resolver).
     private var presets: [(label: String, value: String)] {
@@ -816,17 +842,20 @@ struct DNSSettingsView: View {
                 ForEach(presets, id: \.label) { preset in
                     Button {
                         settings.dnsServer = preset.value
+                        dnsDraft = preset.value   // #470: the field mirrors the pick
                     } label: {
                         HStack {
                             Text(preset.label)
                                 .foregroundStyle(Theme.Palette.textPrimary)
                             Spacer()
                             Text(preset.value)
-                                .font(.system(.caption, design: .monospaced))
+                                // #471 was: `.font(.system(.caption, design: .monospaced))`.
+                                .font(Theme.Typography.mono)
                                 .foregroundStyle(Theme.Palette.textSecondary)
                             if settings.dnsServer == preset.value {
                                 Image(systemName: "checkmark")
-                                    .font(.footnote.weight(.semibold))
+                                    // #471 was: `.font(.footnote.weight(.semibold))`.
+                                    .font(Theme.Typography.captionStrong)
                                     .foregroundStyle(Theme.Palette.accent)
                             }
                         }
@@ -834,16 +863,24 @@ struct DNSSettingsView: View {
                 }
             } footer: {
                 // The long explanation lives here now, off the main list (#343).
+                // #471 was: `.font(.caption2)`.
                 Text(L10n.dnsFooter.localized())
-                    .font(.caption2)
             }
 
             Section {
-                TextField(L10n.dnsFreeFormPlaceholder.localized(), text: $settings.dnsServer)
+                // #470 was: `text: $settings.dnsServer` — every keystroke reached the store.
+                TextField(L10n.dnsFreeFormPlaceholder.localized(), text: dnsDraftBinding)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
                     .focused($fieldFocused)
+                // #470: the row says WHY the value is not taking effect.
+                if !draftIsValid {
+                    Text(L10n.dnsInvalidNote.localized())
+                        // #471 was: `.font(.footnote)`.
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.Palette.red)
+                }
             }
         }
         // (audit #299) token ground, like the parent Settings Form.
@@ -887,7 +924,8 @@ struct BotsSettingsView: View {
                     .onDelete { botStore.remove(at: $0) }
                 }
             } footer: {
-                Text(L10n.botsFooter.localized()).font(.caption2)
+                // #471 was: `.font(.caption2)`.
+                Text(L10n.botsFooter.localized())
             }
         }
         // (audit #299) token ground, like the parent Settings Form.
@@ -976,7 +1014,8 @@ struct BotEditorView: View {
                     Text(L10n.botTokenLabel.localized())
                 } footer: {
                     // #428: tell the user the token comes from the platform first.
-                    Text(L10n.botTokenCreateHint.localized()).font(.caption2)
+                    // #471 was: `.font(.caption2)`.
+                    Text(L10n.botTokenCreateHint.localized())
                 }
             }
             .navigationTitle(existing == nil ? L10n.botAddTitle.localized()
@@ -1025,5 +1064,13 @@ struct BotEditorView: View {
     SettingsView(tunnel: TunnelManager(), botStore: BotStore(),
                  serverStore: ServerHostStore(), connections: ConnectionStore())
         .preferredColorScheme(.light)
+}
+// #471: the Advanced screen is seven sections deep behind a push — previewing
+// it through the parent means four taps per rebuild.
+#Preview("Settings — Advanced") {
+    NavigationStack {
+        SettingsAdvancedView(tunnel: TunnelManager(), botStore: BotStore())
+    }
+    .preferredColorScheme(.dark)
 }
 #endif

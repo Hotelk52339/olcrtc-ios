@@ -19,6 +19,8 @@
 # and vp8/sei tuning are salvaged from the old server.yaml where readable and
 # fall back to srv.sh's own defaults otherwise; videochannel tuning always
 # falls back to defaults (not exposed in the app UI, same as install).
+# #470: the wbstream auth.token is salvaged too — the rewrite used to drop it,
+# so a wbstream primary came back as an anonymous guest after every rotation.
 #
 # srv.sh parity: blocks copied verbatim from scripts/srv.sh are wrapped in
 # `# boc srv.sh` / `# eoc srv.sh` markers. Tests/RotateKeyScriptTests.swift
@@ -61,6 +63,9 @@ ROOM_ID=$(yaml_str id)
 DNS=$(yaml_str dns)
 SOCKS_PROXY_ADDR=$(yaml_str proxy_addr)
 SOCKS_PROXY_PORT=$(yaml_int proxy_port)
+# #470: wbstream auth.token — written back below through srv.sh's own
+# conditional `token:` heredoc (#436), which this rewrite used to skip.
+WB_TOKEN=$(yaml_str token)
 
 # Fall back to srv.sh's own defaults (the values it uses when the OLCRTC_*
 # env vars are unset) for anything unreadable.
@@ -150,6 +155,17 @@ cat > "$CONFIG_FILE" <<EOF
 mode: $MODE
 auth:
   provider: "$PROVIDER"
+EOF
+
+# #470: srv.sh's conditional auth.token line (#436) — was missing here, so the
+# rewrite silently deleted a wbstream server's token.
+if [ -n "$WB_TOKEN" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+  token: "$WB_TOKEN"
+EOF
+fi
+
+cat >> "$CONFIG_FILE" <<EOF
 room:
   id: "$ROOM_ID"
 crypto:
@@ -244,7 +260,12 @@ echo "OLCRTC_CONTAINER=$CONTAINER_NAME"
 # container too, and report each resulting URI so the app can update the
 # matching ConnectionRecords (the app splits each line on the FIRST '|').
 # Best-effort per sibling: an unreadable yaml still gets its key line
-# rewritten but reports no URI; a missing/stopped container is ignored.
+# rewritten but reports no URI. #470: only a RUNNING sibling is restarted —
+# `podman restart` would START a container the user stopped on purpose; a
+# stopped one picks the rewritten yaml up on its next start. A failed restart
+# is reported as a [!] line; the URI is still emitted either way, because the
+# yaml now holds the new key and the app's record must follow it.
+# #470 was: "a missing/stopped container is ignored" — untrue for a stopped one.
 # videochannel siblings report a payload-free URI (tuning is server-side
 # defaults there, same as install).
 sib_str() { sed -n "s/^  $1: \"\(.*\)\"\$/\1/p" "$SIB_CONFIG" 2>/dev/null | head -1; }
@@ -255,8 +276,14 @@ for SIB_CONFIG in "$WORK_DIR"/server-*.yaml; do
     SIB_CARRIER="${SIB_CARRIER%.yaml}"
     SIB="${CONTAINER_NAME}-${SIB_CARRIER}"
     sed -i "s|^  key: \".*\"|  key: \"$KEY\"|" "$SIB_CONFIG" 2>/dev/null || true
-    echo "[*] Rotated key in ${SIB_CONFIG##*/}; restarting ${SIB}..."
-    podman restart "$SIB" >/dev/null 2>&1 || true
+    # #470 was: an unconditional best-effort restart (`… || true`) of every sibling.
+    if podman ps --format '{{.Names}}' | grep -q "^${SIB}$" 2>/dev/null; then
+        echo "[*] Rotated key in ${SIB_CONFIG##*/}; restarting ${SIB}..."
+        podman restart "$SIB" >/dev/null 2>&1 \
+            || echo "[!] ${SIB} restart failed — start it from the server card so the new key takes effect"
+    else
+        echo "[*] Rotated key in ${SIB_CONFIG##*/}; ${SIB} is not running — the new key applies on its next start"
+    fi
     SIB_PROVIDER=$(sib_str provider)
     SIB_TRANSPORT=$(sib_str transport)
     SIB_ROOM=$(sib_str id)

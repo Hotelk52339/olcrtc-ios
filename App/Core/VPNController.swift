@@ -188,6 +188,28 @@ final class VPNController: ObservableObject {
         manager?.connection.stopVPNTunnel()
     }
 
+    // boc #470: `providerConfiguration` keeps the room key and the WB token in
+    // the system's VPN profile for as long as the profile exists — a secret at
+    // rest outside the Keychain, long after the session ended. Blank the two
+    // once the tunnel is down. `start()` writes the full configuration before
+    // every launch, so nothing depends on them surviving; and this re-saves an
+    // EXISTING profile (never `removeFromPreferences`, which would re-prompt
+    // for consent).
+    private func scrubStoredSecrets() {
+        guard let manager, manager.connection.status == .disconnected,
+              let proto = manager.protocolConfiguration as? NETunnelProviderProtocol,
+              var config = proto.providerConfiguration, !config.isEmpty else { return }
+        let names = VPNConfig.secretConfigKeys
+        // Nothing to do when they are already blank — a save per status change
+        // would be pointless churn against the system's preferences store.
+        guard names.contains(where: { !((config[$0] as? String) ?? "").isEmpty }) else { return }
+        for name in names { config[name] = "" }
+        proto.providerConfiguration = config
+        manager.protocolConfiguration = proto
+        Task { try? await manager.saveToPreferences() }
+    }
+    // eoc #470
+
     // MARK: Provider messages
 
     /// Provider stats via NETunnelProviderSession.sendProviderMessage
@@ -246,7 +268,10 @@ final class VPNController: ObservableObject {
         if current == .disconnected, wasUp, !stopRequested {
             fetchLastDisconnectError()
         }
-        if current == .disconnected { stopRequested = false }
+        if current == .disconnected {
+            stopRequested = false
+            scrubStoredSecrets()   // #470
+        }
     }
 
     private func fetchLastDisconnectError() {

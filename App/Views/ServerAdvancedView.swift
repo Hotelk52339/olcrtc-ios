@@ -9,7 +9,9 @@ import SwiftUI
 // where SO MUCH is shown".
 //
 // The split is by frequency, not by danger alone:
-//   • constantly       → visible buttons on the card (Check server, Container logs)
+//   • constantly       → the card's two text links (Logs, Manage ›)
+//                        (#471 was: "visible buttons on the card (Check
+//                        server, Container logs)" — both are gone as buttons)
 //   • the next step    → the card's ONE primary button (Start / Stop / Install…)
 //   • occasionally     → the card's ⋯ menu, now 5 safe items
 //   • rarely / destructive → here
@@ -25,6 +27,23 @@ import SwiftUI
 // Plain values and closures only — no stores, no `@ObservedObject` — the same
 // rule `ServerCardView` and `ProtocolRowView` follow, so this screen costs the
 // type-checker nothing. (ServersView has hit its expression budget three times.)
+
+/// #471: the machine readings, moved off the VPS card. They are a diagnostic,
+/// not a verdict — `df` / `free` / `uptime` and a TCP-22 round-trip — so they
+/// belong on the screen you open when you want to LOOK at a server, not on the
+/// one that answers "does it work". Pre-formatted by ServersView, whose
+/// `shortUsage` / `shortRAM` / `shortUptime` statics stay there because
+/// `VPSStatFormattingTests` pins them by name.
+/// #471 was: `ServerCardMetrics` + `ServerMetricsGrid`
+/// (App/Views/ServerCardView.swift) — a 2×2 grid of uppercase tracked labels
+/// over body-size monospaced semibold values, on the card.
+struct ServerMachineStats {
+    let ping: String
+    let pingTone: Color
+    let disk: String
+    let ram: String
+    let uptime: String
+}
 
 struct ServerAdvancedView: View {
     /// Server label, for the title.
@@ -49,9 +68,21 @@ struct ServerAdvancedView: View {
     let onUninstall: () -> Void
     let onDeepUninstall: () -> Void
     let onRemoveHost: () -> Void
+    // boc #471: what this screen is FOR, besides deleting things.
+    /// "user@host:port", already IP-masked by the caller — the Machine
+    /// section's identity line.
+    let addressLine: String
+    /// The four readings the VPS card used to draw as a grid.
+    let machine: ServerMachineStats
+    /// How old all of it is ("read 2 min ago"), or the honest "nothing has been
+    /// read yet". This is where the card's deleted `readStamp` ends up: the one
+    /// place where an age dates NUMBERS rather than a claim.
+    let readCaption: String
+    // eoc #471
 
     var body: some View {
         Form {
+            machineSection   // #471
             connectionSection
             maintenanceSection
             removeSection
@@ -59,6 +90,53 @@ struct ServerAdvancedView: View {
         .navigationTitle(L10n.vpsAdvancedTitle_fmt.formatted(hostLabel))
         .navigationBarTitleDisplayMode(.inline)
         .disabled(actionsDisabled)
+    }
+
+    // MARK: Machine (#471)
+    //
+    // #471: the reason this screen is no longer only destructive rows. The
+    // owner opened "Manage server" to find four ways to delete something; the
+    // first thing it shows now is what the server IS — where it lives, how full
+    // its disk is, how much memory it has, how long it has been up — dated once,
+    // in the footer, by the reading all four came from.
+    //
+    // Read-only by construction: plain `Text`, no `Button`, no destination. The
+    // card can afford to drop these because they are still HERE.
+
+    private var machineSection: some View {
+        Section {
+            Text(addressLine)
+                .font(Theme.Typography.mono)
+                .foregroundStyle(Theme.Palette.textSecondary)
+            statRow(L10n.vpsStatPing.localized(), machine.ping, tone: machine.pingTone)
+            statRow(L10n.vpsStatDisk.localized(), machine.disk)
+            statRow(L10n.vpsStatRAM.localized(),  machine.ram)
+            statRow(L10n.vpsStatUp.localized(),   machine.uptime)
+        } header: {
+            Text(L10n.vpsAdvancedMachineHeader.localized())
+        } footer: {
+            Text(readCaption)
+        }
+    }
+
+    /// #471: label left, value right — a `Form`'s own idiom, and the reason the
+    /// deleted grid's label-above-value trick is not needed here: a Form row is
+    /// the width of the phone, so nothing has to survive a ~150pt column. The
+    /// two rules that DID matter travel with the numbers: no
+    /// `minimumScaleFactor` anywhere (a value that shrinks to fit is a value the
+    /// owner cannot read), and `lineLimit(1)` on the VALUE only, because a
+    /// wrapped number is a lie while a wrapped label is merely a wrapped label.
+    /// "—" is the same honesty placeholder the data side already returns.
+    private func statRow(_ label: String, _ value: String, tone: Color? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.s3) {
+            Text(label)
+                .foregroundStyle(Theme.Palette.textSecondary)
+            Spacer(minLength: Theme.Metrics.s2)
+            Text(value.isEmpty ? "—" : value)
+                .font(Theme.Typography.metricValue)
+                .foregroundStyle(tone ?? Theme.Palette.textPrimary)
+                .lineLimit(1)
+        }
     }
 
     // MARK: Connection
@@ -153,7 +231,7 @@ struct ServerAdvancedView: View {
                                 note: String,
                                 action: @escaping () -> Void) -> some View {
         Button(role: .destructive, action: action) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.s1) {   // #471 was: 3
                 Label(title, systemImage: systemImage)
                 Text(note)
                     .font(Theme.Typography.caption)

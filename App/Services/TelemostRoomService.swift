@@ -137,6 +137,9 @@ enum TelemostRoomService {
     /// A transport failure retries once on the other path; an answer that
     /// actually arrived (401 / 429 / bad body) is never re-sent, because the
     /// other route would produce the same answer.
+    /// #470: with one exception — a refusal (403/429/503) received THROUGH the
+    /// tunnel is answered to the exit's datacenter address, and Yandex's
+    /// anti-robot gate keys on that address; the phone's own gets one try.
     static func createRoom() async throws -> TelemostRoom {
         guard let sessionID = YandexSessionStore.storedSession() else {
             await log("Telemost: cannot create a room — no Yandex account is linked")
@@ -153,6 +156,19 @@ enum TelemostRoomService {
             guard fallback != available else { throw TelemostRoomError.networkUnavailable }
             await log("Telemost: retrying room creation (route: \(fallback))")
             return try await createRoom(sessionID: sessionID, route: fallback)
+        } catch TelemostRoomError.rateLimited where available.isTunnel {
+            // boc #470: every retry while the tunnel was live took the same
+            // route and got the same per-IP 403, so the sheet dead-ended on
+            // "wait and retry" for a room a direct POST would have created. A
+            // direct path that is itself cut (whitelist window) reports the
+            // ORIGINAL refusal, not "no network".
+            await log("Telemost: the refusal may be about the exit's address — retrying directly")
+            do {
+                return try await createRoom(sessionID: sessionID, route: .direct)
+            } catch TelemostRoomError.networkUnavailable {
+                throw TelemostRoomError.rateLimited
+            }
+            // eoc #470
         }
     }
 

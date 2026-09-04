@@ -220,10 +220,32 @@ final class ServerHostStore: ObservableObject {
             UserDefaults.standard.set(data, forKey: storeKey)
         }
     }
+    // #470: the unreadable-blob key, beside the live one (the shape
+    // ConnectionStore uses for `olcrtc_records_v2.unreadable`, #469).
+    private let backupKey = "olcrtc_server_hosts.unreadable"
+
+    // #470 was: `if let data = …, let list = try? JSONDecoder().decode(…) { hosts = list }`
     private func load() {
-        if let data = UserDefaults.standard.data(forKey: storeKey),
-           let list = try? JSONDecoder().decode([ServerHost].self, from: data) {
-            hosts = list
+        guard let data = UserDefaults.standard.data(forKey: storeKey) else { return }
+        do {
+            hosts = try JSONDecoder().decode([ServerHost].self, from: data)
+        } catch {
+            // boc #470: `try?` made a failed decode (one host with a future
+            // `authMethod` raw value is enough — `decodeIfPresent` of a
+            // RawRepresentable throws) indistinguishable from an empty list,
+            // and the first `add` the user then made (`hosts.append` → didSet →
+            // save) replaced the blob with that one host: every other VPS, its
+            // container link and record ids gone, their Keychain secrets
+            // orphaned. Say so, and park the bytes once so a later build that
+            // reads the old shape can still recover them.
+            LogStore.shared.log(.provisioning,
+                "⚠ ServerHostStore: failed to decode the saved VPS list: \(error.localizedDescription)")
+            if UserDefaults.standard.data(forKey: backupKey) == nil {
+                UserDefaults.standard.set(data, forKey: backupKey)
+            }
+            LogStore.shared.log(.provisioning,
+                "⚠ ServerHostStore: kept the unreadable list under \(backupKey) (\(data.count) bytes) — nothing was deleted")
+            // eoc #470
         }
     }
 }

@@ -19,6 +19,12 @@ import SwiftUI
 //     OLCRTC_JITSI_URL).
 //   • wbstream — the token now flows into `auth.token` via reconfigureScript's
 //     token sed (previously only the full install could set/clear it).
+//
+// #470: the jitsi base field never applied to an EXISTING install — the sheet is
+// seeded with the full room URL srv.sh stores, and the prefixing above only fires
+// for a bare name. `jitsiRoom(_:movedTo:)` now moves a full-URL room onto the
+// edited instance in submit(). The transport footer also lost the ★/⚠ lab
+// verdicts (and the raw carrier id they printed), mirroring InstallOptionsView #457.
 
 struct ReconfigureOptionsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -128,7 +134,9 @@ struct ReconfigureOptionsView: View {
         } header: {
             Text(L10n.sectionCarrier.localized())
         } footer: {
-            Text(L10n.carrierChoiceFooter.localized()).font(.caption2)
+            // #471: B9 — a Form footer already renders at the caption step;
+            // `.caption2` only pushed it BELOW the scale. was: .font(.caption2)
+            Text(L10n.carrierChoiceFooter.localized())
         }
     }
 
@@ -139,7 +147,10 @@ struct ReconfigureOptionsView: View {
         } header: {
             Text(L10n.transportSectionHeader.localized())
         } footer: {
-            Text(transportFooter).font(.caption2)
+            // #470: empty for every transport but videochannel now (see transportFooter).
+            if !transportFooter.isEmpty {
+                Text(transportFooter)   // #471: B9 — a Form footer is already a caption
+            }
         }
     }
 
@@ -150,7 +161,7 @@ struct ReconfigureOptionsView: View {
         if roomID.trimmingCharacters(in: .whitespaces).isEmpty,
            let last = RoomMemory.lastRoom(forCarrier: carrier) {
             Button(L10n.roomIDLastUsed_fmt.formatted(last)) { roomID = last }
-                .font(.caption)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                 .foregroundStyle(Theme.Palette.accent)
         }
     }
@@ -167,13 +178,14 @@ struct ReconfigureOptionsView: View {
             } header: {
                 Text(L10n.roomIDSectionHeader.localized())
             } footer: {
-                Text(roomFooter).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(roomFooter)
             }
         } else {
             Section {
                 Label(L10n.roomIDAutoGenHint.localized(),
                       systemImage: "wand.and.stars")
-                    .font(.caption)
+                    .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -193,7 +205,8 @@ struct ReconfigureOptionsView: View {
             } header: {
                 Text(L10n.jitsiServerHeader.localized())
             } footer: {
-                Text(L10n.jitsiServerFooter.localized()).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(L10n.jitsiServerFooter.localized())
             }
         }
     }
@@ -210,7 +223,8 @@ struct ReconfigureOptionsView: View {
             } header: {
                 Text(L10n.wbTokenHeader.localized())
             } footer: {
-                Text(L10n.wbTokenFooter.localized()).font(.caption2)
+                // #471: B9 — a Form footer is already a caption. was: .font(.caption2)
+                Text(L10n.wbTokenFooter.localized())
             }
         }
     }
@@ -223,7 +237,7 @@ struct ReconfigureOptionsView: View {
             // defaults (master overlays only keys present in the YAML).
             Text(L10n.reconfigureInfoFooter.localized() + "\n" +
                  L10n.reconfigureTransportTuningFooter.localized())
-                .font(.caption2)
+                .font(Theme.Typography.caption)   // #471: B9 — was: .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
     }
@@ -246,6 +260,11 @@ struct ReconfigureOptionsView: View {
             var base = trimmedBase.isEmpty ? AppConstants.defaultJitsiBaseURL : trimmedBase
             while base.hasSuffix("/") { base.removeLast() }   // srv.sh: ${JITSI_BASE%/}
             cleanedRoom = base + "/" + cleanedRoom
+        } else if carrier == "jitsi" {
+            // #470: an existing install is seeded with the FULL room URL, so the
+            // branch above never ran and the Jitsi-server field was a no-op —
+            // move the room onto the edited instance instead.
+            cleanedRoom = Self.jitsiRoom(cleanedRoom, movedTo: jitsiBaseURL)
         }
         let cleanedJitsi = jitsiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         onConfirm(InstallOptions(
@@ -258,21 +277,50 @@ struct ReconfigureOptionsView: View {
         dismiss()
     }
 
+    /// #470: a jitsi room is stored as the FULL URL srv.sh writes
+    /// ("https://host/room"), so editing the Jitsi-server field did nothing for
+    /// an existing install. Moves a full-URL room onto `base` (scheme://host[:port],
+    /// trailing slashes ignored), keeping the room's path. Anything else — a bare
+    /// name, a host/room form, an empty base, the same instance — comes back
+    /// unchanged. Pure → unit-tested (Tests/Review470Chunk2Tests.swift).
+    static func jitsiRoom(_ room: String, movedTo base: String) -> String {
+        var base = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        while base.hasSuffix("/") { base.removeLast() }
+        guard !base.isEmpty, room.contains("://"),
+              let url = URL(string: room), let scheme = url.scheme,
+              let host = url.host, !host.isEmpty else { return room }
+        let hostPart = url.port.map { "\(host):\($0)" } ?? host
+        if base == "\(scheme)://\(hostPart)" || base == hostPart { return room }
+        return base + url.path + (url.query.map { "?\($0)" } ?? "")
+    }
+
     // MARK: Footer helpers
 
+    /// #470: mirrors InstallOptionsView.transportFooter (#457). The ★/⚠/"no data"
+    /// sentence was a lab verdict at pin time presented as a measurement, and it
+    /// printed the RAW carrier id ("★ Recommended for telemost.") where the install
+    /// sheet showed «Яндекс Телемост». The silent `.fail` gate in
+    /// `transportOptions` survives; the server-defaults note stays for
+    /// videochannel only — a seichannel reconfigure's tuning reset is already
+    /// stated by `reconfigureTransportTuningFooter` in the info section.
+    // boc #470 was:
+    //     let compat: String
+    //     switch CarrierTransportMatrix.compat(carrier: carrier, transport: transport) {
+    //     case .recommended: compat = L10n.matrixRecommended_fmt.formatted(carrier)
+    //     case .ok:          compat = L10n.matrixWorks_fmt.formatted(carrier)
+    //     case .question:    compat = L10n.matrixQuestion_fmt.formatted(carrier)
+    //     case .fail:        compat = L10n.matrixFail_fmt.formatted(carrier)
+    //     case .unknown:     compat = L10n.matrixUnknown_fmt.formatted(carrier)
+    //     }
+    //     if transport == "seichannel" || transport == "videochannel" {
+    //         return compat + "\n" + L10n.transportUsesServerDefaults_fmt.formatted(transport)
+    //     }
+    //     return compat
+    // eoc #470
     private var transportFooter: String {
-        let compat: String
-        switch CarrierTransportMatrix.compat(carrier: carrier, transport: transport) {
-        case .recommended: compat = L10n.matrixRecommended_fmt.formatted(carrier)
-        case .ok:          compat = L10n.matrixWorks_fmt.formatted(carrier)
-        case .question:    compat = L10n.matrixQuestion_fmt.formatted(carrier)
-        case .fail:        compat = L10n.matrixFail_fmt.formatted(carrier)
-        case .unknown:     compat = L10n.matrixUnknown_fmt.formatted(carrier)
-        }
-        if transport == "seichannel" || transport == "videochannel" {
-            return compat + "\n" + L10n.transportUsesServerDefaults_fmt.formatted(transport)
-        }
-        return compat
+        transport == "videochannel"
+            ? L10n.transportUsesServerDefaults_fmt.formatted(CarrierTransportMatrix.transportLabel(transport))
+            : ""
     }
 
     private var roomFooter: String {
