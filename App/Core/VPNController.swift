@@ -114,22 +114,39 @@ final class VPNController: ObservableObject {
     /// the definitive probe is the first real start(), because a dry-run save
     /// would itself pop the system consent alert.
     func probeCapability() async {
-        guard capability == .unknown else { return }
-        guard let managers = try? await NETunnelProviderManager.loadAllFromPreferences() else { return }
-        if !managers.isEmpty { capability = .available }
-        // boc #469 was: the managers were read for the capability bit and
-        // discarded, so a tunnel that was ALREADY running — the app relaunched
-        // under it, or it was started from iOS Settings — was invisible: the
-        // hero said "Disconnected" while the whole device was tunnelled, and
-        // the only way to stop it was Settings > VPN. Adopt the first manager,
-        // observe it, and publish its real status so the bridge sees the truth.
-        if manager == nil, let existing = managers.first {
-            manager = existing
-            observeStatus(of: existing)
-            status = Status(existing.connection.status)
-        }
-        // eoc #469
+        // #477 was: `guard capability == .unknown else { return }` guarded the
+        // WHOLE body, adoption included — see `adoptRunningTunnel`.
+        await adoptRunningTunnel()
     }
+
+    // boc #477: adoption has to be its own entry point, callable at any time.
+    // #469 folded it into `probeCapability`, which (a) returned early once
+    // `capability` was known and (b) is only ever called from the Settings
+    // screen. A tunnel switched on from iOS Settings — or from Control Centre —
+    // while the app sat on any other tab was therefore never observed: no
+    // manager, no status notification, and `TunnelManager` went on running the
+    // in-app proxy underneath it. Both clients then carried the SAME clientID
+    // into the carrier room, which is the one thing the room cannot survive.
+    //
+    // Safe to call repeatedly: it adopts at most once and otherwise just
+    // re-reads the live status, which is exactly what is needed after a
+    // foreground return (notifications posted while suspended are not queued).
+    /// Observes an already-running tunnel and publishes its real status.
+    func adoptRunningTunnel() async {
+        if let manager {
+            status = Status(manager.connection.status)
+            return
+        }
+        guard let managers = try? await NETunnelProviderManager.loadAllFromPreferences(),
+              let existing = managers.first else { return }
+        // A saved configuration proves a previous save succeeded, so the
+        // entitlement provably works (the #469 capability inference).
+        if capability == .unknown { capability = .available }
+        manager = existing
+        observeStatus(of: existing)
+        status = Status(existing.connection.status)
+    }
+    // eoc #477
 
     // MARK: Start
 
