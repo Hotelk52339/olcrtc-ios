@@ -196,6 +196,11 @@ struct MainTabView: View {
                 // #474: a return to the foreground is what re-arms automatic
                 // checking; between two returns the app checks itself exactly
                 // once, whichever screen asks first.
+                // #477: a tunnel switched on from iOS Settings while the app was
+                // away posts its status notification to a suspended process,
+                // where nothing is listening and nothing is queued. Re-read it
+                // on every return, before anything else decides what is running.
+                Task { await tunnel.vpn.adoptRunningTunnel() }
                 HealthCoordinator.shared.noteForegrounded()
                 if SettingsStore.shared.refreshOnEntry, sweepOnActivate,
                    HealthCoordinator.shared.claimAutomaticSweep() {
@@ -260,13 +265,29 @@ struct MainTabView: View {
             // #470: the catalog files this launch banner under OLC-1001, but
             // nothing ever passed the code, so the documented search found nothing.
             LogStore.shared.log(.connection, "▶ \(LogStore.appVersionString())", code: .sessionStart)  // OLC-1001
-            if settings.autoConnectOnLaunch, let p = store.primary {
+            // boc #477: the app can launch INTO a running tunnel — the profile
+            // was left on, or switched on from iOS Settings while the app was
+            // gone. Auto-connect used to fire regardless and start the in-app
+            // proxy underneath it, putting a SECOND client with the same id into
+            // the carrier room; two clients sharing an id break each other.
+            // Adopt first, then decide — which is why this moved into the Task.
+            // #477 was: `Task { await …adoptRunningTunnel() }` followed by an
+            // unconditional auto-connect on the same turn (the adopt lost the race).
+            Task {
+                await tunnel.vpn.adoptRunningTunnel()
+                guard settings.autoConnectOnLaunch, let p = store.primary else { return }
+                guard !tunnel.systemTunnelIsUp else {
+                    LogStore.shared.log(.connection,
+                        "▶ Auto-connect skipped — the system VPN tunnel is already carrying the device")
+                    return
+                }
                 LogStore.shared.log(.connection,
                     "▶ Auto-connect on launch → \(p.displayName)")
                 // #393: the secretsLocked guard now lives in TunnelManager.connect,
                 // so this direct call is covered too (was the #375 gap).
                 tunnel.connect(record: p)
             }
+            // eoc #477
         }
         // #360: interval-gated, anonymous GitHub-Releases update check. No-op
         // when disabled or checked within 24h; tolerates failure silently. On a

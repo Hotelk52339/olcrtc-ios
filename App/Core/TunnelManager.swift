@@ -733,12 +733,20 @@ final class TunnelManager: ObservableObject {
             // then-dials". It did not: with a session up, a tap moved
             // `store.primary`, fired a haptic and did nothing else. The SAME
             // record stays idempotent; a DIFFERENT one tears down and dials.
-            // A live state without a known record (only reachable through the
-            // test seam) is treated as the same record: never tear down a
-            // session we cannot identify.
-            guard let live = lastRecord, live.id != record.id else { return }
+            // boc #477 was: `guard let live = lastRecord, live.id != record.id
+            // else { return }` — only the record was compared, and a live state
+            // without a known record was left alone. Two gaps followed:
+            //   • switching proxy↔VPN on the SAME record did nothing at all, so
+            //     the user stayed silently on the old backend;
+            //   • an ADOPTED system tunnel (#477) has no `lastRecord`, so
+            //     connecting to anything while it ran returned here and the tap
+            //     did nothing.
+            // Anything that is not "the same record on the same backend" is a
+            // switch: tear down, then dial.
+            let sameBackend = SettingsStore.shared.tunnelMode == activeMode
+            if let live = lastRecord, live.id == record.id, sameBackend { return }
             disconnect()   // the teardown wait below dials once the engine is down
-            // eoc #469
+            // eoc #469 / #477
         }
         // #393: if the device was locked before first unlock at launch the saved
         // key couldn't be read (empty in memory) — surface the actionable unlock
@@ -941,11 +949,99 @@ final class TunnelManager: ObservableObject {
         }
     }
 
+    // boc #477
+    /// Hands the session over to the system tunnel that is already up: tears the
+    /// proxy machinery down and switches `activeMode`, WITHOUT passing through
+    /// `.disconnected` — the device is tunnelled, so the honest next state is
+    /// whatever NEVPNStatus reports, which the caller applies immediately after.
+    private func adoptSystemTunnel() {
+        LogStore.shared.log(.connection,
+            "• The system VPN tunnel is up and this app is not the one that started it. "
+            + "Running the in-app proxy as well would put a second client with the same id "
+            + "into the carrier room, and two clients sharing an id break each other — "
+            + "so the proxy is standing down and the tunnel takes over.",
+            level: .info)
+        recoveryTask?.cancel();     recoveryTask = nil
+        keepAliveTask?.cancel();    keepAliveTask = nil
+        pendingStartTask?.cancel(); pendingStartTask = nil
+        exitGeoTask?.cancel();      exitGeoTask = nil
+        bgKeeper.stop()
+        // Same off-actor teardown as `disconnect()` — MobileStop blocks up to 5 s.
+        let engine = activeEngine
+        stopTask?.cancel()
+        stopTask = Task.detached {
+            if Task.isCancelled { return }
+            engine?.stop()
+        }
+        // The listener is going away with the engine; clearing the snapshot also
+        // clears the mirrored credentials (`boundPort.didSet`).
+        TunnelManager.lastSelfDisconnectPort = boundPort
+        TunnelManager.lastSelfDisconnectDate = Date()
+        TunnelManager.lastTunnelActivityDate = nil
+        boundPort = nil
+        activeMode = .vpn
+    }
+
+    /// #477: is a system tunnel carrying the device right now? True whether this
+    /// app started it or the user did. Everything that measures a path — probes,
+    /// exit-IP checks — has to ask this rather than `activeMode`, which only says
+    /// what the app *believes* it is doing.
+    var systemTunnelIsUp: Bool {
+        Self.systemTunnelIsUp(activeMode: activeMode, state: state, vpnStatus: vpn.status)
+    }
+
+    /// Pure half of the above, so every combination is unit-tested rather than
+    /// reasoned about — the #472 mistake was getting exactly this table wrong.
+    ///
+    /// In VPN mode the state machine mirrors NEVPNStatus already, and iOS
+    /// installs the routes when the provider answers `startTunnel` — BEFORE
+    /// `.connected` — so only `.disconnected`/`.failed` are provably route-free
+    /// (#472). In proxy mode the app's own state says nothing about a tunnel it
+    /// did not start, so the observed NEVPNStatus is the only evidence.
+    nonisolated static func systemTunnelIsUp(activeMode: TunnelMode,
+                                             state: ConnectionState,
+                                             vpnStatus: VPNController.Status) -> Bool {
+        if activeMode == .vpn {
+            switch state {
+            case .disconnected, .failed:                        return false
+            case .connecting, .connected, .waitingForNetwork:   return true
+            }
+        }
+        switch vpnStatus {
+        case .connected, .connecting, .reasserting:             return true
+        case .invalid, .disconnected, .disconnecting:           return false
+        }
+    }
+    // eoc #477
+
     /// Bridge: NEVPNStatus (via VPNController) → the connection state machine.
     /// Only live in VPN mode — user `disconnect()` restores `activeMode` to
     /// `.proxy` BEFORE the observer's late emissions arrive, so an expected
     /// stop is skipped here and only an UNEXPECTED drop reaches `.failed`.
     private func vpnStatusChanged(_ status: VPNController.Status) {
+        // boc #477: the system tunnel is THIS app's packet-tunnel extension, and
+        // it can come up without `connect()` ever running — the user flips the
+        // profile on in iOS Settings or Control Centre, or it was left running
+        // when the app relaunched. `activeMode` is still `.proxy` then, and the
+        // guard below dropped the notification: the in-app proxy kept its own
+        // session open, so the SAME clientID sat in the carrier room twice.
+        //
+        // Two peers sharing one identity break each other — the rule
+        // `shouldSkipBatchPing` already encodes for probes, unenforced for the
+        // proxy/VPN pair. Observed on the server as
+        // `Current peers count: 2, Devices: [default, default]`, followed by the
+        // proxy session going silent (`control missed pong` → `reason=liveness`).
+        // Recovery then re-entered a room whose identity was taken, spent its
+        // budget and landed in `.failed` — "Connection failed", for as long as
+        // the VPN stayed on, which is exactly what was reported from the field.
+        //
+        // There is only one consistent answer: the system tunnel wins. It IS
+        // this app's tunnel, it holds the identity, and it already carries the
+        // whole device. The proxy stands down instead of fighting it.
+        if activeMode == .proxy, status == .connected || status == .connecting {
+            adoptSystemTunnel()
+        }
+        // eoc #477
         guard activeMode == .vpn else { return }
         // Pre-start snapshot emitted inside `vpn.start` — not a drop.
         // #470 was: if vpnStartInFlight, status == .disconnected { return }
@@ -1551,6 +1647,27 @@ final class TunnelManager: ObservableObject {
         connectEpoch == epoch && state == .connecting
     }
 
+    // boc #477: stop the engine only while THIS attempt still owns it.
+    // `OlcrtcEngine` is a process-wide singleton — `stop()` ends whatever
+    // generation is running, not "mine". #469 moved `runEngine`'s two superseded
+    // -branch stops off the MainActor (`Task.detached { engine.stop() }`) to
+    // unfreeze the UI, and in doing so removed the serialisation that had made
+    // them safe: a stop scheduled by an attempt that LOST the race could now
+    // land after the winner had already connected, tearing a healthy session
+    // down. Whoever superseded us — `disconnect()`, or a newer attempt — owns
+    // the teardown and does it themselves; we clean up only when the epoch is
+    // still ours.
+    /// Tears the engine down off-actor, but only if no newer attempt has claimed it.
+    private func stopEngineIfStillOurs(_ engine: any TunnelEngine, epoch: Int) {
+        guard connectEpoch == epoch else { return }
+        stopTask?.cancel()
+        stopTask = Task.detached {
+            if Task.isCancelled { return }
+            engine.stop()
+        }
+    }
+    // eoc #477
+
     /// User-initiated connect: preflight, then hand the blocking native work to a
     /// detached task (fire-and-forget — a failure lands in `.failed` and waits
     /// for the user, it does NOT enter the recovery loop, so a bad manual connect
@@ -1739,7 +1856,13 @@ final class TunnelManager: ObservableObject {
         // Guard: a disconnect or a newer attempt (#272) may have superseded us
         // while the engine was starting.
         let stillLive = await MainActor.run { manager?.isLiveAttempt(epoch) == true }
-        guard stillLive else { engine.stop(); return false }
+        // #477 was: a bare `engine.stop()` — the same unowned teardown as the two
+        // branches below. This one runs off-actor, so the ownership check has to
+        // hop; the stop it schedules is detached either way.
+        guard stillLive else {
+            await MainActor.run { manager?.stopEngineIfStillOurs(engine, epoch: epoch) }
+            return false
+        }
 
         let tunnelOK = await verifyTunnel()
         return await MainActor.run {
@@ -1750,7 +1873,9 @@ final class TunnelManager: ObservableObject {
                 // blocks up to 5 s while the WebRTC session closes and froze the
                 // UI for exactly that long (#445 moved every OTHER stop off the
                 // actor; these two were missed).
-                Task.detached { engine.stop() }
+                // #477 was: `Task.detached { engine.stop() }` — unowned, so this
+                // superseded attempt could stop the winner's live session.
+                manager?.stopEngineIfStillOurs(engine, epoch: epoch)
                 return false
             }
             if tunnelOK {
@@ -1765,7 +1890,8 @@ final class TunnelManager: ObservableObject {
                 return true
             } else {
                 LogStore.shared.log(.connection, L10n.tunnelFailed.localized(), code: .tunnelDown)  // OLC-1009
-                Task.detached { engine.stop() }   // #469: off the actor — see above
+                // #469: off the actor — see above. #477: and only while ours.
+                manager?.stopEngineIfStillOurs(engine, epoch: epoch)
                 // #456: the transport came up (start + waitReady succeeded) but
                 // verifyTunnel got no HTTP 200 — this is EXACTLY "connects but no
                 // data", the user's telemost incident, so it is recorded as

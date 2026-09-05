@@ -218,32 +218,31 @@ final class TunnelManagerStateTests: XCTestCase {
 
     // MARK: connect() guard on busy states
 
-    // The switch at the top of connect() returns early when state is
-    // .connecting. This is the safety guard that prevents double-tap of
-    // the Connect button from launching two MobileStart goroutines (which
-    // would return errAlreadyRunning from the Go side anyway, but the
-    // Swift-side guard makes the no-op observable as "state unchanged"
-    // rather than as a flash of "connecting → failed").
-    func testConnectIsNoOpWhileConnecting() {
+    // The double-tap guard at the top of connect() is SAME-RECORD idempotence
+    // (pinned in testMultipleConnectCallsWhileConnectingDoNotStackStates and
+    // SystemTunnelAdoptionTests). A live state with NO record is different:
+    // #477 was: treated as "never tear down a session we cannot identify" — but
+    // an adopted system tunnel reaches exactly this shape in production, and
+    // swallowing the tap meant nothing could be connected while it ran. It is
+    // torn down and redialled now.
+    func testConnectWhileConnectingWithNoRecordTearsDownAndRedials() {
         let manager = makeManager()
         manager.state = .connecting
         manager.connect(record: record(with: invalidParams()))
-        // Did NOT transition to .failed even though params are invalid:
-        // the early-return at the top of connect() short-circuits before
-        // preflight() runs.
-        XCTAssertEqual(manager.state, .connecting)
+        // Torn down synchronously; the dial waits for the teardown off-actor,
+        // so the invalid params surface later and are not observable here.
+        XCTAssertEqual(manager.state, .disconnected)
     }
 
-    // Same guard, but from the .connected side. Tapping Connect while
-    // already connected must not tear down the live session.
-    func testConnectIsNoOpWhileConnected() {
+    // Same shape from the .connected side.
+    func testConnectWhileConnectedWithNoRecordTearsDownAndRedials() {
         let manager = makeManager()
         manager.state = .connected
         manager.connect(record: record(with: invalidParams()))
-        XCTAssertEqual(manager.state, .connected)
+        XCTAssertEqual(manager.state, .disconnected)
         // Clean up so the .connected didSet's keep-alive task doesn't
-        // outlive the test. Setting to .disconnected cancels it (private
-        // keepAliveTask isn't observable, but the cancel path runs).
+        // outlive the test (the .disconnected write above already ran the
+        // cancel path; keep the explicit tidy for symmetry with the rest).
         manager.state = .disconnected
     }
 
@@ -344,15 +343,10 @@ final class TunnelManagerStateTests: XCTestCase {
         manager.state = .disconnected
     }
 
-    // #469: …but a live state the manager cannot attribute to a record (only
-    // reachable through this seam) is never torn down.
-    func testConnectWhileLiveWithoutAKnownRecordStaysANoOp() {
-        let manager = makeManager()
-        manager.state = .connected
-        manager.connect(record: record(with: validParams()))
-        XCTAssertEqual(manager.state, .connected)
-        manager.state = .disconnected
-    }
+    // #469 pinned "a live state without a record is never torn down" here.
+    // #477 inverts that on purpose — an adopted system tunnel holds exactly this
+    // shape, and the tap must not be swallowed. The replacement pin lives in
+    // SystemTunnelAdoptionTests.testConnectIsNotSwallowedWhileALiveStateHasNoRecord.
 
     // MARK: Connect epoch (#272)
 

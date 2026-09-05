@@ -332,28 +332,29 @@ final class HealthCoordinator: ObservableObject {
         // through jitsi, turn the VPN on, and the telemost row goes red.
         // In VPN mode the only states where the routes are provably NOT ours are
         // idle and failed.
-        if tunnel.activeMode == .vpn {
-            switch tunnel.state {
-            case .disconnected, .failed:
-                break   // no tunnel: a direct probe measures what it claims to
-            case .connecting, .connected, .waitingForNetwork:
-                // #472: "I cannot check right now" must not erase "I verified
-                // this two minutes ago" — a fresh measurement is better evidence
-                // than the absence of one, and overwriting it made a working
-                // node go grey the moment the VPN came up.
-                if let seen = store[record.id.uuidString],
-                   Date().timeIntervalSince(seen.checkedAt) < HealthPolicy.freshSeconds {
-                    LogStore.shared.log(.connection,
-                        "Health: kept the fresh verdict for \(record.displayName) — the system VPN is up, so no new measurement is possible")
-                    return
-                }
-                noteInconclusive(recordID: record.id, reason: .vpnActive)
+        // #477 was: `tunnel.activeMode == .vpn` plus a switch over `tunnel.state`
+        // — the app's own belief about what it is running. A tunnel the user
+        // started from iOS Settings carries the device just the same while
+        // `activeMode` still reads `.proxy`, and every probe went out through it
+        // and measured a mixed path anyway. `systemTunnelIsUp` answers the
+        // question actually being asked.
+        if tunnel.systemTunnelIsUp {
+            // #472: "I cannot check right now" must not erase "I verified
+            // this two minutes ago" — a fresh measurement is better evidence
+            // than the absence of one, and overwriting it made a working
+            // node go grey the moment the VPN came up.
+            if let seen = store[record.id.uuidString],
+               Date().timeIntervalSince(seen.checkedAt) < HealthPolicy.freshSeconds {
                 LogStore.shared.log(.connection,
-                    "Health: skipped \(record.displayName) — can't probe while the system VPN is up")
+                    "Health: kept the fresh verdict for \(record.displayName) — the system VPN is up, so no new measurement is possible")
                 return
             }
+            noteInconclusive(recordID: record.id, reason: .vpnActive)
+            LogStore.shared.log(.connection,
+                "Health: skipped \(record.displayName) — can't probe while the system VPN is up")
+            return
         }
-        // eoc #472
+        // eoc #472 / #477
 
         let probe = TunnelManager.recordForBatchPing(
             record, clientID: TunnelManager.batchPingClientID(recordID: record.id))
